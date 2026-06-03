@@ -97,6 +97,11 @@
   border: 1px solid rgb(255 255 255 / 10%);
 }
 
+.chart-static .recharts-surface:focus,
+.chart-static .recharts-surface:focus-visible {
+  outline: none;
+}
+
 .cleanup-row {
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 5%),
@@ -235,17 +240,15 @@ select option {
 
 .theme-light .sidebar-glass {
   background:
-    radial-gradient(circle at 18% 5%, rgb(130 185 148 / 14%), transparent 34%),
-    linear-gradient(145deg, rgb(234 244 237 / 24%), rgb(242 245 247 / 16%)),
-    rgb(238 244 241 / 18%);
-  border-right-color: rgb(15 23 42 / 14%);
-}
-
-.theme-light .agent-logo {
-  border-color: rgb(15 23 42 / 7%);
+    radial-gradient(circle at 18% 5%, rgb(130 185 148 / 16%), transparent 34%),
+    linear-gradient(145deg, rgb(242 247 244 / 92%), rgb(232 238 242 / 88%)),
+    #edf3f1;
+  border-right-color: rgb(15 23 42 / 12%);
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 50%),
-    0 5px 12px rgb(15 23 42 / 8%);
+    inset -1px 0 0 rgb(15 23 42 / 6%),
+    inset 1px 0 0 rgb(255 255 255 / 82%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .theme-light .glass-panel,

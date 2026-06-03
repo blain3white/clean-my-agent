@@ -304,8 +304,8 @@ function OverviewView({ snapshot, onSelectCleanup }: { snapshot: DashboardSnapsh
             </div>
           </CardHeader>
           <CardContent className="h-[230px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={snapshot.usage}>
+            <ResponsiveContainer className="chart-static" width="100%" height="100%">
+              <AreaChart data={snapshot.usage} accessibilityLayer={false}>
                 <defs>
                   <linearGradient id="tokenGradient" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#63a6ff" stopOpacity={0.45} />
@@ -327,8 +327,8 @@ function OverviewView({ snapshot, onSelectCleanup }: { snapshot: DashboardSnapsh
             <CardTitle className="text-sm text-white">Storage Breakdown</CardTitle>
           </CardHeader>
           <CardContent className="grid h-[230px] grid-cols-[150px_1fr] items-center gap-3">
-            <ResponsiveContainer width="100%" height={170}>
-              <PieChart>
+            <ResponsiveContainer className="chart-static" width="100%" height={170}>
+              <PieChart accessibilityLayer={false}>
                 <Pie data={pieData} innerRadius={44} outerRadius={72} paddingAngle={2} dataKey="value">
                   {pieData.map((entry) => (
                     <Cell key={entry.name} fill={sourceColors[entry.source as AgentSource] ?? '#8b95a5'} />
