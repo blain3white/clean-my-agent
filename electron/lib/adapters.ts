@@ -9,6 +9,15 @@ import type {
   UniversalRelayDocument,
   UniversalRelayMessage,
 } from '../../src/shared/types'
+import {
+  asString,
+  isClaudeJsonlRecord,
+  isCodexJsonlRecord,
+  isCursorWorkspaceRecord,
+  isOpenCodeStorageRecord,
+  toRecord,
+  type JsonRecord,
+} from './agent-storage-formats'
 import { expandHome, hashId, listFiles, mtimeIso, pathSize, readable, safeReadText } from './files'
 
 type AgentDefinition = {
@@ -25,7 +34,7 @@ type ParsedSession = {
   branch?: string
   messages: UniversalRelayMessage[]
   tokens: TokenUsage
-  metadata: Record<string, unknown>
+  metadata: JsonRecord
 }
 
 const emptyTokens = (): TokenUsage => ({
@@ -77,22 +86,11 @@ const definitions: AgentDefinition[] = [
   },
 ]
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>
-  return undefined
-}
-
-function asString(value: unknown): string | undefined {
-  if (typeof value === 'string') return value
-  if (typeof value === 'number') return String(value)
-  return undefined
-}
-
 function textFromContent(value: unknown): string {
   if (typeof value === 'string') return value
   if (Array.isArray(value)) return value.map(textFromContent).filter(Boolean).join('\n')
 
-  const record = asRecord(value)
+  const record = toRecord(value)
   if (!record) return ''
 
   return (
@@ -114,7 +112,7 @@ function normalizeRole(value: unknown): UniversalRelayMessage['role'] {
 
 function findStringByKeys(value: unknown, keys: string[], depth = 0): string | undefined {
   if (depth > 4) return undefined
-  const record = asRecord(value)
+  const record = toRecord(value)
   if (!record) {
     if (Array.isArray(value)) {
       for (const item of value) {
@@ -142,7 +140,7 @@ function extractUsage(value: unknown): TokenUsage {
   const tokens = emptyTokens()
 
   function addUsage(node: unknown): void {
-    const record = asRecord(node)
+    const record = toRecord(node)
     if (!record) return
 
     const input =
@@ -169,21 +167,21 @@ function extractUsage(value: unknown): TokenUsage {
       return
     }
 
-    const record = asRecord(node)
+    const record = toRecord(node)
     if (!record) return
 
     addUsage(record.usage)
     addUsage(record.token_usage)
     addUsage(record.tokenUsage)
 
-    const response = asRecord(record.response)
+    const response = toRecord(record.response)
     if (response) {
       addUsage(response.usage)
       addUsage(response.token_usage)
       addUsage(response.tokenUsage)
     }
 
-    const payload = asRecord(record.payload)
+    const payload = toRecord(record.payload)
     if (payload) {
       addUsage(payload.usage)
       addUsage(payload.token_usage)
@@ -191,7 +189,7 @@ function extractUsage(value: unknown): TokenUsage {
       visit(payload, depth + 1)
     }
 
-    const message = asRecord(record.message)
+    const message = toRecord(record.message)
     if (message) {
       addUsage(message.usage)
       addUsage(message.token_usage)
@@ -204,15 +202,15 @@ function extractUsage(value: unknown): TokenUsage {
 }
 
 function extractMessage(value: unknown, fallbackId: string): UniversalRelayMessage | undefined {
-  const record = asRecord(value)
+  const record = toRecord(value)
   if (!record) return undefined
 
-  const payload = asRecord(record.payload)
+  const payload = toRecord(record.payload)
   const item =
-    asRecord(record.item) ??
-    asRecord(record.message) ??
-    asRecord(payload?.item) ??
-    asRecord(payload?.message) ??
+    toRecord(record.item) ??
+    toRecord(record.message) ??
+    toRecord(payload?.item) ??
+    toRecord(payload?.message) ??
     payload ??
     record
   const role = normalizeRole(item.role ?? record.role ?? item.type ?? record.type)
@@ -256,7 +254,7 @@ function projectNameFromPath(projectPath: string | undefined, filePath: string):
 async function parseJsonLike(filePath: string): Promise<ParsedSession> {
   const text = await safeReadText(filePath)
   const messages: UniversalRelayMessage[] = []
-  const metadata: Record<string, unknown> = {}
+  const metadata: JsonRecord = {}
   let tokens = emptyTokens()
 
   if (filePath.endsWith('.jsonl')) {
@@ -264,6 +262,11 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
     lines.slice(0, 3000).forEach((line, index) => {
       try {
         const json = JSON.parse(line) as unknown
+        if (isCodexJsonlRecord(json)) {
+          metadata.sourceFormat = metadata.sourceFormat ?? 'codex-jsonl'
+        } else if (isClaudeJsonlRecord(json)) {
+          metadata.sourceFormat = metadata.sourceFormat ?? 'claude-jsonl'
+        }
         const message = extractMessage(json, `${index}`)
         if (message) messages.push(message)
         const usage = extractUsage(json)
@@ -287,7 +290,9 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
     try {
       const json = JSON.parse(text) as unknown
       metadata.sample = json
-      const record = asRecord(json)
+      if (isOpenCodeStorageRecord(json)) metadata.sourceFormat = 'opencode-storage-json'
+      if (isCursorWorkspaceRecord(json)) metadata.sourceFormat = 'cursor-workspace-json'
+      const record = toRecord(json)
       const array =
         (Array.isArray(json) && json) ||
         (Array.isArray(record?.messages) && record?.messages) ||
