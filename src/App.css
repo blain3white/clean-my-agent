@@ -1,0 +1,292 @@
+.mac-window {
+  -webkit-app-region: no-drag;
+  background:
+    radial-gradient(circle at 78% 4%, rgb(77 95 111 / 18%), transparent 34%),
+    radial-gradient(circle at 26% 13%, rgb(61 104 89 / 18%), transparent 31%),
+    linear-gradient(145deg, #15181a 0%, #101214 42%, #0c0e10 100%);
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 18px;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 10%),
+    0 22px 70px rgb(0 0 0 / 42%);
+  scrollbar-color: rgb(255 255 255 / 30%) transparent;
+  scrollbar-width: thin;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 30%) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  min-height: 42px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 28%);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 255 255 / 40%);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.drag-region {
+  -webkit-app-region: drag;
+}
+
+.no-drag-region,
+.content-scroll,
+.drag-region button,
+.drag-region input,
+.drag-region textarea,
+.drag-region select,
+.drag-region [role='button'],
+.drag-region [role='tab'],
+.drag-region [role='combobox'] {
+  -webkit-app-region: no-drag;
+}
+
+.content-scroll {
+  overscroll-behavior: contain;
+}
+
+.glass-panel {
+  background:
+    radial-gradient(circle at 18% 0%, rgb(255 255 255 / 6%), transparent 35%),
+    linear-gradient(180deg, rgb(255 255 255 / 7%), rgb(255 255 255 / 2.5%)),
+    rgb(19 22 24 / 76%);
+  border: 1px solid rgb(255 255 255 / 11%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 8%),
+    0 18px 50px rgb(0 0 0 / 24%);
+  backdrop-filter: blur(15px) saturate(1.08);
+  -webkit-backdrop-filter: blur(15px) saturate(1.08);
+}
+
+.sidebar-glass {
+  background:
+    radial-gradient(circle at 22% 5%, rgb(82 160 124 / 14%), transparent 32%),
+    linear-gradient(145deg, rgb(59 82 70 / 34%), rgb(17 20 21 / 60%)),
+    rgb(18 22 22 / 60%);
+  border-right: 1px solid rgb(255 255 255 / 14%);
+  box-shadow: inset -1px 0 0 rgb(0 0 0 / 20%);
+  backdrop-filter: blur(14px) saturate(1.16);
+  -webkit-backdrop-filter: blur(14px) saturate(1.16);
+}
+
+.metric-card {
+  background:
+    radial-gradient(circle at 18% 0%, rgb(255 255 255 / 10%), transparent 34%),
+    linear-gradient(180deg, rgb(255 255 255 / 7%), rgb(255 255 255 / 3%));
+  border: 1px solid rgb(255 255 255 / 10%);
+}
+
+.cleanup-row {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 5%),
+    0 12px 28px rgb(0 0 0 / 11%);
+}
+
+select {
+  color-scheme: dark;
+}
+
+select option {
+  background: #171a1d;
+  color: rgb(255 255 255 / 84%);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.agent-logo {
+  border-radius: 9px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  background:
+    radial-gradient(circle at 35% 18%, rgb(255 255 255 / 22%), transparent 30%),
+    linear-gradient(180deg, rgb(255 255 255 / 13%), rgb(255 255 255 / 5%)),
+    rgb(10 12 13 / 22%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 18%),
+    inset 0 -1px 0 rgb(0 0 0 / 18%),
+    0 5px 12px rgb(0 0 0 / 16%);
+}
+
+.agent-logo svg,
+.agent-logo [role='img'] {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+.theme-light {
+  background:
+    radial-gradient(circle at 78% 4%, rgb(78 129 153 / 13%), transparent 34%),
+    radial-gradient(circle at 22% 8%, rgb(91 151 116 / 12%), transparent 30%),
+    linear-gradient(145deg, #f4f6f7 0%, #eef2f3 45%, #e7ecef 100%);
+  border-color: rgb(15 23 42 / 12%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 75%),
+    0 22px 70px rgb(15 23 42 / 18%);
+  color: #17201d;
+  scrollbar-color: rgb(15 23 42 / 26%) transparent;
+}
+
+.theme-light * {
+  scrollbar-color: rgb(15 23 42 / 26%) transparent;
+}
+
+.theme-light *::-webkit-scrollbar-thumb {
+  background: rgb(15 23 42 / 22%);
+  background-clip: content-box;
+}
+
+.theme-light *::-webkit-scrollbar-thumb:hover {
+  background: rgb(15 23 42 / 34%);
+  background-clip: content-box;
+}
+
+.theme-light .sidebar-glass {
+  background:
+    radial-gradient(circle at 22% 5%, rgb(61 142 100 / 13%), transparent 32%),
+    linear-gradient(145deg, rgb(225 235 229 / 54%), rgb(229 235 237 / 44%)),
+    rgb(225 231 230 / 56%);
+  border-right-color: rgb(15 23 42 / 14%);
+  box-shadow: inset -1px 0 0 rgb(255 255 255 / 42%);
+}
+
+.theme-light .agent-logo {
+  border-color: rgb(15 23 42 / 10%);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 82%), rgb(255 255 255 / 46%)),
+    rgb(255 255 255 / 42%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 90%),
+    0 5px 12px rgb(15 23 42 / 8%);
+}
+
+.theme-light .glass-panel,
+.theme-light .metric-card {
+  background:
+    radial-gradient(circle at 18% 0%, rgb(255 255 255 / 70%), transparent 34%),
+    linear-gradient(180deg, rgb(255 255 255 / 72%), rgb(255 255 255 / 50%)),
+    rgb(244 247 248 / 54%);
+  border-color: rgb(15 23 42 / 10%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 76%),
+    0 18px 50px rgb(15 23 42 / 11%);
+}
+
+.theme-light .text-white {
+  color: rgb(23 32 29) !important;
+}
+
+.theme-light .text-white\/86,
+.theme-light .text-white\/82,
+.theme-light .text-white\/80,
+.theme-light .text-white\/75,
+.theme-light .text-white\/70,
+.theme-light .text-white\/66,
+.theme-light .text-white\/60,
+.theme-light .text-white\/58,
+.theme-light .text-white\/55 {
+  color: rgb(40 50 54 / 86%) !important;
+}
+
+.theme-light .text-white\/50,
+.theme-light .text-white\/48,
+.theme-light .text-white\/45,
+.theme-light .text-white\/42,
+.theme-light .text-white\/40,
+.theme-light .text-white\/38,
+.theme-light .text-white\/36,
+.theme-light .text-white\/35,
+.theme-light .text-white\/30 {
+  color: rgb(63 74 81 / 64%) !important;
+}
+
+.theme-light .text-blue-300 {
+  color: rgb(37 99 235) !important;
+}
+
+.theme-light .text-emerald-300 {
+  color: rgb(5 150 105) !important;
+}
+
+.theme-light .text-amber-300 {
+  color: rgb(202 138 4) !important;
+}
+
+.theme-light .text-violet-300 {
+  color: rgb(124 58 237) !important;
+}
+
+.theme-light .text-red-300 {
+  color: rgb(220 38 38) !important;
+}
+
+.theme-light .border-white\/10,
+.theme-light .border-white\/9,
+.theme-light .border-white\/8,
+.theme-light .border-white\/7 {
+  border-color: rgb(15 23 42 / 11%) !important;
+}
+
+.theme-light .bg-white\/14,
+.theme-light .bg-white\/11,
+.theme-light .bg-white\/10,
+.theme-light .bg-white\/8,
+.theme-light .bg-white\/7,
+.theme-light .bg-white\/5,
+.theme-light .bg-white\/\[0\.045\],
+.theme-light .bg-white\/\[0\.035\],
+.theme-light .bg-white\/\[0\.03\],
+.theme-light .bg-white\/\[0\.025\] {
+  background-color: rgb(255 255 255 / 58%) !important;
+}
+
+.theme-light .bg-black\/25,
+.theme-light .bg-black\/18 {
+  background-color: rgb(255 255 255 / 48%) !important;
+}
+
+.theme-light .bg-black\/20,
+.theme-light .bg-black\/12 {
+  background-color: rgb(255 255 255 / 38%) !important;
+}
+
+.theme-light .divide-white\/7 > :not(:last-child) {
+  border-color: rgb(15 23 42 / 9%) !important;
+}
+
+.theme-light .theme-toggle {
+  border-color: rgb(15 23 42 / 11%);
+  background-color: rgb(255 255 255 / 52%);
+}
+
+.theme-light select {
+  color-scheme: light;
+}
+
+.theme-light select option {
+  background: #f8fafc;
+  color: rgb(30 41 59);
+}

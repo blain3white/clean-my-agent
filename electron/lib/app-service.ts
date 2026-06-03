@@ -1,0 +1,438 @@
+import path from 'node:path'
+import type {
+  AgentSource,
+  AppSettings,
+  BackupRecord,
+  CleanupCandidate,
+  DashboardSnapshot,
+  ExportFormat,
+  SessionRecord,
+  StorageSlice,
+  TrashRecord,
+  UsagePoint,
+} from '../../src/shared/types'
+import { adapters, adapterFor } from './adapters'
+import { LocalDatabase } from './database'
+import {
+  copyPath,
+  ensureDir,
+  exists,
+  hashId,
+  movePath,
+  pathSize,
+  sanitizeName,
+  writeJson,
+} from './files'
+
+const oneDayMs = 24 * 60 * 60 * 1000
+
+const agentLabels: Record<AgentSource, string> = {
+  codex: 'Codex',
+  claude: 'Claude Code',
+  cursor: 'Cursor',
+  gemini: 'Gemini',
+  opencode: 'OpenCode',
+}
+
+function formatDateKey(date: Date): string {
+  return date.toISOString().slice(0, 10)
+}
+
+function bytesFromRecords(records: Array<{ sizeBytes: number }>): number {
+  return records.reduce((total, record) => total + record.sizeBytes, 0)
+}
+
+function markdownForSession(session: SessionRecord): string {
+  return [
+    `# ${session.title}`,
+    '',
+    `- Agent: ${agentLabels[session.source]}`,
+    `- Project: ${session.projectName}`,
+    `- Branch: ${session.branch ?? 'Unknown'}`,
+    `- Last updated: ${session.lastUpdated}`,
+    `- Messages: ${session.messageCount}`,
+    `- Tokens: ${session.tokens.total.toLocaleString()}${session.tokens.estimated ? ' (estimated)' : ''}`,
+    `- Size: ${session.sizeBytes} bytes`,
+    `- Storage: ${session.storagePath}`,
+    '',
+    '## Metadata',
+    '',
+    '```json',
+    JSON.stringify(session.metadata, null, 2),
+    '```',
+    '',
+  ].join('\n')
+}
+
+export class AppService {
+  private readonly db: LocalDatabase
+  private readonly userDataPath: string
+  private readonly openPathHandler: (targetPath: string) => Promise<unknown>
+  private settings?: AppSettings
+
+  constructor(options: { userDataPath: string; openPath?: (targetPath: string) => Promise<unknown> }) {
+    const { userDataPath, openPath = async () => undefined } = options
+    this.userDataPath = userDataPath
+    this.openPathHandler = openPath
+    this.db = new LocalDatabase(path.join(userDataPath, 'clean-my-agent.sqlite'))
+  }
+
+  async init(): Promise<void> {
+    await this.db.open()
+    this.settings = this.db.getSetting<AppSettings>('settings') ?? this.defaultSettings()
+    this.db.setSetting('settings', this.settings)
+  }
+
+  async getSnapshot(forceRescan = false): Promise<DashboardSnapshot> {
+    if (forceRescan || this.db.getSessions().length === 0) {
+      await this.rescan()
+    }
+
+    const sessions = this.mergeBackupStatus(this.db.getSessions())
+    const backups = this.db.getBackups()
+    const trash = this.db.getTrash()
+    const cleanup = this.buildCleanupCandidates(sessions, backups)
+    const agents = await Promise.all(
+      adapters.map(async (adapter) => {
+        const sourceSessions = sessions.filter((session) => session.source === adapter.source)
+        return {
+          source: adapter.source,
+          name: adapter.name,
+          installed: sourceSessions.length > 0,
+          readable: sourceSessions.length > 0,
+          rootPaths: adapter.roots(this.requireSettings()),
+          sessionCount: sourceSessions.length,
+          sizeBytes: bytesFromRecords(sourceSessions),
+          lastScannedAt: new Date().toISOString(),
+        }
+      }),
+    )
+
+    return {
+      generatedAt: new Date().toISOString(),
+      overview: {
+        totalSessions: sessions.length,
+        backedUpSessions: sessions.filter((session) => session.backupStatus === 'backed-up').length,
+        reclaimableBytes: cleanup.reduce((total, item) => total + item.sizeBytes, 0),
+        lastBackupAt: backups[0]?.createdAt,
+        totalTokens: sessions.reduce((total, session) => total + session.tokens.total, 0),
+        totalSizeBytes: bytesFromRecords(sessions),
+        highRiskCleanupCount: cleanup.filter((item) => item.risk === 'high').length,
+      },
+      agents,
+      sessions,
+      cleanup,
+      backups,
+      trash,
+      usage: this.buildUsage(sessions),
+      storage: this.buildStorage(sessions, backups, trash),
+    }
+  }
+
+  async rescan(): Promise<DashboardSnapshot> {
+    const settings = this.requireSettings()
+    const results = await Promise.all(adapters.map((adapter) => adapter.scan(settings)))
+    const sessions = results.flatMap((result) => result.sessions)
+    this.db.replaceSessions(this.mergeBackupStatus(sessions))
+    return this.getSnapshot(false)
+  }
+
+  async backupSession(sessionId: string): Promise<BackupRecord> {
+    const session = this.requireSession(sessionId)
+    const createdAt = new Date().toISOString()
+    const backupRoot = path.join(this.userDataPath, 'Backups', session.source)
+    const extension = path.extname(session.storagePath)
+    const filename = `${sanitizeName(session.title)}-${session.id}${extension || '.backup'}`
+    const backupPath = path.join(backupRoot, filename)
+
+    await copyPath(session.storagePath, backupPath)
+    const record: BackupRecord = {
+      id: hashId([session.id, backupPath, createdAt]),
+      sessionId: session.id,
+      source: session.source,
+      title: session.title,
+      createdAt,
+      sizeBytes: await pathSize(backupPath),
+      backupPath,
+      originalPath: session.storagePath,
+      format: 'raw-copy',
+    }
+    this.db.insertBackup(record)
+    return record
+  }
+
+  async exportSession(sessionId: string, format: ExportFormat): Promise<string> {
+    const session = this.requireSession(sessionId)
+    const exportRoot = this.requireSettings().exportDirectory
+    const basename = `${sanitizeName(session.title)}-${session.id}`
+
+    if (format === 'universal-json') return this.exportUniversalRelay(sessionId)
+
+    const exportPath = path.join(exportRoot, `${basename}.${format === 'json' ? 'json' : 'md'}`)
+    await ensureDir(path.dirname(exportPath))
+
+    if (format === 'json') {
+      await writeJson(exportPath, session)
+    } else {
+      await import('node:fs/promises').then(({ writeFile }) => writeFile(exportPath, markdownForSession(session)))
+    }
+
+    return exportPath
+  }
+
+  async exportUniversalRelay(sessionId: string): Promise<string> {
+    const session = this.requireSession(sessionId)
+    const adapter = adapterFor(session.source)
+    const document = await adapter.toUniversal(session)
+    const exportPath = path.join(
+      this.requireSettings().exportDirectory,
+      `${sanitizeName(session.title)}-${session.id}.universal-session.json`,
+    )
+    await writeJson(exportPath, document)
+    return exportPath
+  }
+
+  async scanCleanup(): Promise<CleanupCandidate[]> {
+    return this.buildCleanupCandidates(this.mergeBackupStatus(this.db.getSessions()), this.db.getBackups())
+  }
+
+  async moveCleanupToTrash(candidateIds: string[]): Promise<TrashRecord[]> {
+    const candidates = await this.scanCleanup()
+    const selected = candidates.filter((candidate) => candidateIds.includes(candidate.id))
+    const records: TrashRecord[] = []
+
+    for (const candidate of selected) {
+      if (!candidate.backedUp && candidate.sessionIds.length > 0) {
+        for (const sessionId of candidate.sessionIds) {
+          await this.backupSession(sessionId)
+        }
+      }
+
+      const deletedAt = new Date().toISOString()
+      const trashPath = path.join(this.userDataPath, 'Trash', `${sanitizeName(candidate.title)}-${candidate.id}`)
+      await ensureDir(trashPath)
+
+      const movedPaths: string[] = []
+      for (const originalPath of candidate.paths) {
+        if (!(await exists(originalPath))) continue
+        const target = path.join(trashPath, sanitizeName(path.basename(originalPath)))
+        await movePath(originalPath, target)
+        movedPaths.push(originalPath)
+      }
+
+      const record: TrashRecord = {
+        id: hashId([candidate.id, deletedAt]),
+        candidateId: candidate.id,
+        title: candidate.title,
+        source: candidate.source,
+        originalPaths: movedPaths,
+        trashPath,
+        sizeBytes: await pathSize(trashPath),
+        deletedAt,
+        risk: candidate.risk,
+        recoverable: true,
+      }
+      this.db.insertTrash(record)
+      records.push(record)
+    }
+
+    await this.rescan()
+    return records
+  }
+
+  async restoreTrash(trashId: string): Promise<void> {
+    const record = this.db.getTrashRecord(trashId)
+    if (!record) throw new Error(`Trash item not found: ${trashId}`)
+
+    for (const originalPath of record.originalPaths) {
+      const source = path.join(record.trashPath, sanitizeName(path.basename(originalPath)))
+      if (await exists(source)) await movePath(source, originalPath)
+    }
+    this.db.deleteTrashRecord(trashId)
+    await this.rescan()
+  }
+
+  getSettings(): AppSettings {
+    return this.requireSettings()
+  }
+
+  updateSettings(patch: Partial<AppSettings>): AppSettings {
+    const current = this.requireSettings()
+    const next: AppSettings = {
+      ...current,
+      ...patch,
+      scanRoots: {
+        ...current.scanRoots,
+        ...patch.scanRoots,
+      },
+    }
+    this.settings = next
+    this.db.setSetting('settings', next)
+    return next
+  }
+
+  async openPath(targetPath: string): Promise<void> {
+    await this.openPathHandler(targetPath)
+  }
+
+  private defaultSettings(): AppSettings {
+    return {
+      scanRoots: {},
+      cleanupRetentionDays: 30,
+      trashRetentionDays: 14,
+      autoBackup: true,
+      defaultRelayMode: 'full-context',
+      exportDirectory: path.join(this.userDataPath, 'Exports'),
+    }
+  }
+
+  private requireSettings(): AppSettings {
+    if (!this.settings) throw new Error('App service is not initialized')
+    return this.settings
+  }
+
+  private requireSession(sessionId: string): SessionRecord {
+    const session = this.mergeBackupStatus(this.db.getSessions()).find((item) => item.id === sessionId)
+    if (!session) throw new Error(`Session not found: ${sessionId}`)
+    return session
+  }
+
+  private mergeBackupStatus(sessions: SessionRecord[]): SessionRecord[] {
+    const backedUpIds = new Set(this.db.getBackups().map((backup) => backup.sessionId))
+    return sessions.map((session) => ({
+      ...session,
+      backupStatus: backedUpIds.has(session.id) ? 'backed-up' : session.backupStatus,
+    }))
+  }
+
+  private buildCleanupCandidates(sessions: SessionRecord[], backups: BackupRecord[]): CleanupCandidate[] {
+    const now = Date.now()
+    const retentionMs = this.requireSettings().cleanupRetentionDays * oneDayMs
+    const backupSessionIds = new Set(backups.map((backup) => backup.sessionId))
+    const candidates: CleanupCandidate[] = []
+
+    for (const session of sessions) {
+      const ageMs = now - new Date(session.lastUpdated).getTime()
+      const backedUp = backupSessionIds.has(session.id) || session.backupStatus === 'backed-up'
+      if (ageMs > retentionMs) {
+        candidates.push({
+          id: hashId(['old-session', session.id]),
+          kind: backedUp ? 'backed-up-session' : 'old-session',
+          title: `${session.title}`,
+          source: session.source,
+          sessionIds: [session.id],
+          paths: [session.storagePath],
+          sizeBytes: session.sizeBytes,
+          lastUpdated: session.lastUpdated,
+          reason: backedUp
+            ? `Backed up and inactive for more than ${this.requireSettings().cleanupRetentionDays} days.`
+            : `Inactive for more than ${this.requireSettings().cleanupRetentionDays} days; backup will be created first.`,
+          risk: backedUp ? 'low' : 'medium',
+          recoverable: true,
+          backedUp,
+        })
+      }
+
+      if (session.sizeBytes > 50 * 1024 * 1024) {
+        candidates.push({
+          id: hashId(['large-session', session.id]),
+          kind: session.storagePath.endsWith('.log') ? 'large-log' : 'old-session',
+          title: `Large session: ${session.title}`,
+          source: session.source,
+          sessionIds: [session.id],
+          paths: [session.storagePath],
+          sizeBytes: session.sizeBytes,
+          lastUpdated: session.lastUpdated,
+          reason: 'This session file is unusually large and may include verbose logs or cached context.',
+          risk: backedUp ? 'medium' : 'high',
+          recoverable: true,
+          backedUp,
+        })
+      }
+    }
+
+    const backupGroups = new Map<string, BackupRecord[]>()
+    backups.forEach((backup) => {
+      const key = `${backup.sessionId}:${backup.sizeBytes}`
+      backupGroups.set(key, [...(backupGroups.get(key) ?? []), backup])
+    })
+    backupGroups.forEach((group) => {
+      if (group.length <= 1) return
+      const duplicates = group.slice(1)
+      candidates.push({
+        id: hashId(['duplicate-backup', group[0].sessionId, group.length]),
+        kind: 'duplicate-backup',
+        title: `Duplicate backups for ${group[0].title}`,
+        source: group[0].source,
+        sessionIds: [group[0].sessionId],
+        paths: duplicates.map((backup) => backup.backupPath),
+        sizeBytes: bytesFromRecords(duplicates),
+        lastUpdated: duplicates[0]?.createdAt,
+        reason: 'Multiple backups have the same session id and size. Keeping the newest copy is enough.',
+        risk: 'low',
+        recoverable: true,
+        backedUp: true,
+      })
+    })
+
+    return candidates.sort((a, b) => b.sizeBytes - a.sizeBytes)
+  }
+
+  private buildUsage(sessions: SessionRecord[]): UsagePoint[] {
+    const points = new Map<string, UsagePoint>()
+    for (let offset = 29; offset >= 0; offset -= 1) {
+      const date = new Date(Date.now() - offset * oneDayMs)
+      const key = formatDateKey(date)
+      points.set(key, {
+        date: key,
+        codex: 0,
+        claude: 0,
+        cursor: 0,
+        gemini: 0,
+        opencode: 0,
+        total: 0,
+      })
+    }
+
+    sessions.forEach((session) => {
+      const key = formatDateKey(new Date(session.lastUpdated))
+      const point = points.get(key)
+      if (!point) return
+      point[session.source] += session.tokens.total
+      point.total += session.tokens.total
+    })
+
+    return Array.from(points.values())
+  }
+
+  private buildStorage(
+    sessions: SessionRecord[],
+    backups: BackupRecord[],
+    trash: TrashRecord[],
+  ): StorageSlice[] {
+    const bySource = new Map<AgentSource, SessionRecord[]>()
+    sessions.forEach((session) => {
+      bySource.set(session.source, [...(bySource.get(session.source) ?? []), session])
+    })
+
+    const slices: StorageSlice[] = Array.from(bySource.entries()).map(([source, items]) => ({
+      source,
+      label: agentLabels[source],
+      sizeBytes: bytesFromRecords(items),
+      sessions: items.length,
+    }))
+
+    slices.push({
+      source: 'backups',
+      label: 'Backups',
+      sizeBytes: bytesFromRecords(backups),
+    })
+    slices.push({
+      source: 'trash',
+      label: 'Trash',
+      sizeBytes: bytesFromRecords(trash),
+    })
+
+    return slices.filter((slice) => slice.sizeBytes > 0).sort((a, b) => b.sizeBytes - a.sizeBytes)
+  }
+}

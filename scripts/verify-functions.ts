@@ -1,0 +1,94 @@
+import { mkdir, mkdtemp, readFile, stat, utimes, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import assert from 'node:assert/strict'
+import { AppService } from '../electron/lib/app-service'
+import type { AgentSource } from '../src/shared/types'
+
+const sources: AgentSource[] = ['codex', 'claude', 'cursor', 'gemini', 'opencode']
+
+async function writeSession(root: string, source: AgentSource, daysOld: number) {
+  const dir = path.join(root, source)
+  await mkdir(dir, { recursive: true })
+  const filePath = path.join(dir, `${source}-session.jsonl`)
+  const workspace = path.join('/tmp', 'clean-my-agent-fixture', source)
+  const lines = [
+    {
+      role: 'user',
+      content: `Refactor ${source} auth flow`,
+      cwd: workspace,
+      branch: 'main',
+      usage: { input_tokens: 100, output_tokens: 50, cached_tokens: 10 },
+    },
+    {
+      role: 'assistant',
+      content: `Finished ${source} refactor`,
+      usage: { input_tokens: 30, output_tokens: 80 },
+    },
+  ]
+  await writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`)
+  const date = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000)
+  await utimes(filePath, date, date)
+  return filePath
+}
+
+async function main() {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'clean-my-agent-fixture-'))
+  const userDataPath = await mkdtemp(path.join(os.tmpdir(), 'clean-my-agent-user-data-'))
+  const files = new Map<AgentSource, string>()
+
+  for (const source of sources) {
+    files.set(source, await writeSession(fixtureRoot, source, 45))
+  }
+
+  const service = new AppService({
+    userDataPath,
+    openPath: async () => undefined,
+  })
+  await service.init()
+  service.updateSettings({
+    cleanupRetentionDays: 30,
+    scanRoots: Object.fromEntries(sources.map((source) => [source, [path.join(fixtureRoot, source)]])),
+    exportDirectory: path.join(userDataPath, 'Exports'),
+  })
+
+  const snapshot = await service.rescan()
+  assert.equal(snapshot.overview.totalSessions, sources.length, 'all source sessions should be scanned')
+  assert.equal(snapshot.cleanup.length, sources.length, 'old sessions should become cleanup candidates')
+  assert.ok(snapshot.overview.totalTokens > 0, 'token totals should be indexed')
+
+  const session = snapshot.sessions.find((item) => item.source === 'codex')
+  assert.ok(session, 'codex session should exist')
+  assert.equal(session.projectName, 'codex', 'project name should be derived from cwd')
+  assert.equal(session.branch, 'main', 'branch should be extracted')
+
+  const backup = await service.backupSession(session.id)
+  assert.ok((await stat(backup.backupPath)).size > 0, 'backup file should be written')
+
+  const markdownPath = await service.exportSession(session.id, 'markdown')
+  assert.match(await readFile(markdownPath, 'utf8'), /# Refactor codex auth flow/)
+
+  const jsonPath = await service.exportSession(session.id, 'json')
+  const exportedSession = JSON.parse(await readFile(jsonPath, 'utf8')) as { id: string }
+  assert.equal(exportedSession.id, session.id, 'JSON export should contain the session')
+
+  const relayPath = await service.exportUniversalRelay(session.id)
+  const relay = JSON.parse(await readFile(relayPath, 'utf8')) as { schema: string; messages: unknown[] }
+  assert.equal(relay.schema, 'clean-my-agent.universal-session.v1')
+  assert.ok(relay.messages.length >= 2, 'relay JSON should include messages')
+
+  const cleanup = await service.scanCleanup()
+  const target = cleanup.find((item) => item.sessionIds.includes(session.id))
+  assert.ok(target, 'cleanup candidate should reference the session')
+
+  const trash = await service.moveCleanupToTrash([target.id])
+  assert.equal(trash.length, 1, 'cleanup should move one item to trash')
+  assert.equal((await service.getSnapshot(false)).sessions.some((item) => item.id === session.id), false)
+
+  await service.restoreTrash(trash[0].id)
+  assert.equal((await service.getSnapshot(true)).sessions.some((item) => item.id === session.id), true)
+
+  console.log('Function verification passed')
+}
+
+await main()
