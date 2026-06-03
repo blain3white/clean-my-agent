@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { type CSSProperties, useMemo, useState } from 'react'
 import CodexIcon from '@lobehub/icons/es/Codex'
 import ClaudeCodeIcon from '@lobehub/icons/es/ClaudeCode'
 import CursorIcon from '@lobehub/icons/es/Cursor'
@@ -69,6 +69,7 @@ import type { AgentSource, CleanupCandidate, DashboardSnapshot, SessionRecord } 
 import './App.css'
 
 type ViewId = 'overview' | 'sessions' | 'cleanup' | 'usage' | 'relay' | 'health' | 'settings'
+type AgentLogoStyle = CSSProperties & { '--agent-color': string }
 
 const navItems: Array<{ id: ViewId; label: string; icon: typeof LayoutDashboard }> = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
@@ -82,9 +83,15 @@ const navItems: Array<{ id: ViewId; label: string; icon: typeof LayoutDashboard 
 
 const sourceColors: Record<AgentSource, string> = {
   codex: '#a78bfa',
-  claude: '#ff9b54',
-  cursor: '#f3f4f6',
-  gemini: '#63c7ff',
+  claude: '#fb923c',
+  cursor: '#cbd5e1',
+  gemini: '#38bdf8',
+  opencode: '#60a5fa',
+}
+
+const sourceIconColors: Record<AgentSource, string> = {
+  ...sourceColors,
+  cursor: '#f8fafc',
   opencode: '#f8fafc',
 }
 
@@ -99,7 +106,11 @@ function AgentGlyph({ source }: { source: AgentSource }) {
   }[source]
 
   return (
-    <span className="agent-logo grid size-8 place-items-center" style={{ color: sourceColors[source] }}>
+    <span
+      className="agent-logo grid size-8 place-items-center"
+      data-source={source}
+      style={{ '--agent-color': sourceColors[source], color: sourceIconColors[source] } as AgentLogoStyle}
+    >
       {icon ?? <Bot className="size-4" />}
     </span>
   )

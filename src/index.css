@@ -219,18 +219,16 @@
     }
   body {
     margin: 0;
-    background:
-      radial-gradient(circle at 80% 0%, rgb(77 95 111 / 18%), transparent 34%),
-      linear-gradient(145deg, #15181a 0%, #101214 42%, #0c0e10 100%);
+    background: transparent;
     color: rgb(255 255 255 / 92%);
     overflow: hidden;
     }
   html {
     @apply font-sans;
-    background: #101214;
+    background: transparent;
     }
   #root {
     min-height: 100vh;
-    background: #101214;
+    background: transparent;
   }
 }

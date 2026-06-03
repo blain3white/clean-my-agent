@@ -11,9 +11,9 @@ export const agentLabel: Record<AgentSource, string> = {
 export const agentAccent: Record<AgentSource, string> = {
   codex: 'text-violet-300 bg-violet-400/12 ring-violet-400/20',
   claude: 'text-orange-300 bg-orange-400/12 ring-orange-400/20',
-  cursor: 'text-white bg-white/10 ring-white/20',
+  cursor: 'text-slate-200 bg-slate-400/12 ring-slate-300/22',
   gemini: 'text-sky-300 bg-sky-400/12 ring-sky-400/20',
-  opencode: 'text-white bg-white/10 ring-white/20',
+  opencode: 'text-emerald-200 bg-emerald-400/12 ring-emerald-300/20',
 }
 
 export const riskAccent: Record<RiskLevel, string> = {

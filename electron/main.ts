@@ -32,6 +32,7 @@ function createWindow(): void {
     title: 'Clean My Agent',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 18, y: 18 },
+    transparent: true,
     vibrancy: 'sidebar',
     visualEffectState: 'active',
     backgroundColor: '#00000000',
