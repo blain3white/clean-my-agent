@@ -6,9 +6,13 @@ import type { AppSettings, ExportFormat } from '../src/shared/types'
 import { AppService } from './lib/app-service'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const appName = 'Clean My Agent'
 
 let mainWindow: BrowserWindow | undefined
 let service: AppService
+
+app.setName(appName)
+app.setAboutPanelOptions({ applicationName: appName })
 
 function getAppIconPath(): string {
   const candidates = [
@@ -29,7 +33,7 @@ function createWindow(): void {
     height: 820,
     minWidth: 1040,
     minHeight: 700,
-    title: 'Clean My Agent',
+    title: appName,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 18, y: 18 },
     transparent: true,

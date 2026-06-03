@@ -157,9 +157,7 @@ function Sidebar({
   return (
     <aside className="sidebar-glass drag-region flex w-[232px] shrink-0 flex-col px-4 pb-4 pt-5">
       <div className="mb-7 flex items-center gap-2 pl-2 pt-8">
-        <div className="brand-logo grid size-8 place-items-center">
-          <img src="/app-logo.png" alt="" className="size-6 object-contain" draggable={false} />
-        </div>
+        <img src="/app-logo.png" alt="" className="size-10 shrink-0 object-contain" draggable={false} />
         <div>
           <div className="text-sm font-medium text-white">Clean My Agent</div>
           <div className="text-[11px] text-white/40">Local session control</div>
