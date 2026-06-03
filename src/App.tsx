@@ -200,13 +200,6 @@ function Sidebar({
         ))}
       </div>
 
-      <div className="mt-auto rounded-lg border border-white/10 bg-black/20 p-4 shadow-[inset_0_1px_0_rgb(255_255_255_/_6%)]">
-        <div className="flex items-center gap-2 text-sm font-medium text-white/88">
-          <ShieldCheck className="size-4 text-emerald-300" />
-          Safe by default
-        </div>
-        <p className="mt-2 text-[13px] leading-5 text-white/52">Cleanup moves files to app Trash. Session candidates are backed up first.</p>
-      </div>
     </aside>
   )
 }
