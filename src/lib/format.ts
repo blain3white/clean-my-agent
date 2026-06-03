@@ -9,11 +9,11 @@ export const agentLabel: Record<AgentSource, string> = {
 }
 
 export const agentAccent: Record<AgentSource, string> = {
-  codex: 'text-emerald-300 bg-emerald-400/12 ring-emerald-400/20',
+  codex: 'text-violet-300 bg-violet-400/12 ring-violet-400/20',
   claude: 'text-orange-300 bg-orange-400/12 ring-orange-400/20',
-  cursor: 'text-slate-200 bg-slate-400/12 ring-slate-300/20',
+  cursor: 'text-white bg-white/10 ring-white/20',
   gemini: 'text-sky-300 bg-sky-400/12 ring-sky-400/20',
-  opencode: 'text-violet-300 bg-violet-400/12 ring-violet-400/20',
+  opencode: 'text-white bg-white/10 ring-white/20',
 }
 
 export const riskAccent: Record<RiskLevel, string> = {
@@ -27,8 +27,7 @@ export function formatBytes(bytes: number): string {
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
   const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
   const value = bytes / 1024 ** index
-  const precision = index === 0 || (index < 3 && value >= 10) ? 0 : 1
-  return `${value.toFixed(precision)} ${units[index]}`
+  return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`
 }
 
 export function formatTokens(tokens: number): string {

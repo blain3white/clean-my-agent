@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { mockSnapshot } from '@/lib/mock-data'
-import { agentSources, type AgentSource, type DashboardSnapshot, type ExportFormat } from '@/shared/types'
+import { agentSources, type AgentSource, type AppSettings, type DashboardSnapshot, type ExportFormat } from '@/shared/types'
 
 type DashboardState = {
   snapshot: DashboardSnapshot
   loading: boolean
-  usingMockData: boolean
+  mockDataEnabled: boolean
+  setMockDataEnabled: (enabled: boolean) => Promise<void>
   rescan: () => Promise<void>
   backupSession: (sessionId: string) => Promise<void>
   exportSession: (sessionId: string, format: ExportFormat) => Promise<void>
@@ -21,6 +22,25 @@ const agentNames: Record<AgentSource, string> = {
   gemini: 'Gemini',
   opencode: 'OpenCode',
 }
+
+const defaultSettings = (): AppSettings => ({
+  scanRoots: {},
+  cleanupRetentionDays: 30,
+  trashRetentionDays: 14,
+  autoBackup: true,
+  mockDataEnabled: false,
+  defaultRelayMode: 'full-context',
+  exportDirectory: '',
+})
+
+const mergeSettings = (settings?: Partial<AppSettings>): AppSettings => ({
+  ...defaultSettings(),
+  ...settings,
+  scanRoots: {
+    ...defaultSettings().scanRoots,
+    ...settings?.scanRoots,
+  },
+})
 
 const emptySnapshot = (): DashboardSnapshot => ({
   generatedAt: new Date().toISOString(),
@@ -50,14 +70,40 @@ const emptySnapshot = (): DashboardSnapshot => ({
 })
 
 export function useDashboard(): DashboardState {
-  const [snapshot, setSnapshot] = useState<DashboardSnapshot>(() => mockSnapshot)
+  const [snapshot, setSnapshot] = useState<DashboardSnapshot>(() => emptySnapshot())
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    const mockDataEnabled = globalThis.localStorage?.getItem('clean-my-agent.mockDataEnabled') === 'true'
+    return mergeSettings({ mockDataEnabled })
+  })
   const [loading, setLoading] = useState(true)
-  const [usingMockData, setUsingMockData] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    const hydrateSettings = async () => {
+      if (!window.cleanMyAgent) return
+      try {
+        const next = await window.cleanMyAgent.getSettings()
+        if (!cancelled) setSettings(mergeSettings(next))
+      } catch (error) {
+        console.error(error)
+        toast.error('Could not read app settings.')
+      }
+    }
+    void hydrateSettings()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const load = useCallback(async (force = false) => {
-    if (!window.cleanMyAgent) {
+    if (settings.mockDataEnabled) {
       setSnapshot(mockSnapshot)
-      setUsingMockData(true)
+      setLoading(false)
+      return
+    }
+
+    if (!window.cleanMyAgent) {
+      setSnapshot(emptySnapshot())
       setLoading(false)
       return
     }
@@ -66,16 +112,14 @@ export function useDashboard(): DashboardState {
     try {
       const next = force ? await window.cleanMyAgent.rescan() : await window.cleanMyAgent.getSnapshot()
       setSnapshot(next)
-      setUsingMockData(false)
     } catch (error) {
       console.error(error)
       toast.error('Could not read local agent data.')
       setSnapshot(emptySnapshot())
-      setUsingMockData(false)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [settings.mockDataEnabled])
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(false), 0)
@@ -84,9 +128,45 @@ export function useDashboard(): DashboardState {
 
   const actions = useMemo(
     () => ({
+      setMockDataEnabled: async (enabled: boolean) => {
+        const nextSettings = mergeSettings({ ...settings, mockDataEnabled: enabled })
+        setSettings(nextSettings)
+        globalThis.localStorage?.setItem('clean-my-agent.mockDataEnabled', String(enabled))
+
+        if (window.cleanMyAgent) {
+          try {
+            const persisted = await window.cleanMyAgent.updateSettings({ mockDataEnabled: enabled })
+            setSettings(mergeSettings(persisted))
+          } catch (error) {
+            console.error(error)
+            toast.error('Could not update demo data setting.')
+            setSettings(settings)
+            return
+          }
+        }
+
+        if (enabled) {
+          setSnapshot(mockSnapshot)
+          setLoading(false)
+          toast.success('Demo data enabled')
+        } else {
+          toast.success('Live local data enabled')
+          setLoading(true)
+          try {
+            const next = window.cleanMyAgent ? await window.cleanMyAgent.getSnapshot() : emptySnapshot()
+            setSnapshot(next)
+          } catch (error) {
+            console.error(error)
+            toast.error('Could not read local agent data.')
+            setSnapshot(emptySnapshot())
+          } finally {
+            setLoading(false)
+          }
+        }
+      },
       rescan: async () => {
         await load(true)
-        toast.success('Agent data scanned')
+        toast.success(settings.mockDataEnabled ? 'Demo data refreshed' : 'Agent data scanned')
       },
       backupSession: async (sessionId: string) => {
         if (!window.cleanMyAgent) {
@@ -123,13 +203,13 @@ export function useDashboard(): DashboardState {
         await load(true)
       },
     }),
-    [load],
+    [load, settings],
   )
 
   return {
     snapshot,
     loading,
-    usingMockData,
+    mockDataEnabled: settings.mockDataEnabled,
     ...actions,
   }
 }

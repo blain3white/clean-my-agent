@@ -165,6 +165,7 @@ export type AppSettings = {
   cleanupRetentionDays: number
   trashRetentionDays: number
   autoBackup: boolean
+  mockDataEnabled: boolean
   defaultRelayMode: 'full-context' | 'fit-to-window' | 'manual-select'
   exportDirectory: string
 }

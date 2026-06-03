@@ -281,6 +281,7 @@ export class AppService {
       cleanupRetentionDays: 30,
       trashRetentionDays: 14,
       autoBackup: true,
+      mockDataEnabled: false,
       defaultRelayMode: 'full-context',
       exportDirectory: path.join(this.userDataPath, 'Exports'),
     }

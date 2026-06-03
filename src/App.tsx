@@ -22,7 +22,6 @@ import {
   LayoutDashboard,
   ListFilter,
   Loader2,
-  MoreHorizontal,
   Moon,
   Pin,
   RefreshCcw,
@@ -30,7 +29,6 @@ import {
   Settings,
   ShieldCheck,
   Sun,
-  Sparkles,
   Trash2,
 } from 'lucide-react'
 import {
@@ -54,6 +52,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
+import { Switch } from '@/components/ui/switch'
 import {
   Table,
   TableBody,
@@ -82,11 +81,11 @@ const navItems: Array<{ id: ViewId; label: string; icon: typeof LayoutDashboard 
 ]
 
 const sourceColors: Record<AgentSource, string> = {
-  codex: '#54d18b',
+  codex: '#a78bfa',
   claude: '#ff9b54',
-  cursor: '#d3d7df',
+  cursor: '#f3f4f6',
   gemini: '#63c7ff',
-  opencode: '#a78bfa',
+  opencode: '#f8fafc',
 }
 
 function AgentGlyph({ source }: { source: AgentSource }) {
@@ -145,24 +144,18 @@ function Sidebar({
   snapshot: DashboardSnapshot
 }) {
   return (
-    <aside className="sidebar-glass drag-region flex w-[280px] shrink-0 flex-col px-5 pb-5 pt-5">
-      <div className="mb-7 flex h-5 items-center gap-2">
-        <span className="size-3.5 rounded-full bg-[#ff5f57] shadow-[0_0_10px_rgb(255_95_87_/_35%)]" />
-        <span className="size-3.5 rounded-full bg-[#ffbd2e] shadow-[0_0_10px_rgb(255_189_46_/_30%)]" />
-        <span className="size-3.5 rounded-full bg-[#28c840] shadow-[0_0_10px_rgb(40_200_64_/_30%)]" />
-      </div>
-
-      <div className="mb-9 flex items-center gap-2.5 pl-2">
-        <div className="grid size-10 place-items-center rounded-lg bg-emerald-400/14 text-emerald-300 ring-1 ring-emerald-400/24 shadow-[inset_0_1px_0_rgb(255_255_255_/_12%)]">
-          <Sparkles className="size-4" />
+    <aside className="sidebar-glass drag-region flex w-[232px] shrink-0 flex-col px-4 pb-4 pt-5">
+      <div className="mb-7 flex items-center gap-2 pl-2 pt-8">
+        <div className="brand-logo grid size-8 place-items-center">
+          <img src="/app-logo.png" alt="" className="size-6 object-contain" draggable={false} />
         </div>
         <div>
-          <div className="text-[15px] font-semibold text-white">Clean My Agent</div>
-          <div className="text-[12px] text-white/45">Local session control</div>
+          <div className="text-sm font-medium text-white">Clean My Agent</div>
+          <div className="text-[11px] text-white/40">Local session control</div>
         </div>
       </div>
 
-      <nav className="space-y-1.5">
+      <nav className="space-y-1">
         {navItems.map((item) => {
           const Icon = item.icon
           const active = activeView === item.id
@@ -171,33 +164,41 @@ function Sidebar({
               key={item.id}
               type="button"
               onClick={() => setActiveView(item.id)}
-              className={`flex h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-[15px] transition ${
-                active ? 'bg-white/14 text-white shadow-inner' : 'text-white/68 hover:bg-white/7 hover:text-white'
+              className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] transition ${
+                active ? 'bg-white/11 text-white shadow-inner' : 'text-white/66 hover:bg-white/7 hover:text-white'
               }`}
             >
-              <Icon className="size-[18px]" />
+              <Icon className="size-4" />
               <span>{item.label}</span>
             </button>
           )
         })}
       </nav>
 
-      <div className="mt-9 flex items-center justify-between px-2 text-[12px] uppercase tracking-wide text-white/38">
+      <div className="mt-8 flex items-center justify-between px-2 text-[11px] uppercase tracking-wide text-white/35">
         <span>Sources</span>
-        <Circle className="size-3 fill-emerald-300/75 text-emerald-300/75" />
+        <Circle className="size-3 fill-emerald-300/70 text-emerald-300/70" />
       </div>
       <div className="mt-3 space-y-2">
         {snapshot.agents.map((agent) => (
-          <div key={agent.source} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-white/70">
+          <div key={agent.source} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-white/70">
             <AgentGlyph source={agent.source} />
             <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium text-white/86">{agent.name}</div>
-              <div className="text-[12px] text-white/48">
+              <div className="truncate text-xs font-medium text-white/82">{agent.name}</div>
+              <div className="text-[11px] text-white/38">
                 {agent.sessionCount} sessions · {agent.readable ? 'Readable' : 'Not found'}
               </div>
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="mt-auto rounded-lg border border-white/8 bg-black/18 p-3">
+        <div className="flex items-center gap-2 text-xs font-medium text-white/80">
+          <ShieldCheck className="size-4 text-emerald-300" />
+          Safe by default
+        </div>
+        <p className="mt-2 text-[11px] leading-4 text-white/42">Cleanup moves files to app Trash. Session candidates are backed up first.</p>
       </div>
 
     </aside>
@@ -207,14 +208,14 @@ function Sidebar({
 function Topbar({
   activeView,
   loading,
-  usingMockData,
+  mockDataEnabled,
   resolvedTheme,
   onThemeToggle,
   onRescan,
 }: {
   activeView: ViewId
   loading: boolean
-  usingMockData: boolean
+  mockDataEnabled: boolean
   resolvedTheme: 'light' | 'dark'
   onThemeToggle: () => void
   onRescan: () => Promise<void>
@@ -225,73 +226,43 @@ function Topbar({
   const subtitle =
     activeView === 'cleanup'
       ? 'Review and remove safe, backed up, or redundant session data.'
-      : usingMockData
-        ? 'Previewing demo data in renderer mode'
+      : mockDataEnabled
+        ? 'Previewing balanced demo data'
         : 'Local-first scan of your AI coding sessions'
 
-  if (activeView !== 'cleanup') {
-    return (
-      <header className="drag-region flex h-16 shrink-0 items-center justify-between border-b border-white/8 px-7">
-        <div>
-          <h1 className="text-xl font-semibold text-white">{title}</h1>
-          <p className="mt-0.5 text-xs text-white/42">{subtitle}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                size="icon-sm"
-                onClick={onThemeToggle}
-                aria-label={`Switch to ${nextThemeLabel} mode`}
-                className="theme-toggle border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
-              >
-                <ThemeIcon className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Switch to {nextThemeLabel} mode</TooltipContent>
-          </Tooltip>
-          <Badge variant="outline" className="border-white/10 bg-white/5 text-white/55">
-            {usingMockData ? 'Demo' : 'Desktop'}
-          </Badge>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="outline" size="icon-sm" onClick={() => void onRescan()} disabled={loading} className="border-white/10 bg-white/5 text-white hover:bg-white/10">
-                {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCcw className="size-4" />}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Rescan local agent data</TooltipContent>
-          </Tooltip>
-        </div>
-      </header>
-    )
-  }
-
   return (
-    <header className="drag-region flex h-[128px] shrink-0 items-start justify-between px-12 pt-11">
+    <header className="drag-region flex h-16 shrink-0 items-center justify-between border-b border-white/8 px-7">
       <div>
-        <h1 className="text-[38px] font-semibold leading-none tracking-normal text-white">{title}</h1>
-        <p className="mt-3 text-[16px] text-white/58">{subtitle}</p>
+        <h1 className="text-xl font-semibold text-white">{title}</h1>
+        <p className="mt-0.5 text-xs text-white/42">{subtitle}</p>
       </div>
       <div className="flex items-center gap-2">
-        <Badge variant="outline" className="h-9 rounded-lg border-white/12 bg-white/5 px-3 text-sm font-normal text-white/68">
-          {usingMockData ? 'Demo' : 'Desktop'}
-        </Badge>
+        {mockDataEnabled && (
+          <Badge variant="outline" className="border-violet-300/20 bg-violet-400/10 text-violet-200">
+            Demo
+          </Badge>
+        )}
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="outline" size="icon-lg" onClick={() => void onRescan()} disabled={loading} aria-label="Rescan local agent data" className="rounded-lg border-white/12 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white">
+            <Button
+              variant="outline"
+              size="icon-sm"
+              onClick={onThemeToggle}
+              aria-label={`Switch to ${nextThemeLabel} mode`}
+              className="theme-toggle border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
+            >
+              <ThemeIcon className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Switch to {nextThemeLabel} mode</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="outline" size="icon-sm" onClick={() => void onRescan()} disabled={loading} className="border-white/10 bg-white/5 text-white hover:bg-white/10">
               {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCcw className="size-4" />}
             </Button>
           </TooltipTrigger>
           <TooltipContent>Rescan local agent data</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="outline" size="icon-lg" aria-label="More actions" className="rounded-lg border-white/12 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white">
-              <MoreHorizontal className="size-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>More actions</TooltipContent>
         </Tooltip>
       </div>
     </header>
@@ -373,9 +344,11 @@ function OverviewView({ snapshot, onSelectCleanup }: { snapshot: DashboardSnapsh
 
       <section className="grid grid-cols-[1fr_400px] gap-4">
         <Card className="glass-panel rounded-lg py-4">
-          <CardHeader className="flex-row items-center justify-between pb-0">
-            <CardTitle className="text-sm text-white">Recent Sessions</CardTitle>
-            <Button variant="ghost" size="sm" className="text-blue-300 hover:bg-blue-400/10 hover:text-blue-200">View all</Button>
+          <CardHeader className="pb-0">
+            <div className="flex w-full items-center justify-between">
+              <CardTitle className="text-sm text-white">Recent Sessions</CardTitle>
+              <Button variant="ghost" size="sm" className="text-blue-300 hover:bg-blue-400/10 hover:text-blue-200">View all</Button>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="divide-y divide-white/7">
@@ -396,9 +369,11 @@ function OverviewView({ snapshot, onSelectCleanup }: { snapshot: DashboardSnapsh
         </Card>
 
         <Card className="glass-panel rounded-lg py-4">
-          <CardHeader className="flex-row items-center justify-between pb-0">
-            <CardTitle className="text-sm text-white">Smart Cleanup</CardTitle>
-            <Button variant="ghost" size="sm" onClick={onSelectCleanup} className="text-blue-300 hover:bg-blue-400/10 hover:text-blue-200">Review</Button>
+          <CardHeader className="pb-0">
+            <div className="flex w-full items-center justify-between">
+              <CardTitle className="text-sm text-white">Smart Cleanup</CardTitle>
+              <Button variant="ghost" size="sm" onClick={onSelectCleanup} className="text-blue-300 hover:bg-blue-400/10 hover:text-blue-200">Review</Button>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
@@ -853,27 +828,55 @@ function HealthView({ snapshot }: { snapshot: DashboardSnapshot }) {
   )
 }
 
-function SettingsView() {
+function SettingsView({
+  mockDataEnabled,
+  onMockDataChange,
+}: {
+  mockDataEnabled: boolean
+  onMockDataChange: (enabled: boolean) => Promise<void>
+}) {
   return (
-    <Card className="glass-panel rounded-lg py-4">
-      <CardHeader className="pb-0">
-        <CardTitle className="text-sm text-white">Settings Scope</CardTitle>
-        <p className="mt-1 text-xs text-white/42">The backend already exposes settings for scan roots, cleanup retention, trash retention, auto backup, relay mode, and export directory.</p>
-      </CardHeader>
-      <CardContent className="grid grid-cols-2 gap-3">
-        {[
-          ['Scan directories', 'Configure per-agent roots for Codex, Claude Code, Cursor, Gemini, and OpenCode.'],
-          ['Trash retention', 'Keep deleted files recoverable before permanent cleanup.'],
-          ['Backup defaults', 'Create raw-copy backups before risky cleanup actions.'],
-          ['Relay mode', 'Universal JSON first, target-agent converters later.'],
-        ].map(([title, body]) => (
-          <div key={title} className="rounded-lg border border-white/8 bg-white/[0.03] p-4">
-            <div className="text-sm font-medium text-white/82">{title}</div>
-            <div className="mt-2 text-xs leading-5 text-white/42">{body}</div>
+    <div className="grid grid-cols-[minmax(0,1fr)_340px] gap-4 max-[1080px]:grid-cols-1">
+      <Card className="glass-panel rounded-lg py-4">
+        <CardHeader className="pb-0">
+          <CardTitle className="text-sm text-white">Display Data</CardTitle>
+          <p className="mt-1 text-xs text-white/42">Switch between live local scan results and a balanced demo dataset for visual review.</p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center justify-between gap-4 rounded-lg border border-white/8 bg-white/[0.035] p-4">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-white/82">Demo data</div>
+              <div className="mt-1 text-xs leading-5 text-white/42">Overview, Usage, Cleanup, Sessions, Relay, and Health use curated mock values while enabled.</div>
+            </div>
+            <Switch
+              checked={mockDataEnabled}
+              onCheckedChange={(checked) => void onMockDataChange(checked)}
+              className="data-checked:bg-violet-400"
+              aria-label="Toggle demo data"
+            />
           </div>
-        ))}
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+
+      <Card className="glass-panel rounded-lg py-4">
+        <CardHeader className="pb-0">
+          <CardTitle className="text-sm text-white">Settings Scope</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {[
+            ['Scan directories', 'Configure per-agent roots for all supported agents.'],
+            ['Trash retention', 'Keep deleted files recoverable before permanent cleanup.'],
+            ['Backup defaults', 'Create raw-copy backups before risky cleanup actions.'],
+            ['Relay mode', 'Universal JSON first, target-agent converters later.'],
+          ].map(([title, body]) => (
+            <div key={title} className="rounded-lg border border-white/8 bg-white/[0.03] p-4">
+              <div className="text-sm font-medium text-white/82">{title}</div>
+              <div className="mt-2 text-xs leading-5 text-white/42">{body}</div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </div>
   )
 }
 
@@ -897,7 +900,7 @@ function App() {
       case 'health':
         return <HealthView snapshot={dashboard.snapshot} />
       case 'settings':
-        return <SettingsView />
+        return <SettingsView mockDataEnabled={dashboard.mockDataEnabled} onMockDataChange={dashboard.setMockDataEnabled} />
       default:
         return null
     }
@@ -905,23 +908,23 @@ function App() {
 
   return (
     <TooltipProvider>
-      <div className={`mac-window theme-${activeView === 'cleanup' ? 'dark' : theme.resolvedTheme} flex h-screen overflow-hidden text-white soft-grid`}>
+      <div className={`mac-window theme-${theme.resolvedTheme} flex h-screen overflow-hidden text-white`}>
         <Sidebar activeView={activeView} setActiveView={setActiveView} snapshot={dashboard.snapshot} />
-        <main className="flex min-w-0 flex-1 flex-col">
+        <main className="main-surface soft-grid flex min-w-0 flex-1 flex-col">
           <Topbar
             activeView={activeView}
             loading={dashboard.loading}
-            usingMockData={dashboard.usingMockData}
+            mockDataEnabled={dashboard.mockDataEnabled}
             resolvedTheme={theme.resolvedTheme}
             onThemeToggle={() => theme.setPreference(theme.resolvedTheme === 'dark' ? 'light' : 'dark')}
             onRescan={dashboard.rescan}
           />
           <div className="content-scroll no-drag-region min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-            <div className={activeView === 'cleanup' ? 'px-7 pb-8' : 'p-5'}>{content}</div>
+            <div className="p-5">{content}</div>
           </div>
         </main>
       </div>
-      <Toaster theme={activeView === 'cleanup' ? 'dark' : theme.resolvedTheme} position="top-right" />
+      <Toaster theme={theme.resolvedTheme} position="top-right" />
     </TooltipProvider>
   )
 }

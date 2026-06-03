@@ -1,150 +1,187 @@
-import type { DashboardSnapshot } from '@/shared/types'
+import type { AgentSource, DashboardSnapshot, SessionRecord } from '@/shared/types'
 
+const GB = 1024 ** 3
+const MB = 1024 ** 2
 const now = new Date()
 const ago = (hours: number) => new Date(now.getTime() - hours * 60 * 60 * 1000).toISOString()
+
+const sessionBase: Array<{
+  id: string
+  source: AgentSource
+  title: string
+  projectName: string
+  branch: string
+  hoursAgo: number
+  messages: number
+  tokens: number
+  sizeMb: number
+  backedUp: boolean
+}> = [
+  { id: 'demo-codex-1', source: 'codex', title: 'Polish cleanup queue layout', projectName: 'clean-my-agent', branch: 'main', hoursAgo: 0.2, messages: 184, tokens: 482_000, sizeMb: 412, backedUp: true },
+  { id: 'demo-claude-1', source: 'claude', title: 'Fix billing retention policy', projectName: 'acme/billing', branch: 'feature/retention', hoursAgo: 1.1, messages: 231, tokens: 612_000, sizeMb: 528, backedUp: true },
+  { id: 'demo-cursor-1', source: 'cursor', title: 'Add analytics events', projectName: 'acme/analytics', branch: 'main', hoursAgo: 3.4, messages: 92, tokens: 286_000, sizeMb: 196, backedUp: true },
+  { id: 'demo-gemini-1', source: 'gemini', title: 'Research storage adapters', projectName: 'agent-lab', branch: 'research/storage', hoursAgo: 6.8, messages: 119, tokens: 314_000, sizeMb: 154, backedUp: false },
+  { id: 'demo-opencode-1', source: 'opencode', title: 'Prototype relay converter', projectName: 'relay-kit', branch: 'prototype', hoursAgo: 13.6, messages: 76, tokens: 228_000, sizeMb: 132, backedUp: true },
+  { id: 'demo-codex-2', source: 'codex', title: 'Design settings data toggle', projectName: 'clean-my-agent', branch: 'mock-data', hoursAgo: 20.5, messages: 156, tokens: 436_000, sizeMb: 324, backedUp: true },
+  { id: 'demo-claude-2', source: 'claude', title: 'Trace export edge cases', projectName: 'agent-archive', branch: 'main', hoursAgo: 34, messages: 208, tokens: 548_000, sizeMb: 468, backedUp: false },
+  { id: 'demo-cursor-2', source: 'cursor', title: 'Tune dashboard cards', projectName: 'ops-dashboard', branch: 'ui-pass', hoursAgo: 46, messages: 88, tokens: 242_000, sizeMb: 188, backedUp: true },
+]
+
+const sessions: SessionRecord[] = sessionBase.map((session) => ({
+  id: session.id,
+  source: session.source,
+  title: session.title,
+  projectName: session.projectName,
+  projectPath: `/Users/demo/projects/${session.projectName}`,
+  branch: session.branch,
+  storagePath: `/demo/${session.source}/${session.id}.jsonl`,
+  storageKind: 'file',
+  createdAt: ago(session.hoursAgo + 72),
+  lastUpdated: ago(session.hoursAgo),
+  messageCount: session.messages,
+  tokens: {
+    input: Math.round(session.tokens * 0.56),
+    output: Math.round(session.tokens * 0.28),
+    cached: Math.round(session.tokens * 0.16),
+    total: session.tokens,
+    estimated: session.source === 'cursor',
+  },
+  sizeBytes: session.sizeMb * MB,
+  backupStatus: session.backedUp ? 'backed-up' : 'pending',
+  tags: [session.source, 'demo'],
+  metadata: {},
+}))
+
+const usage = Array.from({ length: 30 }, (_, index) => {
+  const date = new Date(now.getTime() - (29 - index) * 24 * 60 * 60 * 1000)
+  const lift = Math.sin((index - 4) / 4) * 34_000 + Math.cos(index / 7) * 18_000
+  const codex = Math.round(172_000 + lift + index * 2_100)
+  const claude = Math.round(148_000 + Math.cos(index / 4.4) * 29_000 + index * 1_650)
+  const cursor = Math.round(82_000 + Math.sin(index / 3.2) * 15_000 + index * 880)
+  const gemini = Math.round(56_000 + Math.cos(index / 5.2) * 11_000 + index * 520)
+  const opencode = Math.round(42_000 + Math.sin(index / 5.5) * 8_000 + index * 390)
+  return {
+    date: date.toISOString().slice(0, 10),
+    codex,
+    claude,
+    cursor,
+    gemini,
+    opencode,
+    total: codex + claude + cursor + gemini + opencode,
+  }
+})
 
 export const mockSnapshot: DashboardSnapshot = {
   generatedAt: now.toISOString(),
   overview: {
     totalSessions: 128,
     backedUpSessions: 104,
-    reclaimableBytes: 18_700_000_000,
+    reclaimableBytes: 13.9 * GB,
     lastBackupAt: ago(3),
     totalTokens: 12_430_000,
-    totalSizeBytes: 62_300_000_000,
-    highRiskCleanupCount: 2,
+    totalSizeBytes: 46.2 * GB,
+    highRiskCleanupCount: 0,
   },
   agents: [
-    { source: 'codex', name: 'Codex', installed: true, readable: true, rootPaths: ['~/.codex/sessions'], sessionCount: 46, sizeBytes: 14_200_000_000, lastScannedAt: ago(0.1) },
-    { source: 'claude', name: 'Claude Code', installed: true, readable: true, rootPaths: ['~/.claude/projects'], sessionCount: 38, sizeBytes: 21_400_000_000, lastScannedAt: ago(0.1) },
-    { source: 'cursor', name: 'Cursor', installed: true, readable: true, rootPaths: ['~/Library/Application Support/Cursor'], sessionCount: 22, sizeBytes: 9_700_000_000, lastScannedAt: ago(0.1) },
-    { source: 'gemini', name: 'Gemini', installed: true, readable: true, rootPaths: ['~/.gemini'], sessionCount: 12, sizeBytes: 4_600_000_000, lastScannedAt: ago(0.1) },
-    { source: 'opencode', name: 'OpenCode', installed: true, readable: true, rootPaths: ['~/.local/share/opencode'], sessionCount: 10, sizeBytes: 3_100_000_000, lastScannedAt: ago(0.1) },
+    { source: 'codex', name: 'Codex', installed: true, readable: true, rootPaths: ['~/.codex/sessions'], sessionCount: 46, sizeBytes: 13.2 * GB, lastScannedAt: ago(0.1) },
+    { source: 'claude', name: 'Claude Code', installed: true, readable: true, rootPaths: ['~/.claude/projects'], sessionCount: 38, sizeBytes: 19.8 * GB, lastScannedAt: ago(0.1) },
+    { source: 'cursor', name: 'Cursor', installed: true, readable: true, rootPaths: ['~/Library/Application Support/Cursor'], sessionCount: 22, sizeBytes: 8.9 * GB, lastScannedAt: ago(0.1) },
+    { source: 'gemini', name: 'Gemini', installed: true, readable: true, rootPaths: ['~/.gemini'], sessionCount: 14, sizeBytes: 4.2 * GB, lastScannedAt: ago(0.1) },
+    { source: 'opencode', name: 'OpenCode', installed: true, readable: true, rootPaths: ['~/.local/share/opencode'], sessionCount: 8, sizeBytes: 3.0 * GB, lastScannedAt: ago(0.1) },
   ],
-  sessions: [
-    {
-      id: 'demo-codex-1',
-      source: 'codex',
-      title: 'Refactor auth flow',
-      projectName: 'acme/web-app',
-      projectPath: '/Users/demo/acme/web-app',
-      branch: 'main',
-      storagePath: '/demo/codex/auth.jsonl',
-      storageKind: 'file',
-      createdAt: ago(60),
-      lastUpdated: ago(0.1),
-      messageCount: 184,
-      tokens: { input: 28_000, output: 16_200, cached: 4_000, total: 48_200, estimated: false },
-      sizeBytes: 2_100_000,
-      backupStatus: 'backed-up',
-      tags: ['codex'],
-      metadata: {},
-    },
-    {
-      id: 'demo-claude-1',
-      source: 'claude',
-      title: 'Fix billing edge case',
-      projectName: 'acme/billing',
-      projectPath: '/Users/demo/acme/billing',
-      branch: 'feature/fix-pricing',
-      storagePath: '/demo/claude/billing.jsonl',
-      storageKind: 'file',
-      createdAt: ago(80),
-      lastUpdated: ago(0.3),
-      messageCount: 231,
-      tokens: { input: 69_000, output: 31_700, cached: 12_000, total: 112_700, estimated: false },
-      sizeBytes: 3_400_000,
-      backupStatus: 'backed-up',
-      tags: ['claude'],
-      metadata: {},
-    },
-    {
-      id: 'demo-cursor-1',
-      source: 'cursor',
-      title: 'Add analytics events',
-      projectName: 'acme/analytics',
-      projectPath: '/Users/demo/acme/analytics',
-      branch: 'main',
-      storagePath: '/demo/cursor/analytics.json',
-      storageKind: 'file',
-      createdAt: ago(90),
-      lastUpdated: ago(1),
-      messageCount: 92,
-      tokens: { input: 19_000, output: 10_200, cached: 2_900, total: 32_100, estimated: true },
-      sizeBytes: 1_200_000,
-      backupStatus: 'backed-up',
-      tags: ['cursor'],
-      metadata: {},
-    },
-  ],
+  sessions,
   cleanup: [
     {
-      id: 'cleanup-1',
+      id: 'cleanup-codex-archive',
       kind: 'backed-up-session',
-      title: 'Backed up sessions older than 30 days',
+      title: 'Archived Codex sessions',
       source: 'codex',
-      sessionIds: ['demo-codex-1'],
-      paths: ['/demo/codex/auth.jsonl'],
-      sizeBytes: 7_600_000_000,
-      lastUpdated: ago(1000),
-      reason: 'Already backed up and inactive for more than 30 days.',
+      sessionIds: ['demo-codex-2'],
+      paths: ['/demo/codex/archive'],
+      sizeBytes: 4.8 * GB,
+      lastUpdated: ago(840),
+      reason: 'Backed up and inactive for more than 30 days.',
       risk: 'low',
       recoverable: true,
       backedUp: true,
     },
     {
-      id: 'cleanup-2',
+      id: 'cleanup-claude-logs',
       kind: 'large-log',
       title: 'Large Claude Code logs',
       source: 'claude',
-      sessionIds: ['demo-claude-1'],
-      paths: ['/demo/claude/billing.jsonl'],
-      sizeBytes: 4_200_000_000,
-      lastUpdated: ago(70),
-      reason: 'Verbose logs safe to remove after backup.',
+      sessionIds: ['demo-claude-2'],
+      paths: ['/demo/claude/logs'],
+      sizeBytes: 3.6 * GB,
+      lastUpdated: ago(510),
+      reason: 'Verbose logs from completed debugging sessions are safe after backup.',
       risk: 'medium',
       recoverable: true,
       backedUp: false,
     },
     {
-      id: 'cleanup-3',
+      id: 'cleanup-cursor-backups',
       kind: 'duplicate-backup',
-      title: 'Duplicate backup bundles',
+      title: 'Duplicate Cursor backups',
       source: 'cursor',
-      sessionIds: ['demo-cursor-1'],
+      sessionIds: ['demo-cursor-2'],
       paths: ['/demo/backups/cursor'],
-      sizeBytes: 3_100_000_000,
-      lastUpdated: ago(200),
-      reason: 'Multiple backups have identical session id and size.',
+      sizeBytes: 2.7 * GB,
+      lastUpdated: ago(300),
+      reason: 'Multiple backup bundles match the same session id and size.',
       risk: 'low',
       recoverable: true,
       backedUp: true,
     },
+    {
+      id: 'cleanup-gemini-cache',
+      kind: 'temp-file',
+      title: 'Gemini research cache',
+      source: 'gemini',
+      sessionIds: ['demo-gemini-1'],
+      paths: ['/demo/gemini/cache'],
+      sizeBytes: 2.1 * GB,
+      lastUpdated: ago(180),
+      reason: 'Temporary search context cache can be regenerated on demand.',
+      risk: 'low',
+      recoverable: true,
+      backedUp: true,
+    },
+    {
+      id: 'cleanup-opencode-orphans',
+      kind: 'orphan-session',
+      title: 'OpenCode orphan sessions',
+      source: 'opencode',
+      sessionIds: ['demo-opencode-1'],
+      paths: ['/demo/opencode/orphans'],
+      sizeBytes: 0.7 * GB,
+      lastUpdated: ago(420),
+      reason: 'No matching project metadata was found for these old session files.',
+      risk: 'medium',
+      recoverable: true,
+      backedUp: false,
+    },
   ],
-  backups: [],
+  backups: [
+    {
+      id: 'backup-demo-codex',
+      sessionId: 'demo-codex-1',
+      source: 'codex',
+      title: 'Polish cleanup queue layout',
+      createdAt: ago(3),
+      sizeBytes: 408 * MB,
+      backupPath: '/demo/backups/codex/demo-codex-1.jsonl',
+      originalPath: '/demo/codex/demo-codex-1.jsonl',
+      format: 'raw-copy',
+    },
+  ],
   trash: [],
-  usage: Array.from({ length: 30 }, (_, index) => {
-    const date = new Date(now.getTime() - (29 - index) * 24 * 60 * 60 * 1000)
-    const codex = 80_000 + Math.round(Math.sin(index / 2) * 25_000 + index * 1300)
-    const claude = 70_000 + Math.round(Math.cos(index / 3) * 22_000 + index * 1000)
-    const cursor = 35_000 + Math.round(Math.sin(index / 1.5) * 9_000)
-    const gemini = 20_000 + Math.round(Math.cos(index / 2.2) * 8_000)
-    const opencode = 16_000 + Math.round(Math.sin(index / 2.8) * 6_000)
-    return {
-      date: date.toISOString().slice(0, 10),
-      codex,
-      claude,
-      cursor,
-      gemini,
-      opencode,
-      total: codex + claude + cursor + gemini + opencode,
-    }
-  }),
+  usage,
   storage: [
-    { source: 'claude', label: 'Claude Code', sizeBytes: 21_400_000_000, sessions: 38 },
-    { source: 'codex', label: 'Codex', sizeBytes: 14_200_000_000, sessions: 46 },
-    { source: 'cursor', label: 'Cursor', sizeBytes: 9_700_000_000, sessions: 22 },
-    { source: 'gemini', label: 'Gemini', sizeBytes: 4_600_000_000, sessions: 12 },
-    { source: 'opencode', label: 'OpenCode', sizeBytes: 3_100_000_000, sessions: 10 },
+    { source: 'claude', label: 'Claude Code', sizeBytes: 19.8 * GB, sessions: 38 },
+    { source: 'codex', label: 'Codex', sizeBytes: 13.2 * GB, sessions: 46 },
+    { source: 'cursor', label: 'Cursor', sizeBytes: 8.9 * GB, sessions: 22 },
+    { source: 'gemini', label: 'Gemini', sizeBytes: 4.2 * GB, sessions: 14 },
+    { source: 'opencode', label: 'OpenCode', sizeBytes: 3.0 * GB, sessions: 8 },
   ],
 }

@@ -40,6 +40,15 @@ Clean My Agent is a local-first Electron app for scanning, backing up, exporting
 - After touching cleanup, backup, export, scan, or Trash behavior, run `pnpm verify:functions`.
 - After UI-only changes, run at least `pnpm lint`; run `pnpm build` when types or shared contracts changed.
 
+## Commit Rules
+
+- Inspect `git status --short` before staging.
+- Never stage unrelated files, user edits, generated assets, or another agent's work unless the user explicitly asks for them.
+- Stage explicit paths only; avoid broad `git add .` in a dirty worktree.
+- Run the relevant checks before committing. Use `pnpm build` when TypeScript contracts, Electron IPC, or bundled assets changed.
+- Use concise imperative commit messages that name the scope.
+- Push only after the commit succeeds and the checked files still match the intended scope.
+
 ## Notes
 
 - Universal relay export schema is `clean-my-agent.universal-session.v1`.

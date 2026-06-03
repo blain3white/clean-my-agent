@@ -34,11 +34,11 @@ function createWindow(): void {
     trafficLightPosition: { x: 18, y: 18 },
     vibrancy: 'sidebar',
     visualEffectState: 'active',
-    backgroundColor: '#101112',
+    backgroundColor: '#00000000',
     icon: iconPath,
     show: false,
     webPreferences: {
-      preload: path.join(__dirname, '../preload/preload.js'),
+      preload: path.join(__dirname, '../preload/preload.mjs'),
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
