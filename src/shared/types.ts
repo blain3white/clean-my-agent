@@ -10,7 +10,10 @@ export type TokenUsage = {
   input: number
   output: number
   cached: number
+  cacheCreation?: number
+  cacheRead?: number
   total: number
+  costUsd?: number
   estimated: boolean
 }
 
@@ -117,6 +120,7 @@ export type DashboardOverview = {
   reclaimableBytes: number
   lastBackupAt?: string
   totalTokens: number
+  totalCostUsd?: number
   totalSizeBytes: number
   highRiskCleanupCount: number
 }

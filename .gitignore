@@ -12,6 +12,7 @@ dist
 dist-ssr
 out
 .codex-backups/
+external/claude-code-history-viewer/
 .env
 .env.*
 *.local

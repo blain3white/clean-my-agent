@@ -49,6 +49,7 @@ const emptySnapshot = (): DashboardSnapshot => ({
     backedUpSessions: 0,
     reclaimableBytes: 0,
     totalTokens: 0,
+    totalCostUsd: 0,
     totalSizeBytes: 0,
     highRiskCleanupCount: 0,
   },

@@ -42,6 +42,20 @@ function bytesFromRecords(records: Array<{ sizeBytes: number }>): number {
   return records.reduce((total, record) => total + record.sizeBytes, 0)
 }
 
+function usageByDateFromMetadata(metadata: Record<string, unknown>): Record<string, number> | undefined {
+  const value = metadata.usageByDate
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+
+  const usageByDate: Record<string, number> = {}
+  Object.entries(value).forEach(([date, tokens]) => {
+    if (typeof tokens === 'number' && Number.isFinite(tokens) && tokens > 0) {
+      usageByDate[date] = tokens
+    }
+  })
+
+  return usageByDate
+}
+
 function markdownForSession(session: SessionRecord): string {
   return [
     `# ${session.title}`,
@@ -52,6 +66,7 @@ function markdownForSession(session: SessionRecord): string {
     `- Last updated: ${session.lastUpdated}`,
     `- Messages: ${session.messageCount}`,
     `- Tokens: ${session.tokens.total.toLocaleString()}${session.tokens.estimated ? ' (estimated)' : ''}`,
+    `- Cost: ${typeof session.tokens.costUsd === 'number' ? `$${session.tokens.costUsd.toFixed(4)}` : 'Unknown'}`,
     `- Size: ${session.sizeBytes} bytes`,
     `- Storage: ${session.storagePath}`,
     '',
@@ -116,6 +131,7 @@ export class AppService {
         reclaimableBytes: cleanup.reduce((total, item) => total + item.sizeBytes, 0),
         lastBackupAt: backups[0]?.createdAt,
         totalTokens: sessions.reduce((total, session) => total + session.tokens.total, 0),
+        totalCostUsd: sessions.reduce((total, session) => total + (session.tokens.costUsd ?? 0), 0),
         totalSizeBytes: bytesFromRecords(sessions),
         highRiskCleanupCount: cleanup.filter((item) => item.risk === 'high').length,
       },
@@ -396,6 +412,17 @@ export class AppService {
     }
 
     sessions.forEach((session) => {
+      const usageByDate = usageByDateFromMetadata(session.metadata)
+      if (usageByDate && Object.keys(usageByDate).length > 0) {
+        Object.entries(usageByDate).forEach(([key, tokens]) => {
+          const point = points.get(key)
+          if (!point) return
+          point[session.source] += tokens
+          point.total += tokens
+        })
+        return
+      }
+
       const key = formatDateKey(new Date(session.lastUpdated))
       const point = points.get(key)
       if (!point) return

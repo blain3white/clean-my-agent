@@ -12,12 +12,19 @@ export type TokenUsageLike = {
   completionTokens?: number
   outputTokens?: number
   cached_tokens?: number
+  cached_input_tokens?: number
+  cachedInputTokens?: number
   cache_read_input_tokens?: number
+  cacheReadInputTokens?: number
   cache_creation_input_tokens?: number
+  cacheCreationInputTokens?: number
   cachedTokens?: number
   cacheTokens?: number
   total_tokens?: number
   totalTokens?: number
+  costUSD?: number
+  costUsd?: number
+  cost_usd?: number
 }
 
 export type ContentBlock = {

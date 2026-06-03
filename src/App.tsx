@@ -64,7 +64,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDashboard } from '@/hooks/use-dashboard'
 import { useTheme } from '@/hooks/use-theme'
-import { agentLabel, estimatedCost, formatBytes, formatRelative, formatTokens, riskAccent } from '@/lib/format'
+import { agentLabel, estimatedCost, formatBytes, formatCost, formatRelative, formatTokens, riskAccent } from '@/lib/format'
 import type { AgentSource, CleanupCandidate, DashboardSnapshot, SessionRecord } from '@/shared/types'
 import './App.css'
 
@@ -292,7 +292,17 @@ function OverviewView({ snapshot, onSelectCleanup }: { snapshot: DashboardSnapsh
         <MetricCard icon={Database} label="Total Sessions" value={snapshot.overview.totalSessions.toLocaleString()} detail={`${snapshot.agents.length} agent adapters`} accent="bg-emerald-400/12 text-emerald-300" />
         <MetricCard icon={Archive} label="Backed Up" value={snapshot.overview.backedUpSessions.toLocaleString()} detail={`${Math.round((snapshot.overview.backedUpSessions / Math.max(snapshot.overview.totalSessions, 1)) * 100)}% of total`} accent="bg-blue-400/12 text-blue-300" />
         <MetricCard icon={HardDrive} label="Reclaimable" value={formatBytes(snapshot.overview.reclaimableBytes)} detail={`${snapshot.cleanup.length} cleanup suggestions`} accent="bg-amber-400/12 text-amber-300" />
-        <MetricCard icon={Gauge} label="Token Usage" value={formatTokens(snapshot.overview.totalTokens)} detail={`Estimated cost ${estimatedCost(snapshot.overview.totalTokens)}`} accent="bg-violet-400/12 text-violet-300" />
+        <MetricCard
+          icon={Gauge}
+          label="Token Usage"
+          value={formatTokens(snapshot.overview.totalTokens)}
+          detail={
+            snapshot.overview.totalCostUsd
+              ? `Cost ${formatCost(snapshot.overview.totalCostUsd)}`
+              : `Estimated cost ${estimatedCost(snapshot.overview.totalTokens)}`
+          }
+          accent="bg-violet-400/12 text-violet-300"
+        />
       </section>
 
       <section className="grid grid-cols-[1fr_400px] gap-4">

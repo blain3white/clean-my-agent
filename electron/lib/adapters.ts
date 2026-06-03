@@ -1,5 +1,7 @@
 import path from 'node:path'
+import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
+import { createInterface } from 'node:readline'
 import type {
   AgentInstallState,
   AgentSource,
@@ -34,6 +36,7 @@ type ParsedSession = {
   branch?: string
   messages: UniversalRelayMessage[]
   tokens: TokenUsage
+  usageByDate: Record<string, number>
   metadata: JsonRecord
 }
 
@@ -41,6 +44,8 @@ const emptyTokens = (): TokenUsage => ({
   input: 0,
   output: 0,
   cached: 0,
+  cacheCreation: 0,
+  cacheRead: 0,
   total: 0,
   estimated: true,
 })
@@ -136,26 +141,105 @@ function findStringByKeys(value: unknown, keys: string[], depth = 0): string | u
   return undefined
 }
 
-function extractUsage(value: unknown): TokenUsage {
-  const tokens = emptyTokens()
+function dateKeyFromRecord(record: JsonRecord): string | undefined {
+  const payload = toRecord(record.payload)
+  const message = toRecord(record.message)
+  const timestamp =
+    asString(record.timestamp) ??
+    asString(record.created_at) ??
+    asString(record.createdAt) ??
+    asString(message?.timestamp) ??
+    asString(message?.created_at) ??
+    asString(message?.createdAt) ??
+    asString(payload?.timestamp) ??
+    asString(payload?.created_at) ??
+    asString(payload?.createdAt)
 
-  function addUsage(node: unknown): void {
+  if (!timestamp) return undefined
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return undefined
+  return date.toISOString().slice(0, 10)
+}
+
+function numberFromRecord(record: JsonRecord, keys: string[]): number {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value)
+      if (Number.isFinite(parsed)) return parsed
+    }
+  }
+
+  return 0
+}
+
+function usageIdentity(record: JsonRecord): string | undefined {
+  const message = toRecord(record.message)
+  const payload = toRecord(record.payload)
+  const payloadMessage = toRecord(payload?.message)
+  const payloadItem = toRecord(payload?.item)
+  return (
+    asString(message?.id) ??
+    asString(payloadMessage?.id) ??
+    asString(payloadItem?.id) ??
+    asString(record.uuid) ??
+    asString(record.id)
+  )
+}
+
+function addTokens(target: TokenUsage, usage: TokenUsage): void {
+  target.input += usage.input
+  target.output += usage.output
+  target.cached += usage.cached
+  target.cacheCreation = (target.cacheCreation ?? 0) + (usage.cacheCreation ?? 0)
+  target.cacheRead = (target.cacheRead ?? 0) + (usage.cacheRead ?? 0)
+  target.total += usage.total
+  target.costUsd = (target.costUsd ?? 0) + (usage.costUsd ?? 0)
+  target.estimated = target.estimated && usage.estimated
+}
+
+function extractUsage(value: unknown, seenUsageIds = new Set<string>()): TokenUsage {
+  const tokens = emptyTokens()
+  const seenUsageObjects = new WeakSet<JsonRecord>()
+
+  function addUsage(node: unknown, parent?: JsonRecord): void {
     const record = toRecord(node)
     if (!record) return
+    if (seenUsageObjects.has(record)) return
+    seenUsageObjects.add(record)
 
-    const input =
-      Number(record.input_tokens ?? record.prompt_tokens ?? record.promptTokens ?? record.inputTokens) || 0
-    const output =
-      Number(record.output_tokens ?? record.completion_tokens ?? record.completionTokens ?? record.outputTokens) || 0
-    const cached =
-      Number(record.cached_tokens ?? record.cache_read_input_tokens ?? record.cachedTokens ?? record.cacheTokens) || 0
-    const total = Number(record.total_tokens ?? record.totalTokens) || input + output + cached
+    const identity = parent ? usageIdentity(parent) : undefined
+    if (identity && seenUsageIds.has(identity)) return
 
-    if (input || output || cached || total) {
+    const input = numberFromRecord(record, ['input_tokens', 'prompt_tokens', 'promptTokens', 'inputTokens'])
+    const output = numberFromRecord(record, ['output_tokens', 'completion_tokens', 'completionTokens', 'outputTokens'])
+    const cacheCreation = numberFromRecord(record, ['cache_creation_input_tokens', 'cacheCreationInputTokens'])
+    const cacheRead = numberFromRecord(record, ['cache_read_input_tokens', 'cacheReadInputTokens'])
+    const legacyCached = numberFromRecord(record, [
+      'cached_tokens',
+      'cached_input_tokens',
+      'cachedTokens',
+      'cachedInputTokens',
+      'cacheTokens',
+    ])
+    const cached = cacheCreation + cacheRead + legacyCached
+    const total =
+      numberFromRecord(record, ['total_tokens', 'totalTokens']) ||
+      input + output + cached
+    const costUsd =
+      numberFromRecord(record, ['costUSD', 'costUsd', 'cost_usd']) ||
+      (parent ? numberFromRecord(parent, ['costUSD', 'costUsd', 'cost_usd']) : 0)
+
+    if (input || output || cached || total || costUsd) {
+      if (identity) seenUsageIds.add(identity)
       tokens.input += input
       tokens.output += output
       tokens.cached += cached
+      tokens.cacheCreation = (tokens.cacheCreation ?? 0) + cacheCreation
+      tokens.cacheRead = (tokens.cacheRead ?? 0) + cacheRead + legacyCached
       tokens.total += total
+      tokens.costUsd = (tokens.costUsd ?? 0) + costUsd
       tokens.estimated = false
     }
   }
@@ -170,30 +254,46 @@ function extractUsage(value: unknown): TokenUsage {
     const record = toRecord(node)
     if (!record) return
 
-    addUsage(record.usage)
-    addUsage(record.token_usage)
-    addUsage(record.tokenUsage)
+    addUsage(record.usage, record)
+    addUsage(record.token_usage, record)
+    addUsage(record.tokenUsage, record)
+    addUsage(record.last_token_usage, record)
+    addUsage(record.lastTokenUsage, record)
 
     const response = toRecord(record.response)
     if (response) {
-      addUsage(response.usage)
-      addUsage(response.token_usage)
-      addUsage(response.tokenUsage)
+      addUsage(response.usage, record)
+      addUsage(response.token_usage, record)
+      addUsage(response.tokenUsage, record)
+      addUsage(response.last_token_usage, record)
+      addUsage(response.lastTokenUsage, record)
     }
 
     const payload = toRecord(record.payload)
     if (payload) {
-      addUsage(payload.usage)
-      addUsage(payload.token_usage)
-      addUsage(payload.tokenUsage)
+      addUsage(payload.usage, record)
+      addUsage(payload.token_usage, record)
+      addUsage(payload.tokenUsage, record)
+      addUsage(payload.last_token_usage, record)
+      addUsage(payload.lastTokenUsage, record)
+      const info = toRecord(payload.info)
+      if (info) {
+        addUsage(info.usage, record)
+        addUsage(info.token_usage, record)
+        addUsage(info.tokenUsage, record)
+        addUsage(info.last_token_usage, record)
+        addUsage(info.lastTokenUsage, record)
+      }
       visit(payload, depth + 1)
     }
 
     const message = toRecord(record.message)
     if (message) {
-      addUsage(message.usage)
-      addUsage(message.token_usage)
-      addUsage(message.tokenUsage)
+      addUsage(message.usage, record)
+      addUsage(message.token_usage, record)
+      addUsage(message.tokenUsage, record)
+      addUsage(message.last_token_usage, record)
+      addUsage(message.lastTokenUsage, record)
     }
   }
 
@@ -252,14 +352,21 @@ function projectNameFromPath(projectPath: string | undefined, filePath: string):
 }
 
 async function parseJsonLike(filePath: string): Promise<ParsedSession> {
-  const text = await safeReadText(filePath)
   const messages: UniversalRelayMessage[] = []
   const metadata: JsonRecord = {}
+  const usageByDate: Record<string, number> = {}
   let tokens = emptyTokens()
 
   if (filePath.endsWith('.jsonl')) {
-    const lines = text.split(/\r?\n/).filter((line) => line.trim())
-    lines.slice(0, 3000).forEach((line, index) => {
+    const seenUsageIds = new Set<string>()
+    const lines = createInterface({
+      input: createReadStream(filePath, { encoding: 'utf8' }),
+      crlfDelay: Infinity,
+    })
+    let index = 0
+
+    for await (const line of lines) {
+      if (!line.trim()) continue
       try {
         const json = JSON.parse(line) as unknown
         if (isCodexJsonlRecord(json)) {
@@ -267,17 +374,18 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
         } else if (isClaudeJsonlRecord(json)) {
           metadata.sourceFormat = metadata.sourceFormat ?? 'claude-jsonl'
         }
-        const message = extractMessage(json, `${index}`)
-        if (message) messages.push(message)
-        const usage = extractUsage(json)
-        tokens.input += usage.input
-        tokens.output += usage.output
-        tokens.cached += usage.cached
-        tokens.total += usage.total
-        tokens.estimated = tokens.estimated && usage.estimated
+        if (messages.length < 3000) {
+          const message = extractMessage(json, `${index}`)
+          if (message) messages.push(message)
+        }
+        const usage = extractUsage(json, seenUsageIds)
+        addTokens(tokens, usage)
+        const record = toRecord(json)
+        const dateKey = record ? dateKeyFromRecord(record) : undefined
+        if (dateKey && usage.total > 0) usageByDate[dateKey] = (usageByDate[dateKey] ?? 0) + usage.total
         metadata.sample = metadata.sample ?? json
       } catch {
-        if (line.length > 24) {
+        if (messages.length < 3000 && line.length > 24) {
           messages.push({
             id: `${index}`,
             role: 'unknown',
@@ -285,8 +393,10 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
           })
         }
       }
-    })
+      index += 1
+    }
   } else if (filePath.endsWith('.json')) {
+    const text = await safeReadText(filePath)
     try {
       const json = JSON.parse(text) as unknown
       metadata.sample = json
@@ -308,6 +418,7 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
       messages.push({ id: 'raw', role: 'unknown', text: text.slice(0, 4000) })
     }
   } else {
+    const text = await safeReadText(filePath)
     text
       .split(/\r?\n/)
       .filter((line) => line.trim())
@@ -323,7 +434,11 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
     branch: findStringByKeys(metadata.sample, ['branch', 'gitBranch', 'git_branch']),
     messages,
     tokens,
-    metadata,
+    usageByDate,
+    metadata: {
+      ...metadata,
+      usageByDate,
+    },
   }
 }
 
@@ -384,6 +499,7 @@ export class AgentAdapter {
           backupStatus: 'pending',
           tags: [this.definition.source],
           metadata: {
+            ...parsed.metadata,
             parser: 'generic-json-session-parser',
             root: readableRoots.find((root) => filePath.startsWith(root)),
             relativePath: readableRoots

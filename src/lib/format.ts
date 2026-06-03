@@ -56,3 +56,9 @@ export function estimatedCost(tokens: number): string {
   if (dollars < 0.01) return '<$0.01'
   return `$${dollars.toFixed(2)}`
 }
+
+export function formatCost(dollars: number): string {
+  if (!Number.isFinite(dollars) || dollars <= 0) return '$0.00'
+  if (dollars < 0.01) return '<$0.01'
+  return `$${dollars.toFixed(2)}`
+}

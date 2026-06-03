@@ -12,18 +12,39 @@ async function writeSession(root: string, source: AgentSource, daysOld: number) 
   await mkdir(dir, { recursive: true })
   const filePath = path.join(dir, `${source}-session.jsonl`)
   const workspace = path.join('/tmp', 'clean-my-agent-fixture', source)
+  const timestamp = new Date().toISOString()
   const lines = [
     {
       role: 'user',
+      timestamp,
       content: `Refactor ${source} auth flow`,
       cwd: workspace,
       branch: 'main',
-      usage: { input_tokens: 100, output_tokens: 50, cached_tokens: 10 },
+      usage: { input_tokens: 100, output_tokens: 50, cache_creation_input_tokens: 1000, cache_read_input_tokens: 10 },
+      costUSD: 0.25,
     },
     {
       role: 'assistant',
+      timestamp,
       content: `Finished ${source} refactor`,
-      usage: { input_tokens: 30, output_tokens: 80 },
+      message: {
+        id: `${source}-assistant-1`,
+        usage: { input_tokens: 30, output_tokens: 80, cache_creation_input_tokens: 2000 },
+      },
+      costUSD: 0.5,
+    },
+    {
+      type: 'event_msg',
+      timestamp,
+      payload: {
+        type: 'token_count',
+        last_token_usage: {
+          input_tokens: 40,
+          cached_input_tokens: 20,
+          output_tokens: 30,
+          total_tokens: 70,
+        },
+      },
     },
   ]
   await writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`)
@@ -61,6 +82,16 @@ async function main() {
   assert.ok(session, 'codex session should exist')
   assert.equal(session.projectName, 'codex', 'project name should be derived from cwd')
   assert.equal(session.branch, 'main', 'branch should be extracted')
+  assert.equal(session.tokens.cacheCreation, 3000, 'cache creation tokens should be counted')
+  assert.equal(session.tokens.cacheRead, 30, 'cache read tokens should be counted')
+  assert.equal(session.tokens.total, 3340, 'token total should include cache creation, cache read, and Codex cached input tokens')
+  assert.equal(session.tokens.costUsd, 0.75, 'Claude/Codex style costUSD should be accumulated')
+  const today = new Date().toISOString().slice(0, 10)
+  assert.equal(
+    snapshot.usage.find((point) => point.date === today)?.total,
+    sources.length * 3340,
+    'usage chart should bucket tokens by message timestamp',
+  )
 
   const backup = await service.backupSession(session.id)
   assert.ok((await stat(backup.backupPath)).size > 0, 'backup file should be written')
