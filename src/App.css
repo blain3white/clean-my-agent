@@ -190,13 +190,13 @@ select option {
 
 .agent-logo[data-source='opencode'] {
   background:
-    radial-gradient(circle at 35% 18%, rgb(147 197 253 / 34%), transparent 34%),
-    linear-gradient(145deg, rgb(37 99 235 / 45%), rgb(30 58 138 / 42%)),
-    rgb(12 22 46 / 58%);
+    radial-gradient(circle at 34% 16%, rgb(255 255 255 / 28%), transparent 30%),
+    linear-gradient(145deg, rgb(64 64 64 / 48%), rgb(10 10 10 / 58%)),
+    rgb(3 7 8 / 72%);
   box-shadow:
-    inset 0 1px 0 rgb(219 234 254 / 16%),
-    inset 0 -1px 0 rgb(30 64 175 / 30%),
-    0 0 18px rgb(96 165 250 / 13%),
+    inset 0 1px 0 rgb(255 255 255 / 16%),
+    inset 0 -1px 0 rgb(0 0 0 / 34%),
+    0 0 18px rgb(255 255 255 / 7%),
     0 5px 12px rgb(0 0 0 / 16%);
 }
 

@@ -13,7 +13,7 @@ export const agentAccent: Record<AgentSource, string> = {
   claude: 'text-orange-300 bg-orange-400/12 ring-orange-400/20',
   cursor: 'text-slate-200 bg-slate-400/12 ring-slate-300/22',
   gemini: 'text-sky-300 bg-sky-400/12 ring-sky-400/20',
-  opencode: 'text-emerald-200 bg-emerald-400/12 ring-emerald-300/20',
+  opencode: 'text-blue-300 bg-blue-400/12 ring-blue-300/20',
 }
 
 export const riskAccent: Record<RiskLevel, string> = {
