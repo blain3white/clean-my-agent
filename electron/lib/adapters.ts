@@ -141,13 +141,7 @@ function findStringByKeys(value: unknown, keys: string[], depth = 0): string | u
 function extractUsage(value: unknown): TokenUsage {
   const tokens = emptyTokens()
 
-  function visit(node: unknown, depth = 0): void {
-    if (depth > 6) return
-    if (Array.isArray(node)) {
-      node.forEach((item) => visit(item, depth + 1))
-      return
-    }
-
+  function addUsage(node: unknown): void {
     const record = asRecord(node)
     if (!record) return
 
@@ -166,8 +160,43 @@ function extractUsage(value: unknown): TokenUsage {
       tokens.total += total
       tokens.estimated = false
     }
+  }
 
-    Object.values(record).forEach((item) => visit(item, depth + 1))
+  function visit(node: unknown, depth = 0): void {
+    if (depth > 4) return
+    if (Array.isArray(node)) {
+      node.forEach((item) => visit(item, depth + 1))
+      return
+    }
+
+    const record = asRecord(node)
+    if (!record) return
+
+    addUsage(record.usage)
+    addUsage(record.token_usage)
+    addUsage(record.tokenUsage)
+
+    const response = asRecord(record.response)
+    if (response) {
+      addUsage(response.usage)
+      addUsage(response.token_usage)
+      addUsage(response.tokenUsage)
+    }
+
+    const payload = asRecord(record.payload)
+    if (payload) {
+      addUsage(payload.usage)
+      addUsage(payload.token_usage)
+      addUsage(payload.tokenUsage)
+      visit(payload, depth + 1)
+    }
+
+    const message = asRecord(record.message)
+    if (message) {
+      addUsage(message.usage)
+      addUsage(message.token_usage)
+      addUsage(message.tokenUsage)
+    }
   }
 
   visit(value)
@@ -208,18 +237,6 @@ function extractMessage(value: unknown, fallbackId: string): UniversalRelayMessa
       asString(payload?.timestamp),
     text: text.trim(),
     raw: value,
-  }
-}
-
-function estimateTokenUsage(messages: UniversalRelayMessage[], bytes: number): TokenUsage {
-  const chars = messages.reduce((total, message) => total + message.text.length, 0)
-  const total = Math.max(0, Math.round((chars || bytes) / 4))
-  return {
-    input: Math.round(total * 0.45),
-    output: Math.round(total * 0.45),
-    cached: Math.round(total * 0.1),
-    total,
-    estimated: true,
   }
 }
 
@@ -294,9 +311,6 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
         messages.push({ id: `${index}`, role: 'unknown', text: line.slice(0, 1000) })
       })
   }
-
-  const size = (await stat(filePath)).size
-  if (tokens.total === 0) tokens = estimateTokenUsage(messages, size)
 
   return {
     title: firstTitle(messages, path.basename(filePath)),
