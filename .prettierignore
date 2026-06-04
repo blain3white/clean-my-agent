@@ -5,4 +5,5 @@ out
 coverage
 .codex-backups
 external
+.gitnexus
 pnpm-lock.yaml

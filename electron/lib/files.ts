@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { createReadStream, createWriteStream } from 'node:fs'
 import {
   access,
   copyFile,
@@ -11,6 +12,8 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { constants } from 'node:fs'
+import { pipeline } from 'node:stream/promises'
+import { createBrotliCompress, createBrotliDecompress } from 'node:zlib'
 import os from 'node:os'
 import path from 'node:path'
 import fg from 'fast-glob'
@@ -149,6 +152,34 @@ export async function movePath(sourcePath: string, targetPath: string): Promise<
     await copyPath(sourcePath, targetPath)
     await rm(sourcePath, { recursive: true, force: true })
   }
+}
+
+export async function removePath(targetPath: string): Promise<void> {
+  await rm(targetPath, { recursive: true, force: true })
+}
+
+export async function hashFile(filePath: string): Promise<string> {
+  const hash = createHash('sha256')
+  await pipeline(createReadStream(filePath), hash)
+  return hash.digest('hex')
+}
+
+export async function compressFileBrotli(sourcePath: string, targetPath: string): Promise<void> {
+  await ensureDir(path.dirname(targetPath))
+  await pipeline(
+    createReadStream(sourcePath),
+    createBrotliCompress(),
+    createWriteStream(targetPath),
+  )
+}
+
+export async function decompressFileBrotli(sourcePath: string, targetPath: string): Promise<void> {
+  await ensureDir(path.dirname(targetPath))
+  await pipeline(
+    createReadStream(sourcePath),
+    createBrotliDecompress(),
+    createWriteStream(targetPath),
+  )
 }
 
 export async function writeJson(filePath: string, value: unknown): Promise<void> {

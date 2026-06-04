@@ -1,4 +1,9 @@
-import type { BackupRecord, SessionRecord, TrashRecord } from '../../src/shared/types'
+import type {
+  ArchiveRecord,
+  BackupRecord,
+  SessionRecord,
+  TrashRecord,
+} from '../../src/shared/types'
 import { ensureDir } from './files'
 import path from 'node:path'
 
@@ -58,6 +63,15 @@ export class LocalDatabase {
         source TEXT NOT NULL,
         created_at TEXT NOT NULL,
         size_bytes INTEGER NOT NULL,
+        data TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS archives (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        source TEXT NOT NULL,
+        archived_at TEXT NOT NULL,
+        original_bytes INTEGER NOT NULL,
+        compressed_bytes INTEGER NOT NULL,
         data TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS trash (
@@ -140,6 +154,47 @@ export class LocalDatabase {
   getBackups(): BackupRecord[] {
     const rows = this.requireDb().prepare('SELECT data FROM backups ORDER BY created_at DESC').all()
     return rows.map((row) => JSON.parse(String(row.data)) as BackupRecord)
+  }
+
+  insertArchive(record: ArchiveRecord): void {
+    this.requireDb()
+      .prepare(
+        `INSERT OR REPLACE INTO archives
+           (id, session_id, source, archived_at, original_bytes, compressed_bytes, data)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        record.id,
+        record.sessionId,
+        record.source,
+        record.archivedAt,
+        record.originalBytes,
+        record.compressedBytes,
+        JSON.stringify(record),
+      )
+  }
+
+  getArchives(): ArchiveRecord[] {
+    const rows = this.requireDb()
+      .prepare('SELECT data FROM archives ORDER BY archived_at DESC')
+      .all()
+    return rows.map((row) => JSON.parse(String(row.data)) as ArchiveRecord)
+  }
+
+  getArchiveRecord(id: string): ArchiveRecord | undefined {
+    const row = this.requireDb().prepare('SELECT data FROM archives WHERE id = ?').get(id)
+    return row ? (JSON.parse(String(row.data)) as ArchiveRecord) : undefined
+  }
+
+  getArchiveBySessionId(sessionId: string): ArchiveRecord | undefined {
+    const row = this.requireDb()
+      .prepare('SELECT data FROM archives WHERE session_id = ? ORDER BY archived_at DESC')
+      .get(sessionId)
+    return row ? (JSON.parse(String(row.data)) as ArchiveRecord) : undefined
+  }
+
+  deleteArchiveRecord(id: string): void {
+    this.requireDb().prepare('DELETE FROM archives WHERE id = ?').run(id)
   }
 
   insertTrash(record: TrashRecord): void {

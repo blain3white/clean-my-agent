@@ -1,6 +1,7 @@
 import path from 'node:path'
 import type {
   AgentSource,
+  ArchiveRecord,
   AppSettings,
   BackupRecord,
   CleanupCandidate,
@@ -14,12 +15,16 @@ import type {
 import { adapters, adapterFor } from './adapters'
 import { LocalDatabase } from './database'
 import {
+  compressFileBrotli,
   copyPath,
+  decompressFileBrotli,
   ensureDir,
   exists,
+  hashFile,
   hashId,
   movePath,
   pathSize,
+  removePath,
   sanitizeName,
   writeJson,
 } from './files'
@@ -42,6 +47,10 @@ function formatDateKey(date: Date): string {
 
 function bytesFromRecords(records: Array<{ sizeBytes: number }>): number {
   return records.reduce((total, record) => total + record.sizeBytes, 0)
+}
+
+function archiveBytes(records: ArchiveRecord[]): number {
+  return records.reduce((total, record) => total + record.compressedBytes, 0)
 }
 
 function usageByDateFromMetadata(
@@ -83,6 +92,24 @@ function markdownForSession(session: SessionRecord): string {
   ].join('\n')
 }
 
+function sessionSearchText(session: SessionRecord): string {
+  const values = [
+    session.title,
+    session.projectName,
+    session.projectPath,
+    session.branch,
+    session.source,
+    ...session.tags,
+    session.searchText,
+  ]
+  return values
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .join('\n')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 16_000)
+}
+
 export class AppService {
   private readonly db: LocalDatabase
   private readonly userDataPath: string
@@ -110,13 +137,21 @@ export class AppService {
       await this.rescan()
     }
 
-    const sessions = this.mergeBackupStatus(this.db.getSessions())
+    const archives = this.db.getArchives()
+    const sessions = this.mergeBackupStatus([
+      ...this.db.getSessions(),
+      ...this.sessionsFromArchives(archives),
+    ])
     const backups = this.db.getBackups()
     const trash = this.db.getTrash()
-    const cleanup = this.buildCleanupCandidates(sessions, backups)
+    const liveSessions = sessions.filter((session) => session.storageState === 'live')
+    const cleanup = this.buildCleanupCandidates(liveSessions, backups)
     const agents = await Promise.all(
       adapters.map(async (adapter) => {
         const sourceSessions = sessions.filter((session) => session.source === adapter.source)
+        const liveSourceSessions = sourceSessions.filter(
+          (session) => session.storageState === 'live',
+        )
         return {
           source: adapter.source,
           name: adapter.name,
@@ -124,7 +159,7 @@ export class AppService {
           readable: sourceSessions.length > 0,
           rootPaths: adapter.roots(this.requireSettings()),
           sessionCount: sourceSessions.length,
-          sizeBytes: bytesFromRecords(sourceSessions),
+          sizeBytes: bytesFromRecords(liveSourceSessions),
           lastScannedAt: new Date().toISOString(),
         }
       }),
@@ -139,16 +174,17 @@ export class AppService {
         lastBackupAt: backups[0]?.createdAt,
         totalTokens: sessions.reduce((total, session) => total + session.tokens.total, 0),
         totalCostUsd: sessions.reduce((total, session) => total + (session.tokens.costUsd ?? 0), 0),
-        totalSizeBytes: bytesFromRecords(sessions),
+        totalSizeBytes: bytesFromRecords(liveSessions) + archiveBytes(archives),
         highRiskCleanupCount: cleanup.filter((item) => item.risk === 'high').length,
       },
       agents,
       sessions,
       cleanup,
+      archives,
       backups,
       trash,
       usage: this.buildUsage(sessions),
-      storage: this.buildStorage(sessions, backups, trash),
+      storage: this.buildStorage(sessions, archives, backups, trash),
     }
   }
 
@@ -185,6 +221,83 @@ export class AppService {
     return record
   }
 
+  async archiveSession(sessionId: string): Promise<ArchiveRecord> {
+    const session = this.requireSession(sessionId)
+    if (session.storageState === 'archived') {
+      const existing = this.db.getArchiveBySessionId(sessionId)
+      if (existing) return existing
+      throw new Error(`Archived session record not found: ${sessionId}`)
+    }
+    if (session.storageKind === 'directory') {
+      throw new Error('Vault archive currently supports single-file sessions.')
+    }
+    if (!(await exists(session.storagePath))) {
+      throw new Error(`Session file not found: ${session.storagePath}`)
+    }
+
+    const archivedAt = new Date().toISOString()
+    const archiveRoot = path.join(this.userDataPath, 'Vault', session.source)
+    const archivePath = path.join(
+      archiveRoot,
+      `${sanitizeName(session.title)}-${session.id}${path.extname(session.storagePath) || '.session'}.br`,
+    )
+    const originalBytes = await pathSize(session.storagePath)
+    const contentHash = await hashFile(session.storagePath)
+    await compressFileBrotli(session.storagePath, archivePath)
+    const compressedBytes = await pathSize(archivePath)
+
+    const archivedSession: SessionRecord = {
+      ...session,
+      storageState: 'archived',
+      searchText: sessionSearchText(session),
+      metadata: {
+        ...session.metadata,
+        archivedAt,
+        originalPath: session.storagePath,
+      },
+    }
+    const record: ArchiveRecord = {
+      id: hashId([session.id, archivePath, archivedAt]),
+      sessionId: session.id,
+      source: session.source,
+      title: session.title,
+      createdAt: session.createdAt ?? archivedAt,
+      archivedAt,
+      originalPath: session.storagePath,
+      archivePath,
+      originalBytes,
+      compressedBytes,
+      contentHash,
+      compression: 'brotli',
+      restorable: true,
+      session: archivedSession,
+    }
+    this.db.insertArchive(record)
+    await removePath(session.storagePath)
+    await this.rescan()
+    return record
+  }
+
+  async restoreArchive(archiveId: string): Promise<void> {
+    const record = this.db.getArchiveRecord(archiveId)
+    if (!record) throw new Error(`Archive item not found: ${archiveId}`)
+    if (await exists(record.originalPath)) {
+      throw new Error(
+        `Cannot restore archive because the original path already exists: ${record.originalPath}`,
+      )
+    }
+
+    await decompressFileBrotli(record.archivePath, record.originalPath)
+    const restoredHash = await hashFile(record.originalPath)
+    if (restoredHash !== record.contentHash) {
+      await removePath(record.originalPath)
+      throw new Error('Restored archive checksum did not match the original session.')
+    }
+    this.db.deleteArchiveRecord(archiveId)
+    await removePath(record.archivePath)
+    await this.rescan()
+  }
+
   async exportSession(sessionId: string, format: ExportFormat): Promise<string> {
     const session = this.requireSession(sessionId)
     const exportRoot = this.requireSettings().exportDirectory
@@ -209,7 +322,27 @@ export class AppService {
   async exportUniversalRelay(sessionId: string): Promise<string> {
     const session = this.requireSession(sessionId)
     const adapter = adapterFor(session.source)
-    const document = await adapter.toUniversal(session)
+    const archive =
+      session.storageState === 'archived' ? this.db.getArchiveBySessionId(session.id) : undefined
+    let restorePath: string | undefined
+    let document
+    try {
+      if (archive) {
+        const extension = path.extname(archive.originalPath) || '.session'
+        restorePath = path.join(
+          this.userDataPath,
+          'Temp',
+          'relay',
+          `${archive.sessionId}-${Date.now()}${extension}`,
+        )
+        await decompressFileBrotli(archive.archivePath, restorePath)
+      }
+      document = await adapter.toUniversal(
+        restorePath ? { ...session, storagePath: restorePath } : session,
+      )
+    } finally {
+      if (restorePath) await removePath(restorePath)
+    }
     const exportPath = path.join(
       this.requireSettings().exportDirectory,
       `${sanitizeName(session.title)}-${session.id}.universal-session.json`,
@@ -326,14 +459,16 @@ export class AppService {
   }
 
   private shouldRescanCachedSessions(): boolean {
+    if (this.db.getArchives().length > 0) return false
     if (this.db.getSessions().length === 0) return true
     return (this.db.getSetting<number>('scanSchemaVersion') ?? 0) !== scanSchemaVersion
   }
 
   private requireSession(sessionId: string): SessionRecord {
-    const session = this.mergeBackupStatus(this.db.getSessions()).find(
-      (item) => item.id === sessionId,
-    )
+    const session = this.mergeBackupStatus([
+      ...this.db.getSessions(),
+      ...this.sessionsFromArchives(this.db.getArchives()),
+    ]).find((item) => item.id === sessionId)
     if (!session) throw new Error(`Session not found: ${sessionId}`)
     return session
   }
@@ -342,7 +477,26 @@ export class AppService {
     const backedUpIds = new Set(this.db.getBackups().map((backup) => backup.sessionId))
     return sessions.map((session) => ({
       ...session,
+      storageState: session.storageState ?? 'live',
+      searchText: session.searchText ?? sessionSearchText(session),
       backupStatus: backedUpIds.has(session.id) ? 'backed-up' : session.backupStatus,
+    }))
+  }
+
+  private sessionsFromArchives(archives: ArchiveRecord[]): SessionRecord[] {
+    return archives.map((archive) => ({
+      ...archive.session,
+      storagePath: archive.archivePath,
+      storageState: 'archived',
+      sizeBytes: archive.originalBytes,
+      searchText: archive.session.searchText ?? sessionSearchText(archive.session),
+      metadata: {
+        ...archive.session.metadata,
+        archivedAt: archive.archivedAt,
+        originalPath: archive.originalPath,
+        archivePath: archive.archivePath,
+        compressedBytes: archive.compressedBytes,
+      },
     }))
   }
 
@@ -464,13 +618,16 @@ export class AppService {
 
   private buildStorage(
     sessions: SessionRecord[],
+    archives: ArchiveRecord[],
     backups: BackupRecord[],
     trash: TrashRecord[],
   ): StorageSlice[] {
     const bySource = new Map<AgentSource, SessionRecord[]>()
-    sessions.forEach((session) => {
-      bySource.set(session.source, [...(bySource.get(session.source) ?? []), session])
-    })
+    sessions
+      .filter((session) => session.storageState === 'live')
+      .forEach((session) => {
+        bySource.set(session.source, [...(bySource.get(session.source) ?? []), session])
+      })
 
     const slices: StorageSlice[] = Array.from(bySource.entries()).map(([source, items]) => ({
       source,
@@ -479,6 +636,12 @@ export class AppService {
       sessions: items.length,
     }))
 
+    slices.push({
+      source: 'archives',
+      label: 'Vault',
+      sizeBytes: archiveBytes(archives),
+      sessions: archives.length,
+    })
     slices.push({
       source: 'backups',
       label: 'Backups',
