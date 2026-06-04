@@ -129,6 +129,15 @@ textarea,
   justify-content: center;
 }
 
+.token-heatmap-axis {
+  column-gap: 5px;
+  justify-content: center;
+}
+
+.token-heatmap-axis span {
+  white-space: nowrap;
+}
+
 .token-heatmap-cell,
 .token-heatmap-legend-cell {
   display: block;
