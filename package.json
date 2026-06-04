@@ -45,7 +45,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
-    "electron": "^42.3.2",
+    "electron": "^42.3.3",
     "electron-vite": "^5.0.0",
     "fast-glob": "^3.3.3",
     "lucide-react": "^1.17.0",
