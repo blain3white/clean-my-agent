@@ -111,7 +111,6 @@ type HeatmapCell = {
   gridColumn: number
   gridRow: number
 }
-
 const navItems: Array<{ id: ViewId; label: string; icon: typeof LayoutDashboard }> = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'sessions', label: 'Sessions', icon: Database },
@@ -151,7 +150,6 @@ const usageRanges: Array<{ value: UsageRange; label: string }> = [
   { value: 7, label: '7d' },
   { value: 14, label: '14d' },
   { value: 30, label: '30d' },
-  { value: 'all', label: 'All' },
 ]
 
 const heatmapTimeLabels = ['00', '04', '08', '12', '16', '20', '24']
@@ -325,16 +323,15 @@ function rangeDateKeys(usage: UsagePoint[], range: UsageRange): Set<string> {
   return new Set(usage.slice(-days).map((point) => point.date))
 }
 
-function heatmapLabelEvery(range: UsageRange): number {
-  if (range === 7) return 1
-  if (range === 14) return 2
-  if (range === 30) return 3
-  return 30
-}
-
 function heatLevel(value: number, max: number): number {
   if (value <= 0 || max <= 0) return 0
   return Math.min(9, Math.max(1, Math.ceil((value / max) * 9)))
+}
+
+function heatmapLabelEvery(days: number): number {
+  if (days <= 7) return 1
+  if (days <= 14) return 2
+  return 3
 }
 
 function buildHeatmapCells(usage: UsagePoint[]): HeatmapCell[] {
@@ -408,9 +405,16 @@ function UsageTooltip({
   )
 }
 
-function TokenActivityCard({ usage, usageRange }: { usage: UsagePoint[]; usageRange: UsageRange }) {
+function TokenActivityCard({
+  usage,
+  heatmapUsage,
+}: {
+  usage: UsagePoint[]
+  heatmapUsage: UsagePoint[]
+}) {
   const [mode, setMode] = useState<TokenActivityMode>('bar')
-  const minWidth = mode === 'heat' ? Math.max(620, 72 + usage.length * 21) : 580
+  const heatUsageDays = Math.min(30, heatmapUsage.length)
+  const minWidth = mode === 'heat' ? Math.max(620, 72 + heatUsageDays * 21) : 580
 
   return (
     <Card className="glass-panel token-activity-card rounded-lg py-4" style={{ minWidth }}>
@@ -449,7 +453,7 @@ function TokenActivityCard({ usage, usageRange }: { usage: UsagePoint[]; usageRa
       <CardContent className="h-[230px]">
         {mode === 'line' && <TokenLineChart usage={usage} />}
         {mode === 'bar' && <TokenBarChart usage={usage} />}
-        {mode === 'heat' && <TokenHeatmap usage={usage} usageRange={usageRange} />}
+        {mode === 'heat' && <TokenHeatmap usage={heatmapUsage} />}
       </CardContent>
     </Card>
   )
@@ -607,18 +611,21 @@ function TokenBarChart({ usage }: { usage: UsagePoint[] }) {
   )
 }
 
-function TokenHeatmap({ usage, usageRange }: { usage: UsagePoint[]; usageRange: UsageRange }) {
-  const cells = buildHeatmapCells(usage)
-  const labelEvery = heatmapLabelEvery(usageRange)
-  const dateLabels = usage
+function TokenHeatmap({ usage }: { usage: UsagePoint[] }) {
+  const heatmapUsage = usage.slice(-30)
+  const cells = buildHeatmapCells(heatmapUsage)
+  const labelEvery = heatmapLabelEvery(heatmapUsage.length)
+  const dateLabels = heatmapUsage
     .map((point, index) => ({ point, index }))
-    .filter(({ index }) => index === 0 || index === usage.length - 1 || index % labelEvery === 0)
+    .filter(
+      ({ index }) => index === 0 || index === heatmapUsage.length - 1 || index % labelEvery === 0,
+    )
 
   return (
     <div className="flex h-full flex-col justify-center">
       <div
         className="token-heatmap-grid"
-        style={{ gridTemplateColumns: `36px repeat(${usage.length}, 16px)` }}
+        style={{ gridTemplateColumns: `36px repeat(${heatmapUsage.length}, 16px)` }}
       >
         {heatmapTimeLabels.map((time, index) => (
           <div
@@ -646,9 +653,14 @@ function TokenHeatmap({ usage, usageRange }: { usage: UsagePoint[]; usageRange: 
           </Tooltip>
         ))}
       </div>
-      <div className="mt-3 flex justify-between pl-9 text-[11px] text-white/38">
-        {dateLabels.map(({ point }) => (
-          <span key={point.date}>{point.date.slice(5)}</span>
+      <div
+        className="token-heatmap-axis mt-3 grid pl-9 text-[11px] text-white/38"
+        style={{ gridTemplateColumns: `repeat(${heatmapUsage.length}, 16px)` }}
+      >
+        {dateLabels.map(({ point, index }) => (
+          <span key={point.date} style={{ gridColumn: index + 1 }}>
+            {point.date.slice(5)}
+          </span>
         ))}
       </div>
       <div className="mt-5 flex items-center justify-center gap-2 text-[11px] text-white/42">
@@ -1339,7 +1351,7 @@ function OverviewView({
       </section>
 
       <section className="grid grid-cols-[1fr_400px] gap-4">
-        <TokenActivityCard usage={rangeUsage} usageRange={usageRange} />
+        <TokenActivityCard usage={rangeUsage} heatmapUsage={snapshot.usage} />
         <StorageBreakdownCard
           storageData={storageData}
           storageTotal={storageTotal}
