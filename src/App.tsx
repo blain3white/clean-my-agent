@@ -1258,10 +1258,14 @@ function Topbar({
 function OverviewView({
   snapshot,
   usageRange,
+  loading,
+  onRefresh,
   onSelectCleanup,
 }: {
   snapshot: DashboardSnapshot
   usageRange: UsageRange
+  loading: boolean
+  onRefresh: () => Promise<void>
   onSelectCleanup: () => void
 }) {
   const recentSessions = snapshot.sessions.slice(0, 6)
@@ -1355,9 +1359,12 @@ function OverviewView({
               <Button
                 variant="ghost"
                 size="sm"
+                onClick={() => void onRefresh()}
+                disabled={loading}
                 className="text-blue-300 hover:bg-blue-400/10 hover:text-blue-200"
               >
-                View all
+                {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCcw className="size-3.5" />}
+                Refresh
               </Button>
             </div>
           </CardHeader>
@@ -2137,6 +2144,8 @@ function App() {
           <OverviewView
             snapshot={dashboard.snapshot}
             usageRange={overviewRange}
+            loading={dashboard.loading}
+            onRefresh={dashboard.rescan}
             onSelectCleanup={() => setActiveView('cleanup')}
           />
         )
