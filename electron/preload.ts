@@ -10,9 +10,11 @@ const api: CleanMyAgentApi = {
   scanCleanup: (sessionId?: string) => ipcRenderer.invoke('cleanup:scan', sessionId),
   moveCleanupToTrash: (candidateIds: string[]) => ipcRenderer.invoke('cleanup:trash', candidateIds),
   restoreTrash: (trashId: string) => ipcRenderer.invoke('trash:restore', trashId),
-  exportUniversalRelay: (sessionId: string) => ipcRenderer.invoke('relay:exportUniversal', sessionId),
+  exportUniversalRelay: (sessionId: string) =>
+    ipcRenderer.invoke('relay:exportUniversal', sessionId),
   getSettings: () => ipcRenderer.invoke('settings:get'),
-  updateSettings: (settings: Partial<AppSettings>) => ipcRenderer.invoke('settings:update', settings),
+  updateSettings: (settings: Partial<AppSettings>) =>
+    ipcRenderer.invoke('settings:update', settings),
   openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),
 }
 

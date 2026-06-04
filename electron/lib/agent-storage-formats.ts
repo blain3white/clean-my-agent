@@ -105,11 +105,18 @@ export function isRecord(value: unknown): value is JsonRecord {
 }
 
 export function isCodexJsonlRecord(value: unknown): value is CodexJsonlRecord {
-  return isRecord(value) && typeof value.type === 'string' && ('payload' in value || 'timestamp' in value)
+  return (
+    isRecord(value) &&
+    typeof value.type === 'string' &&
+    ('payload' in value || 'timestamp' in value)
+  )
 }
 
 export function isClaudeJsonlRecord(value: unknown): value is ClaudeJsonlRecord {
-  return isRecord(value) && (typeof value.type === 'string' || 'message' in value || 'sessionId' in value)
+  return (
+    isRecord(value) &&
+    (typeof value.type === 'string' || 'message' in value || 'sessionId' in value)
+  )
 }
 
 export function isOpenCodeStorageRecord(value: unknown): value is OpenCodeStorageRecord {
@@ -117,7 +124,9 @@ export function isOpenCodeStorageRecord(value: unknown): value is OpenCodeStorag
 }
 
 export function isCursorWorkspaceRecord(value: unknown): value is CursorWorkspaceRecord {
-  return isRecord(value) && (typeof value.folder === 'string' || typeof value.workspace === 'string')
+  return (
+    isRecord(value) && (typeof value.folder === 'string' || typeof value.workspace === 'string')
+  )
 }
 
 export function asString(value: unknown): string | undefined {

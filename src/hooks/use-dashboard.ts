@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { mockSnapshot } from '@/lib/mock-data'
-import { agentSources, type AgentSource, type AppSettings, type DashboardSnapshot, type ExportFormat } from '@/shared/types'
+import {
+  agentSources,
+  type AgentSource,
+  type AppSettings,
+  type DashboardSnapshot,
+  type ExportFormat,
+} from '@/shared/types'
 
 type DashboardState = {
   snapshot: DashboardSnapshot
@@ -73,7 +79,8 @@ const emptySnapshot = (): DashboardSnapshot => ({
 export function useDashboard(): DashboardState {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(() => emptySnapshot())
   const [settings, setSettings] = useState<AppSettings>(() => {
-    const mockDataEnabled = globalThis.localStorage?.getItem('clean-my-agent.mockDataEnabled') === 'true'
+    const mockDataEnabled =
+      globalThis.localStorage?.getItem('clean-my-agent.mockDataEnabled') === 'true'
     return mergeSettings({ mockDataEnabled })
   })
   const [loading, setLoading] = useState(true)
@@ -96,31 +103,36 @@ export function useDashboard(): DashboardState {
     }
   }, [])
 
-  const load = useCallback(async (force = false) => {
-    if (settings.mockDataEnabled) {
-      setSnapshot(mockSnapshot)
-      setLoading(false)
-      return
-    }
+  const load = useCallback(
+    async (force = false) => {
+      if (settings.mockDataEnabled) {
+        setSnapshot(mockSnapshot)
+        setLoading(false)
+        return
+      }
 
-    if (!window.cleanMyAgent) {
-      setSnapshot(emptySnapshot())
-      setLoading(false)
-      return
-    }
+      if (!window.cleanMyAgent) {
+        setSnapshot(emptySnapshot())
+        setLoading(false)
+        return
+      }
 
-    setLoading(true)
-    try {
-      const next = force ? await window.cleanMyAgent.rescan() : await window.cleanMyAgent.getSnapshot()
-      setSnapshot(next)
-    } catch (error) {
-      console.error(error)
-      toast.error('Could not read local agent data.')
-      setSnapshot(emptySnapshot())
-    } finally {
-      setLoading(false)
-    }
-  }, [settings.mockDataEnabled])
+      setLoading(true)
+      try {
+        const next = force
+          ? await window.cleanMyAgent.rescan()
+          : await window.cleanMyAgent.getSnapshot()
+        setSnapshot(next)
+      } catch (error) {
+        console.error(error)
+        toast.error('Could not read local agent data.')
+        setSnapshot(emptySnapshot())
+      } finally {
+        setLoading(false)
+      }
+    },
+    [settings.mockDataEnabled],
+  )
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(false), 0)
@@ -154,7 +166,9 @@ export function useDashboard(): DashboardState {
           toast.success('Live local data enabled')
           setLoading(true)
           try {
-            const next = window.cleanMyAgent ? await window.cleanMyAgent.getSnapshot() : emptySnapshot()
+            const next = window.cleanMyAgent
+              ? await window.cleanMyAgent.getSnapshot()
+              : emptySnapshot()
             setSnapshot(next)
           } catch (error) {
             console.error(error)
@@ -200,7 +214,9 @@ export function useDashboard(): DashboardState {
           return
         }
         const records = await window.cleanMyAgent.moveCleanupToTrash(candidateIds)
-        toast.success(`${records.length} cleanup item${records.length === 1 ? '' : 's'} moved to Trash`)
+        toast.success(
+          `${records.length} cleanup item${records.length === 1 ? '' : 's'} moved to Trash`,
+        )
         await load(true)
       },
     }),

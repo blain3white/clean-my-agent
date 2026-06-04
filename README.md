@@ -45,13 +45,13 @@ Clean My Agent is designed to be safe by default.
 
 ## Supported Sources
 
-| Source | Status |
-| --- | --- |
-| Codex | Scan, usage, backup, export, cleanup |
+| Source      | Status                               |
+| ----------- | ------------------------------------ |
+| Codex       | Scan, usage, backup, export, cleanup |
 | Claude Code | Scan, usage, backup, export, cleanup |
-| Cursor | Scan, usage, backup, export, cleanup |
-| Gemini | Scan, usage, backup, export, cleanup |
-| OpenCode | Scan, usage, backup, export, cleanup |
+| Cursor      | Scan, usage, backup, export, cleanup |
+| Gemini      | Scan, usage, backup, export, cleanup |
+| OpenCode    | Scan, usage, backup, export, cleanup |
 
 ## Universal Relay JSON
 
@@ -81,7 +81,8 @@ This format is intended to make agent session data easier to archive, inspect, a
 - Vite / electron-vite
 - Tailwind CSS
 - Radix / shadcn-style UI primitives
-- Node.js 24
+- Node.js 22.13 or newer for development
+- Electron 42 with Node.js 24.x at desktop runtime
 - Node built-in SQLite
 - pnpm
 
@@ -89,7 +90,7 @@ This format is intended to make agent session data easier to archive, inspect, a
 
 Requirements:
 
-- Node.js 24.10.0 or newer
+- Node.js 22.13.0 or newer
 - pnpm 10 or newer
 
 Install dependencies:
@@ -129,6 +130,14 @@ pnpm verify:functions
 ```
 
 The smoke test creates temporary fake agent session data and verifies scanning, token statistics, backup, Markdown/JSON export, universal relay JSON export, cleanup to Trash, and Trash restore.
+
+Run the full local CI gate:
+
+```bash
+pnpm check
+```
+
+Contributions usually branch from `develop` and open pull requests back into `develop`. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, style, testing, safety, and pull request guidance. Maintainer-side branch protection recommendations live in [docs/maintainer-guide.md](docs/maintainer-guide.md).
 
 ## Project Map
 

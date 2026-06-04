@@ -1,0 +1,8 @@
+node_modules
+dist
+dist-ssr
+out
+coverage
+.codex-backups
+external
+pnpm-lock.yaml

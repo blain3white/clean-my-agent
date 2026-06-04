@@ -1,5 +1,15 @@
 import { createHash } from 'node:crypto'
-import { access, copyFile, cp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  access,
+  copyFile,
+  cp,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { constants } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -21,10 +31,12 @@ export function hashId(parts: Array<string | number | undefined>): string {
 }
 
 export function sanitizeName(name: string): string {
-  return name
-    .replace(/[^\w.-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80) || 'item'
+  return (
+    name
+      .replace(/[^\w.-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 80) || 'item'
+  )
 }
 
 export async function exists(filePath: string): Promise<boolean> {
@@ -84,7 +96,11 @@ export async function safeReadText(filePath: string, maxBytes = 2_000_000): Prom
   return handle.subarray(0, maxBytes).toString('utf8')
 }
 
-export async function listFiles(root: string, patterns: string[], maxFiles = 1500): Promise<string[]> {
+export async function listFiles(
+  root: string,
+  patterns: string[],
+  maxFiles = 1500,
+): Promise<string[]> {
   const absoluteRoot = expandHome(root)
   if (!(await readable(absoluteRoot))) return []
 

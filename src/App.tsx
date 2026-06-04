@@ -68,7 +68,14 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useDashboard } from '@/hooks/use-dashboard'
 import { useTheme } from '@/hooks/use-theme'
 import { agentLabel, formatBytes, formatRelative, formatTokens, riskAccent } from '@/lib/format'
-import { agentSources, type AgentSource, type CleanupCandidate, type DashboardSnapshot, type SessionRecord, type UsagePoint } from '@/shared/types'
+import {
+  agentSources,
+  type AgentSource,
+  type CleanupCandidate,
+  type DashboardSnapshot,
+  type SessionRecord,
+  type UsagePoint,
+} from '@/shared/types'
 import './App.css'
 
 type ViewId = 'overview' | 'sessions' | 'cleanup' | 'usage' | 'relay' | 'health' | 'settings'
@@ -123,7 +130,10 @@ const sourceColors: Record<AgentSource, string> = {
   opencode: '#60a5fa',
 }
 
-const tokenBarGlowColors: Record<AgentSource, { bright: string; base: string; deep: string; glow: string }> = {
+const tokenBarGlowColors: Record<
+  AgentSource,
+  { bright: string; base: string; deep: string; glow: string }
+> = {
   codex: { bright: '#c4b5fd', base: '#9f7aea', deep: '#6d4bd8', glow: '#a78bfa' },
   claude: { bright: '#fdba74', base: '#fb923c', deep: '#c45a1d', glow: '#fb923c' },
   cursor: { bright: '#f8fafc', base: '#cbd5e1', deep: '#718096', glow: '#cbd5e1' },
@@ -146,7 +156,11 @@ const usageRanges: Array<{ value: UsageRange; label: string }> = [
 
 const heatmapTimeLabels = ['00', '04', '08', '12', '16', '20', '24']
 
-const tokenActivityModes: Array<{ value: TokenActivityMode; label: string; icon: typeof ChartSpline }> = [
+const tokenActivityModes: Array<{
+  value: TokenActivityMode
+  label: string
+  icon: typeof ChartSpline
+}> = [
   { value: 'bar', label: 'Bar', icon: ChartNoAxesColumn },
   { value: 'line', label: 'Linear', icon: ChartSpline },
   { value: 'heat', label: 'Heatmap', icon: Grid3X3 },
@@ -172,7 +186,9 @@ function AgentGlyph({ source }: { source: AgentSource }) {
     <span
       className="agent-logo grid size-8 place-items-center"
       data-source={source}
-      style={{ '--agent-color': sourceColors[source], color: sourceIconColors[source] } as AgentLogoStyle}
+      style={
+        { '--agent-color': sourceColors[source], color: sourceIconColors[source] } as AgentLogoStyle
+      }
     >
       {icon ?? <Bot className="size-4" />}
     </span>
@@ -208,7 +224,13 @@ function MetricCard({
   )
 }
 
-function UsageRangeControl({ value, onChange }: { value: UsageRange; onChange: (value: UsageRange) => void }) {
+function UsageRangeControl({
+  value,
+  onChange,
+}: {
+  value: UsageRange
+  onChange: (value: UsageRange) => void
+}) {
   return (
     <div className="range-control flex items-center rounded-lg border border-white/10 bg-white/[0.035] p-0.5">
       {usageRanges.map((range) => (
@@ -217,7 +239,9 @@ function UsageRangeControl({ value, onChange }: { value: UsageRange; onChange: (
           type="button"
           onClick={() => onChange(range.value)}
           className={`h-6 rounded-md px-2 text-[11px] font-medium transition ${
-            value === range.value ? 'bg-white/14 text-white shadow-sm' : 'text-white/45 hover:text-white/75'
+            value === range.value
+              ? 'bg-white/14 text-white shadow-sm'
+              : 'text-white/45 hover:text-white/75'
           }`}
         >
           {range.label}
@@ -247,32 +271,48 @@ function usageDaysForRange(_usage: UsagePoint[], range: UsageRange): number {
 }
 
 function sessionCountForDates(sessions: SessionRecord[], dates: Set<string>): number {
-  return sessions.filter((session) => dates.has(dateKeyFromTime(new Date(session.lastUpdated).getTime()))).length
+  return sessions.filter((session) =>
+    dates.has(dateKeyFromTime(new Date(session.lastUpdated).getTime())),
+  ).length
 }
 
 function cleanupCountForDates(cleanup: CleanupCandidate[], dates: Set<string>): number {
-  return cleanup.filter((item) => item.lastUpdated && dates.has(dateKeyFromTime(new Date(item.lastUpdated).getTime()))).length
+  return cleanup.filter(
+    (item) => item.lastUpdated && dates.has(dateKeyFromTime(new Date(item.lastUpdated).getTime())),
+  ).length
 }
 
 function usageTotalForDates(snapshot: DashboardSnapshot, dates: Set<string>): number {
-  return snapshot.usage.reduce((total, point) => total + (dates.has(point.date) ? point.total : 0), 0)
+  return snapshot.usage.reduce(
+    (total, point) => total + (dates.has(point.date) ? point.total : 0),
+    0,
+  )
 }
 
 function sessionTokenTotalForDates(sessions: SessionRecord[], dates: Set<string>): number {
   return sessions.reduce((total, session) => {
     const usageByDate = session.metadata.usageByDate
     if (usageByDate && typeof usageByDate === 'object' && !Array.isArray(usageByDate)) {
-      return total + Object.entries(usageByDate).reduce((sum, [date, value]) => {
-        return sum + (dates.has(date) && typeof value === 'number' && Number.isFinite(value) ? value : 0)
-      }, 0)
+      return (
+        total +
+        Object.entries(usageByDate).reduce((sum, [date, value]) => {
+          return (
+            sum +
+            (dates.has(date) && typeof value === 'number' && Number.isFinite(value) ? value : 0)
+          )
+        }, 0)
+      )
     }
 
-    return dates.has(dateKeyFromTime(new Date(session.lastUpdated).getTime())) ? total + session.tokens.total : total
+    return dates.has(dateKeyFromTime(new Date(session.lastUpdated).getTime()))
+      ? total + session.tokens.total
+      : total
   }, 0)
 }
 
 function trendDetail(current: number, previous: number, unit: string, range: UsageRange): string {
-  if (range === 'all') return current === 0 ? `No ${unit} all time` : `${current.toLocaleString()} ${unit} all time`
+  if (range === 'all')
+    return current === 0 ? `No ${unit} all time` : `${current.toLocaleString()} ${unit} all time`
   if (current === 0 && previous === 0) return `No ${unit} in ${range} days`
   if (previous <= 0) return `${current.toLocaleString()} ${unit} in ${range} days`
   const delta = ((current - previous) / previous) * 100
@@ -321,13 +361,25 @@ function buildHeatmapCells(usage: UsagePoint[]): HeatmapCell[] {
   }))
 }
 
-function UsageTooltip({ active, payload, label }: { active?: boolean; payload?: ChartTooltipPayload[]; label?: unknown }) {
+function UsageTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean
+  payload?: ChartTooltipPayload[]
+  label?: unknown
+}) {
   if (!active || !payload?.length) return null
   const point = payload[0]?.payload
   const sources = agentSources
     .map((source) => ({ source, value: point?.[source] ?? 0 }))
     .filter((item) => item.value > 0)
-  const total = Number(payload.find((item) => item.dataKey === 'total')?.value ?? point?.total ?? sources.reduce((sum, item) => sum + item.value, 0))
+  const total = Number(
+    payload.find((item) => item.dataKey === 'total')?.value ??
+      point?.total ??
+      sources.reduce((sum, item) => sum + item.value, 0),
+  )
 
   return (
     <div className="chart-tooltip min-w-44 rounded-lg px-3 py-2 shadow-xl">
@@ -341,7 +393,10 @@ function UsageTooltip({ active, payload, label }: { active?: boolean; payload?: 
           {sources.map((item) => (
             <div key={item.source} className="flex items-center justify-between gap-4 text-[11px]">
               <span className="flex items-center gap-1.5 text-white/50">
-                <span className="size-1.5 rounded-full" style={{ backgroundColor: sourceColors[item.source] }} />
+                <span
+                  className="size-1.5 rounded-full"
+                  style={{ backgroundColor: sourceColors[item.source] }}
+                />
                 {agentLabel[item.source]}
               </span>
               <span className="font-mono text-white/64">{formatTokens(item.value)}</span>
@@ -353,13 +408,7 @@ function UsageTooltip({ active, payload, label }: { active?: boolean; payload?: 
   )
 }
 
-function TokenActivityCard({
-  usage,
-  usageRange,
-}: {
-  usage: UsagePoint[]
-  usageRange: UsageRange
-}) {
+function TokenActivityCard({ usage, usageRange }: { usage: UsagePoint[]; usageRange: UsageRange }) {
   const [mode, setMode] = useState<TokenActivityMode>('bar')
   const minWidth = mode === 'heat' ? Math.max(620, 72 + usage.length * 21) : 580
 
@@ -381,7 +430,9 @@ function TokenActivityCard({
                         aria-label={`${activityMode.label} view`}
                         aria-pressed={mode === activityMode.value}
                         className={`grid size-6 place-items-center rounded-md transition ${
-                          mode === activityMode.value ? 'bg-white/14 text-white shadow-sm' : 'text-white/45 hover:text-white/75'
+                          mode === activityMode.value
+                            ? 'bg-white/14 text-white shadow-sm'
+                            : 'text-white/45 hover:text-white/75'
                         }`}
                       >
                         <Icon className="size-3.5" />
@@ -407,16 +458,44 @@ function TokenActivityCard({
 function TokenLineChart({ usage }: { usage: UsagePoint[] }) {
   return (
     <ResponsiveContainer className="chart-static" width="100%" height="100%">
-      <LineChart data={usage} accessibilityLayer={false} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
+      <LineChart
+        data={usage}
+        accessibilityLayer={false}
+        margin={{ top: 10, right: 8, left: 0, bottom: 0 }}
+      >
         <defs>
           <filter id="tokenLineGlow" x="-12%" y="-70%" width="124%" height="240%">
-            <feDropShadow dx="0" dy="0" stdDeviation="1.25" floodColor="#60a5fa" floodOpacity="0.36" />
-            <feDropShadow dx="0" dy="0" stdDeviation="0.45" floodColor="#93c5fd" floodOpacity="0.22" />
+            <feDropShadow
+              dx="0"
+              dy="0"
+              stdDeviation="1.25"
+              floodColor="#60a5fa"
+              floodOpacity="0.36"
+            />
+            <feDropShadow
+              dx="0"
+              dy="0"
+              stdDeviation="0.45"
+              floodColor="#93c5fd"
+              floodOpacity="0.22"
+            />
           </filter>
         </defs>
         <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
-        <XAxis dataKey="date" tick={{ fill: 'var(--chart-tick)', fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={18} tickFormatter={(value) => String(value).slice(5)} />
-        <YAxis tick={{ fill: 'var(--chart-tick)', fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(value) => formatTokens(Number(value))} />
+        <XAxis
+          dataKey="date"
+          tick={{ fill: 'var(--chart-tick)', fontSize: 11 }}
+          tickLine={false}
+          axisLine={false}
+          minTickGap={18}
+          tickFormatter={(value) => String(value).slice(5)}
+        />
+        <YAxis
+          tick={{ fill: 'var(--chart-tick)', fontSize: 11 }}
+          tickLine={false}
+          axisLine={false}
+          tickFormatter={(value) => formatTokens(Number(value))}
+        />
         <ChartTooltip
           content={<UsageTooltip />}
           cursor={{ stroke: 'rgba(147,197,253,.38)', strokeWidth: 1, strokeDasharray: '4 5' }}
@@ -440,12 +519,23 @@ function TokenLineChart({ usage }: { usage: UsagePoint[] }) {
 function TokenBarChart({ usage }: { usage: UsagePoint[] }) {
   return (
     <ResponsiveContainer className="chart-static" width="100%" height="100%">
-      <BarChart data={usage} accessibilityLayer={false} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
+      <BarChart
+        data={usage}
+        accessibilityLayer={false}
+        margin={{ top: 10, right: 8, left: 0, bottom: 0 }}
+      >
         <defs>
           {agentSources.map((source) => {
             const colors = tokenBarGlowColors[source]
             return (
-              <linearGradient key={`tokenBarGradient-${source}`} id={`tokenBarGradient-${source}`} x1="0" y1="0" x2="0" y2="1">
+              <linearGradient
+                key={`tokenBarGradient-${source}`}
+                id={`tokenBarGradient-${source}`}
+                x1="0"
+                y1="0"
+                x2="0"
+                y2="1"
+              >
                 <stop offset="0%" stopColor={colors.bright} stopOpacity={0.98} />
                 <stop offset="42%" stopColor={colors.base} stopOpacity={0.98} />
                 <stop offset="100%" stopColor={colors.deep} stopOpacity={0.96} />
@@ -455,16 +545,47 @@ function TokenBarChart({ usage }: { usage: UsagePoint[] }) {
           {agentSources.map((source) => {
             const colors = tokenBarGlowColors[source]
             return (
-              <filter key={`tokenBarGlow-${source}`} id={`tokenBarGlow-${source}`} x="-35%" y="-35%" width="170%" height="190%">
-                <feDropShadow dx="0" dy="0" stdDeviation="1.1" floodColor={colors.glow} floodOpacity="0.24" />
-                <feDropShadow dx="0" dy="-1" stdDeviation="0.55" floodColor={colors.bright} floodOpacity="0.16" />
+              <filter
+                key={`tokenBarGlow-${source}`}
+                id={`tokenBarGlow-${source}`}
+                x="-35%"
+                y="-35%"
+                width="170%"
+                height="190%"
+              >
+                <feDropShadow
+                  dx="0"
+                  dy="0"
+                  stdDeviation="1.1"
+                  floodColor={colors.glow}
+                  floodOpacity="0.24"
+                />
+                <feDropShadow
+                  dx="0"
+                  dy="-1"
+                  stdDeviation="0.55"
+                  floodColor={colors.bright}
+                  floodOpacity="0.16"
+                />
               </filter>
             )
           })}
         </defs>
         <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
-        <XAxis dataKey="date" tick={{ fill: 'var(--chart-tick)', fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={18} tickFormatter={(value) => String(value).slice(5)} />
-        <YAxis tick={{ fill: 'var(--chart-tick)', fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(value) => formatTokens(Number(value))} />
+        <XAxis
+          dataKey="date"
+          tick={{ fill: 'var(--chart-tick)', fontSize: 11 }}
+          tickLine={false}
+          axisLine={false}
+          minTickGap={18}
+          tickFormatter={(value) => String(value).slice(5)}
+        />
+        <YAxis
+          tick={{ fill: 'var(--chart-tick)', fontSize: 11 }}
+          tickLine={false}
+          axisLine={false}
+          tickFormatter={(value) => formatTokens(Number(value))}
+        />
         <ChartTooltip
           content={<UsageTooltip />}
           cursor={{ fill: 'rgba(96,165,250,.08)' }}
@@ -500,7 +621,11 @@ function TokenHeatmap({ usage, usageRange }: { usage: UsagePoint[]; usageRange: 
         style={{ gridTemplateColumns: `36px repeat(${usage.length}, 16px)` }}
       >
         {heatmapTimeLabels.map((time, index) => (
-          <div key={time} className="self-center text-[11px] text-white/42" style={{ gridColumn: 1, gridRow: index + 1 }}>
+          <div
+            key={time}
+            className="self-center text-[11px] text-white/42"
+            style={{ gridColumn: 1, gridRow: index + 1 }}
+          >
             {time}
           </div>
         ))}
@@ -523,9 +648,7 @@ function TokenHeatmap({ usage, usageRange }: { usage: UsagePoint[]; usageRange: 
       </div>
       <div className="mt-3 flex justify-between pl-9 text-[11px] text-white/38">
         {dateLabels.map(({ point }) => (
-          <span key={point.date}>
-            {point.date.slice(5)}
-          </span>
+          <span key={point.date}>{point.date.slice(5)}</span>
         ))}
       </div>
       <div className="mt-5 flex items-center justify-center gap-2 text-[11px] text-white/42">
@@ -558,7 +681,10 @@ function StorageSummaryBody({ slice, total }: { slice: StorageDatum; total: numb
   return (
     <div className="min-w-40 space-y-1">
       <div className="flex items-center gap-2 text-xs font-medium text-white/58">
-        <span className="size-2.5 rounded-full" style={{ backgroundColor: sourceColors[slice.source] }} />
+        <span
+          className="size-2.5 rounded-full"
+          style={{ backgroundColor: sourceColors[slice.source] }}
+        />
         <span className="truncate">{slice.name}</span>
       </div>
       <div className="flex items-center justify-between gap-7 text-[11px]">
@@ -567,7 +693,9 @@ function StorageSummaryBody({ slice, total }: { slice: StorageDatum; total: numb
       </div>
       <div className="flex items-center justify-between gap-7 text-[11px]">
         <span className="text-white/50">Share</span>
-        <span className="font-mono font-semibold text-white/64">{storagePercent(slice.value, total)}</span>
+        <span className="font-mono font-semibold text-white/64">
+          {storagePercent(slice.value, total)}
+        </span>
       </div>
     </div>
   )
@@ -575,13 +703,25 @@ function StorageSummaryBody({ slice, total }: { slice: StorageDatum; total: numb
 
 function StorageSummaryTooltip({ slice, total }: { slice: StorageDatum; total: number }) {
   return (
-    <TooltipContent side="top" sideOffset={8} className="chart-tooltip rounded-lg px-3 py-2 shadow-xl">
+    <TooltipContent
+      side="top"
+      sideOffset={8}
+      className="chart-tooltip rounded-lg px-3 py-2 shadow-xl"
+    >
       <StorageSummaryBody slice={slice} total={total} />
     </TooltipContent>
   )
 }
 
-function StorageChartTooltip({ active, payload, total }: { active?: boolean; payload?: StorageChartTooltipPayload[]; total: number }) {
+function StorageChartTooltip({
+  active,
+  payload,
+  total,
+}: {
+  active?: boolean
+  payload?: StorageChartTooltipPayload[]
+  total: number
+}) {
   const slice = payload?.[0]?.payload
   if (!active || !slice) return null
 
@@ -625,7 +765,9 @@ function StorageBreakdownCard({
                       aria-label={`${viewMode.label} view`}
                       aria-pressed={mode === viewMode.value}
                       className={`grid size-6 place-items-center rounded-md transition ${
-                        mode === viewMode.value ? 'bg-white/14 text-white shadow-sm' : 'text-white/45 hover:text-white/75'
+                        mode === viewMode.value
+                          ? 'bg-white/14 text-white shadow-sm'
+                          : 'text-white/45 hover:text-white/75'
                       }`}
                     >
                       <Icon className="size-3.5" />
@@ -639,17 +781,41 @@ function StorageBreakdownCard({
         </div>
       </CardHeader>
       <CardContent className="min-h-0 flex-1 overflow-hidden">
-        {mode === 'layout' && <StorageLayoutView storageData={storageData} storageTotal={storageTotal} />}
-        {mode === 'line' && <StorageLineView storageData={storageData} storageTotal={storageTotal} sessionCount={sessionCount} />}
-        {mode === 'pie' && <StoragePieView storageData={storageData} storageTotal={storageTotal} sessionCount={sessionCount} />}
+        {mode === 'layout' && (
+          <StorageLayoutView storageData={storageData} storageTotal={storageTotal} />
+        )}
+        {mode === 'line' && (
+          <StorageLineView
+            storageData={storageData}
+            storageTotal={storageTotal}
+            sessionCount={sessionCount}
+          />
+        )}
+        {mode === 'pie' && (
+          <StoragePieView
+            storageData={storageData}
+            storageTotal={storageTotal}
+            sessionCount={sessionCount}
+          />
+        )}
       </CardContent>
     </Card>
   )
 }
 
-function StorageLayoutView({ storageData, storageTotal }: { storageData: StorageDatum[]; storageTotal: number }) {
+function StorageLayoutView({
+  storageData,
+  storageTotal,
+}: {
+  storageData: StorageDatum[]
+  storageTotal: number
+}) {
   if (storageData.length === 0) {
-    return <div className="grid h-full place-items-center text-xs text-white/45">No storage activity in this range</div>
+    return (
+      <div className="grid h-full place-items-center text-xs text-white/45">
+        No storage activity in this range
+      </div>
+    )
   }
 
   const [primary, secondary, ...rest] = storageData
@@ -657,8 +823,20 @@ function StorageLayoutView({ storageData, storageTotal }: { storageData: Storage
   return (
     <div className="flex h-full flex-col gap-2">
       <div className="storage-layout-grid min-h-0 flex-1">
-        {primary && <StorageLayoutTile slice={primary} total={storageTotal} className="storage-layout-primary" />}
-        {secondary && <StorageLayoutTile slice={secondary} total={storageTotal} className="storage-layout-secondary" />}
+        {primary && (
+          <StorageLayoutTile
+            slice={primary}
+            total={storageTotal}
+            className="storage-layout-primary"
+          />
+        )}
+        {secondary && (
+          <StorageLayoutTile
+            slice={secondary}
+            total={storageTotal}
+            className="storage-layout-secondary"
+          />
+        )}
         {rest.length > 0 && (
           <div className="storage-layout-rest">
             {rest.map((slice) => (
@@ -672,7 +850,15 @@ function StorageLayoutView({ storageData, storageTotal }: { storageData: Storage
   )
 }
 
-function StorageLayoutTile({ slice, total, className = '' }: { slice: StorageDatum; total: number; className?: string }) {
+function StorageLayoutTile({
+  slice,
+  total,
+  className = '',
+}: {
+  slice: StorageDatum
+  total: number
+  className?: string
+}) {
   const percent = total > 0 ? (slice.value / total) * 100 : 0
   const density = percent < 1 ? 'tiny' : percent < 6 ? 'compact' : 'full'
 
@@ -686,9 +872,19 @@ function StorageLayoutTile({ slice, total, className = '' }: { slice: StorageDat
           style={storageVisualStyle(slice.source)}
         >
           <div className="relative z-10 min-w-0">
-            <div className="storage-layout-label truncate text-[13px] font-semibold text-white/88">{slice.name}</div>
-            {density !== 'tiny' && <div className="mt-1 text-xs font-medium text-white/62">{formatBytes(slice.value)}</div>}
-            {density === 'full' && <div className="mt-0.5 text-xs font-semibold text-white/52">{storagePercent(slice.value, total)}</div>}
+            <div className="storage-layout-label truncate text-[13px] font-semibold text-white/88">
+              {slice.name}
+            </div>
+            {density !== 'tiny' && (
+              <div className="mt-1 text-xs font-medium text-white/62">
+                {formatBytes(slice.value)}
+              </div>
+            )}
+            {density === 'full' && (
+              <div className="mt-0.5 text-xs font-semibold text-white/52">
+                {storagePercent(slice.value, total)}
+              </div>
+            )}
           </div>
         </div>
       </TooltipTrigger>
@@ -697,13 +893,27 @@ function StorageLayoutTile({ slice, total, className = '' }: { slice: StorageDat
   )
 }
 
-function StorageLegend({ storageData, storageTotal }: { storageData: StorageDatum[]; storageTotal: number }) {
+function StorageLegend({
+  storageData,
+  storageTotal,
+}: {
+  storageData: StorageDatum[]
+  storageTotal: number
+}) {
   return (
     <div className="flex min-h-5 flex-wrap items-center gap-x-3 gap-y-1 overflow-hidden">
       {storageData.slice(0, 5).map((slice) => (
-        <div key={slice.source} className="flex min-w-0 items-center gap-1.5 text-[10px] font-medium text-white/45">
-          <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: sourceColors[slice.source] }} />
-          <span className="truncate">{slice.name} ({storagePercent(slice.value, storageTotal)})</span>
+        <div
+          key={slice.source}
+          className="flex min-w-0 items-center gap-1.5 text-[10px] font-medium text-white/45"
+        >
+          <span
+            className="size-2 shrink-0 rounded-full"
+            style={{ backgroundColor: sourceColors[slice.source] }}
+          />
+          <span className="truncate">
+            {slice.name} ({storagePercent(slice.value, storageTotal)})
+          </span>
         </div>
       ))}
     </div>
@@ -721,22 +931,34 @@ function StorageLineView({
 }) {
   return (
     <div className="storage-line-view flex h-full flex-col gap-3 overflow-y-auto pr-1">
-      {storageData.length === 0 && <div className="text-xs text-white/45">No storage activity in this range</div>}
+      {storageData.length === 0 && (
+        <div className="text-xs text-white/45">No storage activity in this range</div>
+      )}
       {storageData.slice(0, 5).map((slice) => (
         <Tooltip key={slice.source}>
           <TooltipTrigger asChild>
             <div className="storage-line-row grid grid-cols-[112px_1fr_72px] items-center gap-3">
               <div className="flex min-w-0 items-center gap-2">
-                <span className="size-2.5 rounded-full" style={{ backgroundColor: sourceColors[slice.source] }} />
+                <span
+                  className="size-2.5 rounded-full"
+                  style={{ backgroundColor: sourceColors[slice.source] }}
+                />
                 <span className="truncate text-[13px] font-medium text-white/70">{slice.name}</span>
               </div>
               <div
                 className="storage-meter"
-                style={{ ...storageVisualStyle(slice.source), '--meter-value': `${(slice.value / Math.max(storageTotal, 1)) * 100}%` } as StorageVisualStyle & { '--meter-value': string }}
+                style={
+                  {
+                    ...storageVisualStyle(slice.source),
+                    '--meter-value': `${(slice.value / Math.max(storageTotal, 1)) * 100}%`,
+                  } as StorageVisualStyle & { '--meter-value': string }
+                }
               >
                 <span className="storage-meter-fill" />
               </div>
-              <span className="shrink-0 text-right text-[13px] font-semibold text-white/58">{formatBytes(slice.value)}</span>
+              <span className="shrink-0 text-right text-[13px] font-semibold text-white/58">
+                {formatBytes(slice.value)}
+              </span>
             </div>
           </TooltipTrigger>
           <StorageSummaryTooltip slice={slice} total={storageTotal} />
@@ -748,8 +970,12 @@ function StorageLineView({
             <Database className="size-4 text-blue-300" />
             <span className="text-[13px] font-semibold text-white/70">Total</span>
           </div>
-          <span className="text-[11px] text-white/35">{sessionCount.toLocaleString()} sessions</span>
-          <span className="text-right text-[13px] font-semibold text-white/64">{formatBytes(storageTotal)}</span>
+          <span className="text-[11px] text-white/35">
+            {sessionCount.toLocaleString()} sessions
+          </span>
+          <span className="text-right text-[13px] font-semibold text-white/64">
+            {formatBytes(storageTotal)}
+          </span>
         </div>
       )}
     </div>
@@ -772,12 +998,23 @@ function StoragePieView({
           <defs>
             <filter id="storagePieHalo" x="-45%" y="-45%" width="190%" height="190%">
               <feGaussianBlur stdDeviation="1.6" result="blur" />
-              <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 .31 0" />
+              <feColorMatrix
+                in="blur"
+                type="matrix"
+                values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 .31 0"
+              />
             </filter>
             {agentSources.map((source) => {
               const colors = tokenBarGlowColors[source]
               return (
-                <linearGradient key={`storagePieGradient-${source}`} id={`storagePieGradient-${source}`} x1="0" y1="0" x2="1" y2="1">
+                <linearGradient
+                  key={`storagePieGradient-${source}`}
+                  id={`storagePieGradient-${source}`}
+                  x1="0"
+                  y1="0"
+                  x2="1"
+                  y2="1"
+                >
                   <stop offset="0%" stopColor={colors.bright} stopOpacity={0.98} />
                   <stop offset="58%" stopColor={colors.base} stopOpacity={0.98} />
                   <stop offset="100%" stopColor={colors.deep} stopOpacity={0.96} />
@@ -789,30 +1026,66 @@ function StoragePieView({
             content={<StorageChartTooltip total={storageTotal} />}
             wrapperStyle={{ outline: 'none' }}
           />
-          <Pie data={storageData} innerRadius={42} outerRadius={76} paddingAngle={2} dataKey="value" isAnimationActive={false} stroke="none" filter="url(#storagePieHalo)" opacity={0.29}>
+          <Pie
+            data={storageData}
+            innerRadius={42}
+            outerRadius={76}
+            paddingAngle={2}
+            dataKey="value"
+            isAnimationActive={false}
+            stroke="none"
+            filter="url(#storagePieHalo)"
+            opacity={0.29}
+          >
             {storageData.map((entry) => (
               <Cell key={`halo-${entry.name}`} fill={sourceColors[entry.source]} />
             ))}
           </Pie>
-          <Pie data={storageData} innerRadius={44} outerRadius={72} paddingAngle={2} dataKey="value" isAnimationActive={false} stroke="rgba(255,255,255,.32)" strokeWidth={0.7}>
+          <Pie
+            data={storageData}
+            innerRadius={44}
+            outerRadius={72}
+            paddingAngle={2}
+            dataKey="value"
+            isAnimationActive={false}
+            stroke="rgba(255,255,255,.32)"
+            strokeWidth={0.7}
+          >
             {storageData.map((entry) => (
-              <Cell key={entry.name} fill={`url(#storagePieGradient-${entry.source})`} stroke="rgba(255,255,255,.32)" strokeWidth={0.7} />
+              <Cell
+                key={entry.name}
+                fill={`url(#storagePieGradient-${entry.source})`}
+                stroke="rgba(255,255,255,.32)"
+                strokeWidth={0.7}
+              />
             ))}
           </Pie>
         </PieChart>
       </ResponsiveContainer>
       <div className="space-y-3">
-        {storageData.length === 0 && <div className="text-xs text-white/45">No storage activity in this range</div>}
+        {storageData.length === 0 && (
+          <div className="text-xs text-white/45">No storage activity in this range</div>
+        )}
         {storageData.slice(0, 5).map((slice) => (
-          <div key={`${slice.source}-${slice.name}`} className="flex items-center justify-between gap-3 text-xs">
+          <div
+            key={`${slice.source}-${slice.name}`}
+            className="flex items-center justify-between gap-3 text-xs"
+          >
             <div className="flex min-w-0 items-center gap-2">
-              <span className="size-2.5 rounded-full" style={{ backgroundColor: sourceColors[slice.source] }} />
+              <span
+                className="size-2.5 rounded-full"
+                style={{ backgroundColor: sourceColors[slice.source] }}
+              />
               <span className="truncate text-white/70">{slice.name}</span>
             </div>
             <span className="text-white/48">{formatBytes(slice.value)}</span>
           </div>
         ))}
-        {storageTotal > 0 && <div className="border-t border-white/7 pt-2 text-[11px] text-white/38">{formatBytes(storageTotal)} across {sessionCount.toLocaleString()} sessions</div>}
+        {storageTotal > 0 && (
+          <div className="border-t border-white/7 pt-2 text-[11px] text-white/38">
+            {formatBytes(storageTotal)} across {sessionCount.toLocaleString()} sessions
+          </div>
+        )}
       </div>
     </div>
   )
@@ -830,7 +1103,12 @@ function Sidebar({
   return (
     <aside className="sidebar-glass drag-region flex w-[232px] shrink-0 flex-col px-4 pb-4 pt-5">
       <div className="mb-7 flex items-center gap-2 pl-2 pt-8">
-        <img src="/app-logo.png" alt="" className="size-10 shrink-0 object-contain" draggable={false} />
+        <img
+          src="/app-logo.png"
+          alt=""
+          className="size-10 shrink-0 object-contain"
+          draggable={false}
+        />
         <div>
           <div className="text-sm font-medium text-white">Clean My Agent</div>
           <div className="text-[11px] text-white/40">Local session control</div>
@@ -847,7 +1125,9 @@ function Sidebar({
               type="button"
               onClick={() => setActiveView(item.id)}
               className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] transition ${
-                active ? 'bg-white/11 text-white shadow-inner' : 'text-white/66 hover:bg-white/7 hover:text-white'
+                active
+                  ? 'bg-white/11 text-white shadow-inner'
+                  : 'text-white/66 hover:bg-white/7 hover:text-white'
               }`}
             >
               <Icon className="size-4" />
@@ -863,7 +1143,10 @@ function Sidebar({
       </div>
       <div className="mt-3 space-y-2">
         {snapshot.agents.map((agent) => (
-          <div key={agent.source} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-white/70">
+          <div
+            key={agent.source}
+            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-white/70"
+          >
             <AgentGlyph source={agent.source} />
             <div className="min-w-0 flex-1">
               <div className="truncate text-xs font-medium text-white/82">{agent.name}</div>
@@ -880,9 +1163,10 @@ function Sidebar({
           <ShieldCheck className="size-4 text-emerald-300" />
           Safe by default
         </div>
-        <p className="mt-2 text-[11px] leading-4 text-white/42">Cleanup moves files to app Trash. Session candidates are backed up first.</p>
+        <p className="mt-2 text-[11px] leading-4 text-white/42">
+          Cleanup moves files to app Trash. Session candidates are backed up first.
+        </p>
       </div>
-
     </aside>
   )
 }
@@ -924,11 +1208,16 @@ function Topbar({
       </div>
       <div className="flex items-center gap-2">
         {mockDataEnabled && (
-          <Badge variant="outline" className="border-violet-300/20 bg-violet-400/10 text-violet-200">
+          <Badge
+            variant="outline"
+            className="border-violet-300/20 bg-violet-400/10 text-violet-200"
+          >
             Demo
           </Badge>
         )}
-        {activeView === 'overview' && <UsageRangeControl value={overviewRange} onChange={onOverviewRangeChange} />}
+        {activeView === 'overview' && (
+          <UsageRangeControl value={overviewRange} onChange={onOverviewRangeChange} />
+        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -945,8 +1234,18 @@ function Topbar({
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="outline" size="icon-sm" onClick={() => void onRescan()} disabled={loading} className="border-white/10 bg-white/5 text-white hover:bg-white/10">
-              {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCcw className="size-4" />}
+            <Button
+              variant="outline"
+              size="icon-sm"
+              onClick={() => void onRescan()}
+              disabled={loading}
+              className="border-white/10 bg-white/5 text-white hover:bg-white/10"
+            >
+              {loading ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <RefreshCcw className="size-4" />
+              )}
             </Button>
           </TooltipTrigger>
           <TooltipContent>Rescan local agent data</TooltipContent>
@@ -967,19 +1266,31 @@ function OverviewView({
 }) {
   const recentSessions = snapshot.sessions.slice(0, 6)
   const rangeDays = usageDaysForRange(snapshot.usage, usageRange)
-  const currentRangeDates = usageRange === 'all' ? rangeDateKeys(snapshot.usage, usageRange) : recentDateKeys(rangeDays)
-  const priorRangeDates = usageRange === 'all' ? new Set<string>() : recentDateKeys(rangeDays, rangeDays)
+  const currentRangeDates =
+    usageRange === 'all' ? rangeDateKeys(snapshot.usage, usageRange) : recentDateKeys(rangeDays)
+  const priorRangeDates =
+    usageRange === 'all' ? new Set<string>() : recentDateKeys(rangeDays, rangeDays)
   const sessionsInRange = sessionCountForDates(snapshot.sessions, currentRangeDates)
   const sessionsPriorRange = sessionCountForDates(snapshot.sessions, priorRangeDates)
-  const backupsInRange = snapshot.backups.filter((backup) => currentRangeDates.has(dateKeyFromTime(new Date(backup.createdAt).getTime()))).length
-  const backupsPriorRange = snapshot.backups.filter((backup) => priorRangeDates.has(dateKeyFromTime(new Date(backup.createdAt).getTime()))).length
+  const backupsInRange = snapshot.backups.filter((backup) =>
+    currentRangeDates.has(dateKeyFromTime(new Date(backup.createdAt).getTime())),
+  ).length
+  const backupsPriorRange = snapshot.backups.filter((backup) =>
+    priorRangeDates.has(dateKeyFromTime(new Date(backup.createdAt).getTime())),
+  ).length
   const cleanupInRange = cleanupCountForDates(snapshot.cleanup, currentRangeDates)
   const cleanupPriorRange = cleanupCountForDates(snapshot.cleanup, priorRangeDates)
-  const tokensInRange = sessionTokenTotalForDates(snapshot.sessions, currentRangeDates) || usageTotalForDates(snapshot, currentRangeDates)
-  const tokensPriorRange = sessionTokenTotalForDates(snapshot.sessions, priorRangeDates) || usageTotalForDates(snapshot, priorRangeDates)
+  const tokensInRange =
+    sessionTokenTotalForDates(snapshot.sessions, currentRangeDates) ||
+    usageTotalForDates(snapshot, currentRangeDates)
+  const tokensPriorRange =
+    sessionTokenTotalForDates(snapshot.sessions, priorRangeDates) ||
+    usageTotalForDates(snapshot, priorRangeDates)
   const rangeUsage = snapshot.usage.slice(-rangeDays)
   const selectedDateKeys = rangeDateKeys(snapshot.usage, usageRange)
-  const rangeSessions = snapshot.sessions.filter((session) => selectedDateKeys.has(dateKeyFromTime(new Date(session.lastUpdated).getTime())))
+  const rangeSessions = snapshot.sessions.filter((session) =>
+    selectedDateKeys.has(dateKeyFromTime(new Date(session.lastUpdated).getTime())),
+  )
   const storageData = agentSources
     .map((source) => {
       const sessions = rangeSessions.filter((session) => session.source === source)
@@ -997,9 +1308,27 @@ function OverviewView({
   return (
     <div className="space-y-4">
       <section className="grid grid-cols-4 gap-3">
-        <MetricCard icon={Database} label="Total Sessions" value={snapshot.overview.totalSessions.toLocaleString()} detail={trendDetail(sessionsInRange, sessionsPriorRange, 'sessions', usageRange)} accent="bg-emerald-400/12 text-emerald-300" />
-        <MetricCard icon={Archive} label="Backed Up" value={snapshot.overview.backedUpSessions.toLocaleString()} detail={trendDetail(backupsInRange, backupsPriorRange, 'backups', usageRange)} accent="bg-blue-400/12 text-blue-300" />
-        <MetricCard icon={HardDrive} label="Reclaimable" value={formatBytes(snapshot.overview.reclaimableBytes)} detail={trendDetail(cleanupInRange, cleanupPriorRange, 'suggestions', usageRange)} accent="bg-amber-400/12 text-amber-300" />
+        <MetricCard
+          icon={Database}
+          label="Total Sessions"
+          value={snapshot.overview.totalSessions.toLocaleString()}
+          detail={trendDetail(sessionsInRange, sessionsPriorRange, 'sessions', usageRange)}
+          accent="bg-emerald-400/12 text-emerald-300"
+        />
+        <MetricCard
+          icon={Archive}
+          label="Backed Up"
+          value={snapshot.overview.backedUpSessions.toLocaleString()}
+          detail={trendDetail(backupsInRange, backupsPriorRange, 'backups', usageRange)}
+          accent="bg-blue-400/12 text-blue-300"
+        />
+        <MetricCard
+          icon={HardDrive}
+          label="Reclaimable"
+          value={formatBytes(snapshot.overview.reclaimableBytes)}
+          detail={trendDetail(cleanupInRange, cleanupPriorRange, 'suggestions', usageRange)}
+          accent="bg-amber-400/12 text-amber-300"
+        />
         <MetricCard
           icon={Gauge}
           label="Token Usage"
@@ -1011,7 +1340,11 @@ function OverviewView({
 
       <section className="grid grid-cols-[1fr_400px] gap-4">
         <TokenActivityCard usage={rangeUsage} usageRange={usageRange} />
-        <StorageBreakdownCard storageData={storageData} storageTotal={storageTotal} sessionCount={rangeSessions.length} />
+        <StorageBreakdownCard
+          storageData={storageData}
+          storageTotal={storageTotal}
+          sessionCount={rangeSessions.length}
+        />
       </section>
 
       <section className="grid grid-cols-[1fr_400px] gap-4">
@@ -1019,13 +1352,22 @@ function OverviewView({
           <CardHeader className="pb-0">
             <div className="flex w-full items-center justify-between">
               <CardTitle className="text-sm text-white">Recent Sessions</CardTitle>
-              <Button variant="ghost" size="sm" className="text-blue-300 hover:bg-blue-400/10 hover:text-blue-200">View all</Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-blue-300 hover:bg-blue-400/10 hover:text-blue-200"
+              >
+                View all
+              </Button>
             </div>
           </CardHeader>
           <CardContent>
             <div className="divide-y divide-white/7">
               {recentSessions.map((session) => (
-                <div key={session.id} className="grid grid-cols-[28px_1fr_120px_80px_80px] items-center gap-3 py-2.5 text-xs">
+                <div
+                  key={session.id}
+                  className="grid grid-cols-[28px_1fr_120px_80px_80px] items-center gap-3 py-2.5 text-xs"
+                >
                   <AgentGlyph source={session.source} />
                   <div className="min-w-0">
                     <div className="truncate font-medium text-white/82">{session.title}</div>
@@ -1044,7 +1386,14 @@ function OverviewView({
           <CardHeader className="pb-0">
             <div className="flex w-full items-center justify-between">
               <CardTitle className="text-sm text-white">Smart Cleanup</CardTitle>
-              <Button variant="ghost" size="sm" onClick={onSelectCleanup} className="text-blue-300 hover:bg-blue-400/10 hover:text-blue-200">Review</Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onSelectCleanup}
+                className="text-blue-300 hover:bg-blue-400/10 hover:text-blue-200"
+              >
+                Review
+              </Button>
             </div>
           </CardHeader>
           <CardContent>
@@ -1063,14 +1412,18 @@ function OverviewView({
 function CleanupMiniRow({ candidate }: { candidate: CleanupCandidate }) {
   return (
     <div className="flex items-center gap-3 rounded-md border border-white/7 bg-white/[0.03] p-3">
-      <div className={`grid size-8 place-items-center rounded-md ring-1 ${riskAccent[candidate.risk]}`}>
+      <div
+        className={`grid size-8 place-items-center rounded-md ring-1 ${riskAccent[candidate.risk]}`}
+      >
         <Trash2 className="size-4" />
       </div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-xs font-medium text-white/82">{candidate.title}</div>
         <div className="truncate text-[11px] text-white/38">{candidate.reason}</div>
       </div>
-      <div className="text-right text-xs font-semibold text-amber-300">{formatBytes(candidate.sizeBytes)}</div>
+      <div className="text-right text-xs font-semibold text-amber-300">
+        {formatBytes(candidate.sizeBytes)}
+      </div>
     </div>
   )
 }
@@ -1089,7 +1442,8 @@ function SessionsView({
   const [query, setQuery] = useState('')
   const [agent, setAgent] = useState<'all' | AgentSource>('all')
   const filtered = sessions.filter((session) => {
-    const haystack = `${session.title} ${session.projectName} ${session.branch ?? ''} ${agentLabel[session.source]}`.toLowerCase()
+    const haystack =
+      `${session.title} ${session.projectName} ${session.branch ?? ''} ${agentLabel[session.source]}`.toLowerCase()
     return haystack.includes(query.toLowerCase()) && (agent === 'all' || session.source === agent)
   })
 
@@ -1099,17 +1453,30 @@ function SessionsView({
         <div className="flex items-center justify-between gap-3">
           <div>
             <CardTitle className="text-sm text-white">Unified Sessions</CardTitle>
-            <p className="mt-1 text-xs text-white/42">Codex, Claude Code, Cursor, Gemini, and OpenCode sessions in one index.</p>
+            <p className="mt-1 text-xs text-white/42">
+              Codex, Claude Code, Cursor, Gemini, and OpenCode sessions in one index.
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-white/35" />
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sessions..." className="h-8 w-64 border-white/10 bg-white/5 pl-8 text-white placeholder:text-white/30" />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search sessions..."
+                className="h-8 w-64 border-white/10 bg-white/5 pl-8 text-white placeholder:text-white/30"
+              />
             </div>
-            <select value={agent} onChange={(event) => setAgent(event.target.value as 'all' | AgentSource)} className="h-8 rounded-lg border border-white/10 bg-white/5 px-2 text-xs text-white outline-none">
+            <select
+              value={agent}
+              onChange={(event) => setAgent(event.target.value as 'all' | AgentSource)}
+              className="h-8 rounded-lg border border-white/10 bg-white/5 px-2 text-xs text-white outline-none"
+            >
               <option value="all">All Agents</option>
               {Object.entries(agentLabel).map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
+                <option key={value} value={value}>
+                  {label}
+                </option>
               ))}
             </select>
           </div>
@@ -1140,31 +1507,78 @@ function SessionsView({
                       <span className="text-xs text-white/70">{agentLabel[session.source]}</span>
                     </div>
                   </TableCell>
-                  <TableCell className="max-w-[240px] truncate font-medium text-white/82">{session.title}</TableCell>
-                  <TableCell className="max-w-[180px] truncate text-white/55">{session.projectName}</TableCell>
-                  <TableCell className="max-w-[160px] truncate text-white/45">{session.branch ?? 'Unknown'}</TableCell>
-                  <TableCell className="text-white/45">{formatRelative(session.lastUpdated)}</TableCell>
-                  <TableCell className="text-right text-white/60">{formatTokens(session.tokens.total)}</TableCell>
-                  <TableCell className="text-right text-white/60">{formatBytes(session.sizeBytes)}</TableCell>
+                  <TableCell className="max-w-[240px] truncate font-medium text-white/82">
+                    {session.title}
+                  </TableCell>
+                  <TableCell className="max-w-[180px] truncate text-white/55">
+                    {session.projectName}
+                  </TableCell>
+                  <TableCell className="max-w-[160px] truncate text-white/45">
+                    {session.branch ?? 'Unknown'}
+                  </TableCell>
+                  <TableCell className="text-white/45">
+                    {formatRelative(session.lastUpdated)}
+                  </TableCell>
+                  <TableCell className="text-right text-white/60">
+                    {formatTokens(session.tokens.total)}
+                  </TableCell>
+                  <TableCell className="text-right text-white/60">
+                    {formatBytes(session.sizeBytes)}
+                  </TableCell>
                   <TableCell>
                     {session.backupStatus === 'backed-up' ? (
-                      <Badge className="bg-emerald-400/10 text-emerald-300"><CheckCircle2 className="size-3" />Backed Up</Badge>
+                      <Badge className="bg-emerald-400/10 text-emerald-300">
+                        <CheckCircle2 className="size-3" />
+                        Backed Up
+                      </Badge>
                     ) : (
-                      <Badge variant="outline" className="border-amber-400/20 bg-amber-400/10 text-amber-300">Pending</Badge>
+                      <Badge
+                        variant="outline"
+                        className="border-amber-400/20 bg-amber-400/10 text-amber-300"
+                      >
+                        Pending
+                      </Badge>
                     )}
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-1">
                       <Tooltip>
-                        <TooltipTrigger asChild><Button variant="ghost" size="icon-xs" onClick={() => void onBackup(session.id)} className="text-white/55 hover:bg-white/10 hover:text-white"><Archive className="size-3.5" /></Button></TooltipTrigger>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={() => void onBackup(session.id)}
+                            className="text-white/55 hover:bg-white/10 hover:text-white"
+                          >
+                            <Archive className="size-3.5" />
+                          </Button>
+                        </TooltipTrigger>
                         <TooltipContent>Backup session</TooltipContent>
                       </Tooltip>
                       <Tooltip>
-                        <TooltipTrigger asChild><Button variant="ghost" size="icon-xs" onClick={() => void onExport(session.id)} className="text-white/55 hover:bg-white/10 hover:text-white"><Download className="size-3.5" /></Button></TooltipTrigger>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={() => void onExport(session.id)}
+                            className="text-white/55 hover:bg-white/10 hover:text-white"
+                          >
+                            <Download className="size-3.5" />
+                          </Button>
+                        </TooltipTrigger>
                         <TooltipContent>Export Markdown</TooltipContent>
                       </Tooltip>
                       <Tooltip>
-                        <TooltipTrigger asChild><Button variant="ghost" size="icon-xs" onClick={() => void onRelay(session.id)} className="text-white/55 hover:bg-white/10 hover:text-white"><FileJson2 className="size-3.5" /></Button></TooltipTrigger>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={() => void onRelay(session.id)}
+                            className="text-white/55 hover:bg-white/10 hover:text-white"
+                          >
+                            <FileJson2 className="size-3.5" />
+                          </Button>
+                        </TooltipTrigger>
                         <TooltipContent>Export universal relay JSON</TooltipContent>
                       </Tooltip>
                     </div>
@@ -1187,7 +1601,9 @@ function CleanupView({
   onMoveToTrash: (candidateIds: string[]) => Promise<void>
 }) {
   const [selected, setSelected] = useState<string[]>(cleanup.slice(0, 3).map((item) => item.id))
-  const selectedBytes = cleanup.filter((item) => selected.includes(item.id)).reduce((total, item) => total + item.sizeBytes, 0)
+  const selectedBytes = cleanup
+    .filter((item) => selected.includes(item.id))
+    .reduce((total, item) => total + item.sizeBytes, 0)
   const selectedItems = cleanup.filter((item) => selected.includes(item.id))
   const accentByKind: Record<CleanupCandidate['kind'], string> = {
     'old-session': 'text-emerald-300 bg-emerald-400/13 ring-emerald-400/28',
@@ -1198,18 +1614,27 @@ function CleanupView({
     'orphan-session': 'text-violet-300 bg-violet-400/13 ring-violet-400/28',
     'invalid-cache': 'text-red-300 bg-red-400/13 ring-red-400/28',
   }
-  const selectedColor = (index: number) => ['bg-emerald-300', 'bg-amber-300', 'bg-blue-300', 'bg-violet-300', 'bg-sky-300'][index % 5]
+  const selectedColor = (index: number) =>
+    ['bg-emerald-300', 'bg-amber-300', 'bg-blue-300', 'bg-violet-300', 'bg-sky-300'][index % 5]
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_334px] gap-6 max-[1120px]:grid-cols-1">
       <Card className="glass-panel overflow-hidden rounded-lg py-0">
         <CardHeader className="flex-row items-center justify-between gap-3 px-8 pb-0 pt-8">
           <div>
-            <CardTitle className="text-[20px] font-semibold text-white">Cleanup Suggestions</CardTitle>
-            <p className="mt-3 text-[15px] text-white/60">Review each suggestion. Items are backed up first and can be recovered.</p>
+            <CardTitle className="text-[20px] font-semibold text-white">
+              Cleanup Suggestions
+            </CardTitle>
+            <p className="mt-3 text-[15px] text-white/60">
+              Review each suggestion. Items are backed up first and can be recovered.
+            </p>
           </div>
           <div className="flex items-center gap-3">
-            <Button variant="outline" size="lg" className="h-9 rounded-lg border-white/12 bg-white/5 px-3 text-[15px] font-normal text-white/82 hover:bg-white/10">
+            <Button
+              variant="outline"
+              size="lg"
+              className="h-9 rounded-lg border-white/12 bg-white/5 px-3 text-[15px] font-normal text-white/82 hover:bg-white/10"
+            >
               <ListFilter className="size-4" />
               Filter
             </Button>
@@ -1228,20 +1653,32 @@ function CleanupView({
                 <div
                   key={candidate.id}
                   className={`cleanup-row group grid min-h-[145px] grid-cols-[28px_58px_minmax(0,1fr)_104px] items-center gap-4 rounded-lg border px-4 py-5 text-left transition max-[1280px]:grid-cols-[24px_58px_minmax(0,1fr)] max-[1280px]:items-start ${
-                    checked ? 'border-white/12 bg-white/[0.055]' : 'border-white/9 bg-white/[0.03] hover:bg-white/[0.05]'
+                    checked
+                      ? 'border-white/12 bg-white/[0.055]'
+                      : 'border-white/9 bg-white/[0.03] hover:bg-white/[0.05]'
                   }`}
                 >
                   <button
                     type="button"
-                    onClick={() => setSelected((current) => checked ? current.filter((id) => id !== candidate.id) : [...current, candidate.id])}
+                    onClick={() =>
+                      setSelected((current) =>
+                        checked
+                          ? current.filter((id) => id !== candidate.id)
+                          : [...current, candidate.id],
+                      )
+                    }
                     aria-label={`${checked ? 'Deselect' : 'Select'} ${candidate.title}`}
                     className={`grid size-6 place-items-center rounded-md border transition ${
-                      checked ? 'border-white/22 bg-white/10 text-white' : 'border-white/16 bg-black/12 text-transparent group-hover:text-white/45'
+                      checked
+                        ? 'border-white/22 bg-white/10 text-white'
+                        : 'border-white/16 bg-black/12 text-transparent group-hover:text-white/45'
                     }`}
                   >
                     <CheckCircle2 className="size-4" />
                   </button>
-                  <div className={`grid size-[58px] place-items-center rounded-lg ring-1 shadow-[inset_0_1px_0_rgb(255_255_255_/_10%)] ${accentByKind[candidate.kind]}`}>
+                  <div
+                    className={`grid size-[58px] place-items-center rounded-lg ring-1 shadow-[inset_0_1px_0_rgb(255_255_255_/_10%)] ${accentByKind[candidate.kind]}`}
+                  >
                     {candidate.kind === 'duplicate-backup' ? (
                       <Archive className="size-7" />
                     ) : checked ? (
@@ -1252,21 +1689,45 @@ function CleanupView({
                   </div>
                   <div className="min-w-0 max-[1280px]:pr-2">
                     <div className="flex min-w-0 flex-wrap items-center gap-2.5">
-                      <div className="min-w-0 truncate text-[18px] font-semibold text-white">{candidate.title}</div>
-                      <Badge variant="outline" className={`h-6 rounded-full px-3 text-xs capitalize ring-1 ${riskAccent[candidate.risk]}`}>{candidate.risk} risk</Badge>
-                      {candidate.backedUp && <Badge className="h-6 rounded-full bg-emerald-400/10 px-3 text-xs text-emerald-300 ring-1 ring-emerald-400/20">Backed up</Badge>}
+                      <div className="min-w-0 truncate text-[18px] font-semibold text-white">
+                        {candidate.title}
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={`h-6 rounded-full px-3 text-xs capitalize ring-1 ${riskAccent[candidate.risk]}`}
+                      >
+                        {candidate.risk} risk
+                      </Badge>
+                      {candidate.backedUp && (
+                        <Badge className="h-6 rounded-full bg-emerald-400/10 px-3 text-xs text-emerald-300 ring-1 ring-emerald-400/20">
+                          Backed up
+                        </Badge>
+                      )}
                     </div>
                     <p className="mt-2 text-[15px] leading-6 text-white/58">{candidate.reason}</p>
                     <div className="mt-4 flex flex-wrap gap-3 text-[13px] text-white/42">
-                      <span>{candidate.paths.length} path{candidate.paths.length === 1 ? '' : 's'}</span>
+                      <span>
+                        {candidate.paths.length} path{candidate.paths.length === 1 ? '' : 's'}
+                      </span>
                       <span>·</span>
                       <span>{candidate.recoverable ? 'Recoverable from Trash' : 'Permanent'}</span>
-                      {candidate.source && <><span>·</span><span>{agentLabel[candidate.source]}</span></>}
+                      {candidate.source && (
+                        <>
+                          <span>·</span>
+                          <span>{agentLabel[candidate.source]}</span>
+                        </>
+                      )}
                     </div>
                   </div>
                   <div className="text-right max-[1280px]:col-start-3 max-[1280px]:text-left">
-                    <div className={`text-[22px] font-semibold ${candidate.kind === 'duplicate-backup' ? 'text-blue-300' : candidate.risk === 'medium' ? 'text-amber-300' : 'text-emerald-300'}`}>{formatBytes(candidate.sizeBytes)}</div>
-                    <div className="mt-2 text-[13px] text-white/48">{candidate.kind.replaceAll('-', ' ')}</div>
+                    <div
+                      className={`text-[22px] font-semibold ${candidate.kind === 'duplicate-backup' ? 'text-blue-300' : candidate.risk === 'medium' ? 'text-amber-300' : 'text-emerald-300'}`}
+                    >
+                      {formatBytes(candidate.sizeBytes)}
+                    </div>
+                    <div className="mt-2 text-[13px] text-white/48">
+                      {candidate.kind.replaceAll('-', ' ')}
+                    </div>
                   </div>
                 </div>
               )
@@ -1276,11 +1737,21 @@ function CleanupView({
             <div className="flex items-start gap-3">
               <ShieldCheck className="mt-1 size-5 text-emerald-300" />
               <div>
-                <div className="text-[16px] font-medium text-white">{selected.length} suggestions selected</div>
-                <div className="mt-1 text-sm text-white/52">{formatBytes(selectedBytes)} reclaimable</div>
+                <div className="text-[16px] font-medium text-white">
+                  {selected.length} suggestions selected
+                </div>
+                <div className="mt-1 text-sm text-white/52">
+                  {formatBytes(selectedBytes)} reclaimable
+                </div>
               </div>
             </div>
-            <Button variant="outline" size="lg" onClick={() => setSelected([])} disabled={selected.length === 0} className="h-9 rounded-lg border-white/12 bg-white/5 px-4 text-[15px] font-normal text-white/72 hover:bg-white/10 hover:text-white">
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={() => setSelected([])}
+              disabled={selected.length === 0}
+              className="h-9 rounded-lg border-white/12 bg-white/5 px-4 text-[15px] font-normal text-white/72 hover:bg-white/10 hover:text-white"
+            >
               Deselect all
             </Button>
           </div>
@@ -1295,17 +1766,33 @@ function CleanupView({
         <CardContent className="px-7 pb-6 pt-7">
           <div>
             <div className="flex items-end gap-2 text-white">
-              <span className="text-[46px] font-semibold leading-none">{formatBytes(selectedBytes).split(' ')[0]}</span>
-              <span className="pb-1 text-[25px] font-semibold">{formatBytes(selectedBytes).split(' ')[1] ?? ''}</span>
+              <span className="text-[46px] font-semibold leading-none">
+                {formatBytes(selectedBytes).split(' ')[0]}
+              </span>
+              <span className="pb-1 text-[25px] font-semibold">
+                {formatBytes(selectedBytes).split(' ')[1] ?? ''}
+              </span>
             </div>
             <div className="mt-3 text-[15px] text-white/58">{selected.length} items selected</div>
           </div>
           <Separator className="my-7 bg-white/10" />
           <div className="space-y-5 text-[15px] text-white/62">
-            <div className="flex items-center gap-3"><ShieldCheck className="size-5 text-emerald-300" />Backed up before removal</div>
-            <div className="flex items-center gap-3"><Trash2 className="size-5 text-blue-300" />Moved to app Trash</div>
-            <div className="flex items-center gap-3"><Clock className="size-5 text-amber-300" />Trash retention is configurable</div>
-            <div className="flex items-center gap-3"><RefreshCcw className="size-5 text-violet-300" />Easily recoverable</div>
+            <div className="flex items-center gap-3">
+              <ShieldCheck className="size-5 text-emerald-300" />
+              Backed up before removal
+            </div>
+            <div className="flex items-center gap-3">
+              <Trash2 className="size-5 text-blue-300" />
+              Moved to app Trash
+            </div>
+            <div className="flex items-center gap-3">
+              <Clock className="size-5 text-amber-300" />
+              Trash retention is configurable
+            </div>
+            <div className="flex items-center gap-3">
+              <RefreshCcw className="size-5 text-violet-300" />
+              Easily recoverable
+            </div>
           </div>
           <Separator className="my-7 bg-white/10" />
           <div>
@@ -1314,7 +1801,9 @@ function CleanupView({
               {selectedItems.map((item, index) => (
                 <div key={item.id} className="flex items-center gap-2 text-[14px]">
                   <span className={`size-2.5 rounded-full ${selectedColor(index)}`} />
-                  <span className="min-w-0 flex-1 truncate text-white/58">{item.kind.replaceAll('-', ' ')}</span>
+                  <span className="min-w-0 flex-1 truncate text-white/58">
+                    {item.kind.replaceAll('-', ' ')}
+                  </span>
                   <span className="text-white/58">{formatBytes(item.sizeBytes)}</span>
                 </div>
               ))}
@@ -1325,11 +1814,17 @@ function CleanupView({
             <span className="text-white">Total reclaimable</span>
             <span className="font-semibold text-white">{formatBytes(selectedBytes)}</span>
           </div>
-          <Button onClick={() => void onMoveToTrash(selected)} disabled={selected.length === 0} className="mt-6 h-11 w-full rounded-lg bg-blue-500 text-[16px] font-semibold text-white shadow-[0_10px_24px_rgb(37_99_235_/_28%)] hover:bg-blue-400">
+          <Button
+            onClick={() => void onMoveToTrash(selected)}
+            disabled={selected.length === 0}
+            className="mt-6 h-11 w-full rounded-lg bg-blue-500 text-[16px] font-semibold text-white shadow-[0_10px_24px_rgb(37_99_235_/_28%)] hover:bg-blue-400"
+          >
             <Trash2 className="size-5" />
             Move to Trash
           </Button>
-          <p className="mt-3 text-center text-[13px] text-white/45">Files will be moved to app Trash</p>
+          <p className="mt-3 text-center text-[13px] text-white/45">
+            Files will be moved to app Trash
+          </p>
         </CardContent>
       </Card>
     </div>
@@ -1338,18 +1833,23 @@ function CleanupView({
 
 function UsageView({ snapshot }: { snapshot: DashboardSnapshot }) {
   const projectRows = Object.values(
-    snapshot.sessions.reduce<Record<string, { project: string; tokens: number; sessions: number }>>((acc, session) => {
-      acc[session.projectName] ??= { project: session.projectName, tokens: 0, sessions: 0 }
-      acc[session.projectName].tokens += session.tokens.total
-      acc[session.projectName].sessions += 1
-      return acc
-    }, {}),
+    snapshot.sessions.reduce<Record<string, { project: string; tokens: number; sessions: number }>>(
+      (acc, session) => {
+        acc[session.projectName] ??= { project: session.projectName, tokens: 0, sessions: 0 }
+        acc[session.projectName].tokens += session.tokens.total
+        acc[session.projectName].sessions += 1
+        return acc
+      },
+      {},
+    ),
   ).sort((a, b) => b.tokens - a.tokens)
 
   const agentRows = snapshot.agents.map((agent) => ({
     agent: agent.name,
     source: agent.source,
-    tokens: snapshot.sessions.filter((session) => session.source === agent.source).reduce((total, session) => total + session.tokens.total, 0),
+    tokens: snapshot.sessions
+      .filter((session) => session.source === agent.source)
+      .reduce((total, session) => total + session.tokens.total, 0),
   }))
 
   return (
@@ -1362,14 +1862,37 @@ function UsageView({ snapshot }: { snapshot: DashboardSnapshot }) {
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={snapshot.usage.slice(-14)}>
               <CartesianGrid stroke="rgba(255,255,255,.07)" vertical={false} />
-              <XAxis dataKey="date" tick={{ fill: 'rgba(255,255,255,.38)', fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(value) => String(value).slice(5)} />
-              <YAxis tick={{ fill: 'rgba(255,255,255,.34)', fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(value) => formatTokens(Number(value))} />
-              <ChartTooltip contentStyle={{ background: '#18191b', border: '1px solid rgba(255,255,255,.12)', borderRadius: 8 }} formatter={(value) => formatTokens(Number(value))} />
+              <XAxis
+                dataKey="date"
+                tick={{ fill: 'rgba(255,255,255,.38)', fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(value) => String(value).slice(5)}
+              />
+              <YAxis
+                tick={{ fill: 'rgba(255,255,255,.34)', fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(value) => formatTokens(Number(value))}
+              />
+              <ChartTooltip
+                contentStyle={{
+                  background: '#18191b',
+                  border: '1px solid rgba(255,255,255,.12)',
+                  borderRadius: 8,
+                }}
+                formatter={(value) => formatTokens(Number(value))}
+              />
               <Bar dataKey="codex" stackId="a" fill={sourceColors.codex} radius={[0, 0, 0, 0]} />
               <Bar dataKey="claude" stackId="a" fill={sourceColors.claude} />
               <Bar dataKey="cursor" stackId="a" fill={sourceColors.cursor} />
               <Bar dataKey="gemini" stackId="a" fill={sourceColors.gemini} />
-              <Bar dataKey="opencode" stackId="a" fill={sourceColors.opencode} radius={[4, 4, 0, 0]} />
+              <Bar
+                dataKey="opencode"
+                stackId="a"
+                fill={sourceColors.opencode}
+                radius={[4, 4, 0, 0]}
+              />
             </BarChart>
           </ResponsiveContainer>
         </CardContent>
@@ -1377,7 +1900,9 @@ function UsageView({ snapshot }: { snapshot: DashboardSnapshot }) {
 
       <div className="space-y-4">
         <Card className="glass-panel rounded-lg py-4">
-          <CardHeader className="pb-0"><CardTitle className="text-sm text-white">By Agent</CardTitle></CardHeader>
+          <CardHeader className="pb-0">
+            <CardTitle className="text-sm text-white">By Agent</CardTitle>
+          </CardHeader>
           <CardContent className="space-y-3">
             {agentRows.map((row) => (
               <div key={row.source}>
@@ -1385,17 +1910,24 @@ function UsageView({ snapshot }: { snapshot: DashboardSnapshot }) {
                   <span className="text-white/70">{row.agent}</span>
                   <span className="text-white/45">{formatTokens(row.tokens)}</span>
                 </div>
-                <Progress value={(row.tokens / Math.max(snapshot.overview.totalTokens, 1)) * 100} className="h-1.5 bg-white/8" />
+                <Progress
+                  value={(row.tokens / Math.max(snapshot.overview.totalTokens, 1)) * 100}
+                  className="h-1.5 bg-white/8"
+                />
               </div>
             ))}
           </CardContent>
         </Card>
         <Card className="glass-panel rounded-lg py-4">
-          <CardHeader className="pb-0"><CardTitle className="text-sm text-white">Top Projects</CardTitle></CardHeader>
+          <CardHeader className="pb-0">
+            <CardTitle className="text-sm text-white">Top Projects</CardTitle>
+          </CardHeader>
           <CardContent className="space-y-3">
             {projectRows.slice(0, 7).map((row, index) => (
               <div key={row.project} className="flex items-center gap-3 text-xs">
-                <span className="grid size-5 place-items-center rounded bg-white/7 text-white/42">{index + 1}</span>
+                <span className="grid size-5 place-items-center rounded bg-white/7 text-white/42">
+                  {index + 1}
+                </span>
                 <span className="min-w-0 flex-1 truncate text-white/70">{row.project}</span>
                 <span className="text-white/45">{formatTokens(row.tokens)}</span>
               </div>
@@ -1422,11 +1954,14 @@ function RelayView({
       <Card className="glass-panel rounded-lg py-4">
         <CardHeader className="pb-0">
           <CardTitle className="text-sm text-white">Universal Relay JSON</CardTitle>
-          <p className="mt-1 text-xs text-white/42">V0 extracts chats into a common schema. Agent-specific converters can target Codex, Claude Code, Cursor, Gemini, or OpenCode later.</p>
+          <p className="mt-1 text-xs text-white/42">
+            V0 extracts chats into a common schema. Agent-specific converters can target Codex,
+            Claude Code, Cursor, Gemini, or OpenCode later.
+          </p>
         </CardHeader>
         <CardContent>
           <pre className="overflow-hidden rounded-lg border border-white/8 bg-black/25 p-4 text-xs leading-5 text-white/58">
-{`{
+            {`{
   "schema": "clean-my-agent.universal-session.v1",
   "source": "${session?.source ?? 'codex'}",
   "session": {
@@ -1448,23 +1983,40 @@ function RelayView({
       </Card>
 
       <Card className="glass-panel rounded-lg py-4">
-        <CardHeader className="pb-0"><CardTitle className="text-sm text-white">Export Source</CardTitle></CardHeader>
+        <CardHeader className="pb-0">
+          <CardTitle className="text-sm text-white">Export Source</CardTitle>
+        </CardHeader>
         <CardContent className="space-y-4">
-          <select value={selected} onChange={(event) => setSelected(event.target.value)} className="h-9 w-full rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white outline-none">
+          <select
+            value={selected}
+            onChange={(event) => setSelected(event.target.value)}
+            className="h-9 w-full rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white outline-none"
+          >
             {sessions.map((item) => (
-              <option key={item.id} value={item.id}>{agentLabel[item.source]} · {item.title}</option>
+              <option key={item.id} value={item.id}>
+                {agentLabel[item.source]} · {item.title}
+              </option>
             ))}
           </select>
           {session && (
             <div className="rounded-lg border border-white/8 bg-white/[0.03] p-3">
-              <div className="flex items-center gap-2"><AgentGlyph source={session.source} /><span className="text-sm font-medium text-white/82">{session.title}</span></div>
+              <div className="flex items-center gap-2">
+                <AgentGlyph source={session.source} />
+                <span className="text-sm font-medium text-white/82">{session.title}</span>
+              </div>
               <div className="mt-3 space-y-1 text-xs text-white/42">
                 <div>{session.projectName}</div>
-                <div>{session.messageCount} messages · {formatTokens(session.tokens.total)} tokens</div>
+                <div>
+                  {session.messageCount} messages · {formatTokens(session.tokens.total)} tokens
+                </div>
               </div>
             </div>
           )}
-          <Button disabled={!session} onClick={() => session && void onRelay(session.id)} className="w-full bg-blue-500 text-white hover:bg-blue-400">
+          <Button
+            disabled={!session}
+            onClick={() => session && void onRelay(session.id)}
+            className="w-full bg-blue-500 text-white hover:bg-blue-400"
+          >
             <FileJson2 className="size-4" />
             Export Universal JSON
           </Button>
@@ -1484,12 +2036,27 @@ function HealthView({ snapshot }: { snapshot: DashboardSnapshot }) {
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between">
                 <div className="font-medium text-white">{agent.name}</div>
-                <Badge className={agent.readable ? 'bg-emerald-400/10 text-emerald-300' : 'bg-amber-400/10 text-amber-300'}>{agent.readable ? 'Readable' : 'Not found'}</Badge>
+                <Badge
+                  className={
+                    agent.readable
+                      ? 'bg-emerald-400/10 text-emerald-300'
+                      : 'bg-amber-400/10 text-amber-300'
+                  }
+                >
+                  {agent.readable ? 'Readable' : 'Not found'}
+                </Badge>
               </div>
-              <div className="mt-2 text-xs text-white/42">{agent.sessionCount} sessions · {formatBytes(agent.sizeBytes)}</div>
+              <div className="mt-2 text-xs text-white/42">
+                {agent.sessionCount} sessions · {formatBytes(agent.sizeBytes)}
+              </div>
               <div className="mt-3 space-y-1">
                 {agent.rootPaths.map((root) => (
-                  <div key={root} className="truncate rounded border border-white/7 bg-white/[0.03] px-2 py-1 text-[11px] text-white/38">{root}</div>
+                  <div
+                    key={root}
+                    className="truncate rounded border border-white/7 bg-white/[0.03] px-2 py-1 text-[11px] text-white/38"
+                  >
+                    {root}
+                  </div>
                 ))}
               </div>
             </div>
@@ -1512,13 +2079,18 @@ function SettingsView({
       <Card className="glass-panel rounded-lg py-4">
         <CardHeader className="pb-0">
           <CardTitle className="text-sm text-white">Display Data</CardTitle>
-          <p className="mt-1 text-xs text-white/42">Switch between live local scan results and a balanced demo dataset for visual review.</p>
+          <p className="mt-1 text-xs text-white/42">
+            Switch between live local scan results and a balanced demo dataset for visual review.
+          </p>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center justify-between gap-4 rounded-lg border border-white/8 bg-white/[0.035] p-4">
             <div className="min-w-0">
               <div className="text-sm font-medium text-white/82">Demo data</div>
-              <div className="mt-1 text-xs leading-5 text-white/42">Overview, Usage, Cleanup, Sessions, Relay, and Health use curated mock values while enabled.</div>
+              <div className="mt-1 text-xs leading-5 text-white/42">
+                Overview, Usage, Cleanup, Sessions, Relay, and Health use curated mock values while
+                enabled.
+              </div>
             </div>
             <Switch
               checked={mockDataEnabled}
@@ -1561,19 +2133,47 @@ function App() {
   const content = useMemo(() => {
     switch (activeView) {
       case 'overview':
-        return <OverviewView snapshot={dashboard.snapshot} usageRange={overviewRange} onSelectCleanup={() => setActiveView('cleanup')} />
+        return (
+          <OverviewView
+            snapshot={dashboard.snapshot}
+            usageRange={overviewRange}
+            onSelectCleanup={() => setActiveView('cleanup')}
+          />
+        )
       case 'sessions':
-        return <SessionsView sessions={dashboard.snapshot.sessions} onBackup={dashboard.backupSession} onExport={(id) => dashboard.exportSession(id, 'markdown')} onRelay={dashboard.exportUniversalRelay} />
+        return (
+          <SessionsView
+            sessions={dashboard.snapshot.sessions}
+            onBackup={dashboard.backupSession}
+            onExport={(id) => dashboard.exportSession(id, 'markdown')}
+            onRelay={dashboard.exportUniversalRelay}
+          />
+        )
       case 'cleanup':
-        return <CleanupView cleanup={dashboard.snapshot.cleanup} onMoveToTrash={dashboard.moveCleanupToTrash} />
+        return (
+          <CleanupView
+            cleanup={dashboard.snapshot.cleanup}
+            onMoveToTrash={dashboard.moveCleanupToTrash}
+          />
+        )
       case 'usage':
         return <UsageView snapshot={dashboard.snapshot} />
       case 'relay':
-        return <RelayView sessions={dashboard.snapshot.sessions} onRelay={dashboard.exportUniversalRelay} />
+        return (
+          <RelayView
+            sessions={dashboard.snapshot.sessions}
+            onRelay={dashboard.exportUniversalRelay}
+          />
+        )
       case 'health':
         return <HealthView snapshot={dashboard.snapshot} />
       case 'settings':
-        return <SettingsView mockDataEnabled={dashboard.mockDataEnabled} onMockDataChange={dashboard.setMockDataEnabled} />
+        return (
+          <SettingsView
+            mockDataEnabled={dashboard.mockDataEnabled}
+            onMockDataChange={dashboard.setMockDataEnabled}
+          />
+        )
       default:
         return null
     }
@@ -1581,8 +2181,14 @@ function App() {
 
   return (
     <TooltipProvider>
-      <div className={`mac-window theme-${theme.resolvedTheme} flex h-screen overflow-hidden text-white`}>
-        <Sidebar activeView={activeView} setActiveView={setActiveView} snapshot={dashboard.snapshot} />
+      <div
+        className={`mac-window theme-${theme.resolvedTheme} flex h-screen overflow-hidden text-white`}
+      >
+        <Sidebar
+          activeView={activeView}
+          setActiveView={setActiveView}
+          snapshot={dashboard.snapshot}
+        />
         <main className="main-surface soft-grid flex min-w-0 flex-1 flex-col">
           <Topbar
             activeView={activeView}
@@ -1590,7 +2196,9 @@ function App() {
             mockDataEnabled={dashboard.mockDataEnabled}
             overviewRange={overviewRange}
             resolvedTheme={theme.resolvedTheme}
-            onThemeToggle={() => theme.setPreference(theme.resolvedTheme === 'dark' ? 'light' : 'dark')}
+            onThemeToggle={() =>
+              theme.setPreference(theme.resolvedTheme === 'dark' ? 'light' : 'dark')
+            }
             onOverviewRangeChange={setOverviewRange}
             onRescan={dashboard.rescan}
           />

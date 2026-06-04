@@ -14,8 +14,16 @@ Primary session files are JSONL event streams. Common record shapes:
 
 ```ts
 type CodexRecord =
-  | { type: 'session_meta'; timestamp?: string; payload?: { id?: string; cwd?: string; git?: { branch?: string } } }
-  | { type: 'response_item'; timestamp?: string; payload?: { role?: string; content?: Array<{ type?: string; text?: string }> } }
+  | {
+      type: 'session_meta'
+      timestamp?: string
+      payload?: { id?: string; cwd?: string; git?: { branch?: string } }
+    }
+  | {
+      type: 'response_item'
+      timestamp?: string
+      payload?: { role?: string; content?: Array<{ type?: string; text?: string }> }
+    }
   | { type: 'event_msg' | 'turn_context'; timestamp?: string; payload?: Record<string, unknown> }
 ```
 

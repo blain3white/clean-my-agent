@@ -21,6 +21,15 @@ export default defineConfig([
         ...globals.node,
       },
     },
+    rules: {
+      'no-console': ['warn', { allow: ['warn', 'error'] }],
+    },
+  },
+  {
+    files: ['scripts/**/*.ts'],
+    rules: {
+      'no-console': 'off',
+    },
   },
   {
     files: ['src/components/ui/**/*.{ts,tsx}'],

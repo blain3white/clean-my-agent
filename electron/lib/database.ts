@@ -110,7 +110,9 @@ export class LocalDatabase {
   }
 
   getSessions(): SessionRecord[] {
-    const rows = this.requireDb().prepare('SELECT data FROM sessions ORDER BY last_updated DESC').all()
+    const rows = this.requireDb()
+      .prepare('SELECT data FROM sessions ORDER BY last_updated DESC')
+      .all()
     return rows.map((row) => JSON.parse(String(row.data)) as SessionRecord)
   }
 
@@ -125,7 +127,14 @@ export class LocalDatabase {
         `INSERT OR REPLACE INTO backups (id, session_id, source, created_at, size_bytes, data)
          VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run(record.id, record.sessionId, record.source, record.createdAt, record.sizeBytes, JSON.stringify(record))
+      .run(
+        record.id,
+        record.sessionId,
+        record.source,
+        record.createdAt,
+        record.sizeBytes,
+        JSON.stringify(record),
+      )
   }
 
   getBackups(): BackupRecord[] {
@@ -139,7 +148,13 @@ export class LocalDatabase {
         `INSERT OR REPLACE INTO trash (id, candidate_id, deleted_at, size_bytes, data)
          VALUES (?, ?, ?, ?, ?)`,
       )
-      .run(record.id, record.candidateId, record.deletedAt, record.sizeBytes, JSON.stringify(record))
+      .run(
+        record.id,
+        record.candidateId,
+        record.deletedAt,
+        record.sizeBytes,
+        JSON.stringify(record),
+      )
   }
 
   getTrash(): TrashRecord[] {

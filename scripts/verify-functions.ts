@@ -21,7 +21,12 @@ async function writeSession(root: string, source: AgentSource, daysOld: number) 
       content: `Refactor ${source} auth flow`,
       cwd: workspace,
       branch: 'main',
-      usage: { input_tokens: 100, output_tokens: 50, cache_creation_input_tokens: 1000, cache_read_input_tokens: 10 },
+      usage: {
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_creation_input_tokens: 1000,
+        cache_read_input_tokens: 10,
+      },
       costUSD: 0.25,
     },
     {
@@ -69,13 +74,23 @@ async function main() {
   await service.init()
   service.updateSettings({
     cleanupRetentionDays: 30,
-    scanRoots: Object.fromEntries(sources.map((source) => [source, [path.join(fixtureRoot, source)]])),
+    scanRoots: Object.fromEntries(
+      sources.map((source) => [source, [path.join(fixtureRoot, source)]]),
+    ),
     exportDirectory: path.join(userDataPath, 'Exports'),
   })
 
   const snapshot = await service.rescan()
-  assert.equal(snapshot.overview.totalSessions, sources.length, 'all source sessions should be scanned')
-  assert.equal(snapshot.cleanup.length, sources.length, 'old sessions should become cleanup candidates')
+  assert.equal(
+    snapshot.overview.totalSessions,
+    sources.length,
+    'all source sessions should be scanned',
+  )
+  assert.equal(
+    snapshot.cleanup.length,
+    sources.length,
+    'old sessions should become cleanup candidates',
+  )
   assert.ok(snapshot.overview.totalTokens > 0, 'token totals should be indexed')
 
   const session = snapshot.sessions.find((item) => item.source === 'codex')
@@ -84,11 +99,21 @@ async function main() {
   assert.equal(session.branch, 'main', 'branch should be extracted')
   assert.equal(session.tokens.cacheCreation, 3000, 'cache creation tokens should be counted')
   assert.equal(session.tokens.cacheRead, 30, 'cache read tokens should be counted')
-  assert.equal(session.tokens.total, 3340, 'token total should include cache creation, cache read, and Codex cached input tokens')
+  assert.equal(
+    session.tokens.total,
+    3340,
+    'token total should include cache creation, cache read, and Codex cached input tokens',
+  )
   assert.equal(session.tokens.costUsd, 0.75, 'Claude/Codex style costUSD should be accumulated')
-  assert.equal('sample' in session.metadata, false, 'raw JSON samples should not be stored in SQLite')
+  assert.equal(
+    'sample' in session.metadata,
+    false,
+    'raw JSON samples should not be stored in SQLite',
+  )
   const today = new Date().toISOString().slice(0, 10)
-  const fixtureUsageDate = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const fixtureUsageDate = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10)
   assert.equal(
     snapshot.usage.find((point) => point.date === fixtureUsageDate)?.total,
     sources.length * 3340,
@@ -111,7 +136,10 @@ async function main() {
   assert.equal(exportedSession.id, session.id, 'JSON export should contain the session')
 
   const relayPath = await service.exportUniversalRelay(session.id)
-  const relay = JSON.parse(await readFile(relayPath, 'utf8')) as { schema: string; messages: unknown[] }
+  const relay = JSON.parse(await readFile(relayPath, 'utf8')) as {
+    schema: string
+    messages: unknown[]
+  }
   assert.equal(relay.schema, 'clean-my-agent.universal-session.v1')
   assert.ok(relay.messages.length >= 2, 'relay JSON should include messages')
 
@@ -121,10 +149,16 @@ async function main() {
 
   const trash = await service.moveCleanupToTrash([target.id])
   assert.equal(trash.length, 1, 'cleanup should move one item to trash')
-  assert.equal((await service.getSnapshot(false)).sessions.some((item) => item.id === session.id), false)
+  assert.equal(
+    (await service.getSnapshot(false)).sessions.some((item) => item.id === session.id),
+    false,
+  )
 
   await service.restoreTrash(trash[0].id)
-  assert.equal((await service.getSnapshot(true)).sessions.some((item) => item.id === session.id), true)
+  assert.equal(
+    (await service.getSnapshot(true)).sessions.some((item) => item.id === session.id),
+    true,
+  )
 
   const staleService = new AppService({
     userDataPath: await mkdtemp(path.join(os.tmpdir(), 'clean-my-agent-stale-user-data-')),
@@ -133,7 +167,14 @@ async function main() {
   await staleService.init()
   staleService.updateSettings({
     cleanupRetentionDays: 30,
-    scanRoots: Object.fromEntries(sources.map((source) => [source, source === 'codex' ? [path.join(fixtureRoot, source)] : [path.join(fixtureRoot, 'missing', source)]])),
+    scanRoots: Object.fromEntries(
+      sources.map((source) => [
+        source,
+        source === 'codex'
+          ? [path.join(fixtureRoot, source)]
+          : [path.join(fixtureRoot, 'missing', source)],
+      ]),
+    ),
     exportDirectory: path.join(userDataPath, 'StaleExports'),
   })
   await staleService.rescan()
@@ -141,10 +182,23 @@ async function main() {
   staleSnapshot.sessions[0].tokens.total = 1
   staleSnapshot.sessions[0].metadata.usageByDate = { [today]: 1 }
   // Simulate an app upgrade where cached session rows were produced by an older parser.
-  ;(staleService as unknown as { db: { replaceSessions: (sessions: unknown[]) => void; setSetting: (key: string, value: unknown) => void } }).db.replaceSessions(staleSnapshot.sessions)
-  ;(staleService as unknown as { db: { setSetting: (key: string, value: unknown) => void } }).db.setSetting('scanSchemaVersion', 1)
+  ;(
+    staleService as unknown as {
+      db: {
+        replaceSessions: (sessions: unknown[]) => void
+        setSetting: (key: string, value: unknown) => void
+      }
+    }
+  ).db.replaceSessions(staleSnapshot.sessions)
+  ;(
+    staleService as unknown as { db: { setSetting: (key: string, value: unknown) => void } }
+  ).db.setSetting('scanSchemaVersion', 1)
   const refreshedSnapshot = await staleService.getSnapshot(false)
-  assert.equal(refreshedSnapshot.overview.totalTokens, 3340, 'stale scan cache should be invalidated automatically')
+  assert.equal(
+    refreshedSnapshot.overview.totalTokens,
+    3340,
+    'stale scan cache should be invalidated automatically',
+  )
 
   console.log('Function verification passed')
 }

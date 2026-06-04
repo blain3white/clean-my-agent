@@ -212,9 +212,22 @@ function extractUsage(value: unknown, seenUsageIds = new Set<string>()): TokenUs
     const identity = parent ? usageIdentity(parent) : undefined
     if (identity && seenUsageIds.has(identity)) return
 
-    const input = numberFromRecord(record, ['input_tokens', 'prompt_tokens', 'promptTokens', 'inputTokens'])
-    const output = numberFromRecord(record, ['output_tokens', 'completion_tokens', 'completionTokens', 'outputTokens'])
-    const cacheCreation = numberFromRecord(record, ['cache_creation_input_tokens', 'cacheCreationInputTokens'])
+    const input = numberFromRecord(record, [
+      'input_tokens',
+      'prompt_tokens',
+      'promptTokens',
+      'inputTokens',
+    ])
+    const output = numberFromRecord(record, [
+      'output_tokens',
+      'completion_tokens',
+      'completionTokens',
+      'outputTokens',
+    ])
+    const cacheCreation = numberFromRecord(record, [
+      'cache_creation_input_tokens',
+      'cacheCreationInputTokens',
+    ])
     const cacheRead = numberFromRecord(record, ['cache_read_input_tokens', 'cacheReadInputTokens'])
     const legacyCached = numberFromRecord(record, [
       'cached_tokens',
@@ -225,8 +238,7 @@ function extractUsage(value: unknown, seenUsageIds = new Set<string>()): TokenUs
     ])
     const cached = cacheCreation + cacheRead + legacyCached
     const total =
-      numberFromRecord(record, ['total_tokens', 'totalTokens']) ||
-      input + output + cached
+      numberFromRecord(record, ['total_tokens', 'totalTokens']) || input + output + cached
     const costUsd =
       numberFromRecord(record, ['costUSD', 'costUsd', 'cost_usd']) ||
       (parent ? numberFromRecord(parent, ['costUSD', 'costUsd', 'cost_usd']) : 0)
@@ -383,7 +395,8 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
         addTokens(tokens, usage)
         const record = toRecord(json)
         const dateKey = record ? dateKeyFromRecord(record) : undefined
-        if (dateKey && usage.total > 0) usageByDate[dateKey] = (usageByDate[dateKey] ?? 0) + usage.total
+        if (dateKey && usage.total > 0)
+          usageByDate[dateKey] = (usageByDate[dateKey] ?? 0) + usage.total
         sampleForHints ??= json
       } catch {
         if (messages.length < 3000 && line.length > 24) {
@@ -431,7 +444,13 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
 
   return {
     title: firstTitle(messages, path.basename(filePath)),
-    projectPath: findStringByKeys(sampleForHints, ['cwd', 'projectPath', 'project_path', 'workspace', 'workspacePath']),
+    projectPath: findStringByKeys(sampleForHints, [
+      'cwd',
+      'projectPath',
+      'project_path',
+      'workspace',
+      'workspacePath',
+    ]),
     branch: findStringByKeys(sampleForHints, ['branch', 'gitBranch', 'git_branch']),
     messages,
     tokens,
@@ -463,7 +482,9 @@ export class AgentAdapter {
     return (configured?.length ? configured : this.definition.roots).map(expandHome)
   }
 
-  async scan(settings: AppSettings): Promise<{ state: AgentInstallState; sessions: SessionRecord[] }> {
+  async scan(
+    settings: AppSettings,
+  ): Promise<{ state: AgentInstallState; sessions: SessionRecord[] }> {
     const roots = this.roots(settings)
     const readableRoots = []
     for (const root of roots) {
@@ -491,7 +512,8 @@ export class AgentAdapter {
           projectPath: parsed.projectPath,
           branch: parsed.branch,
           storagePath: filePath,
-          storageKind: filePath.endsWith('.db') || filePath.endsWith('.sqlite') ? 'database' : 'file',
+          storageKind:
+            filePath.endsWith('.db') || filePath.endsWith('.sqlite') ? 'database' : 'file',
           createdAt: info.birthtime.toISOString(),
           lastUpdated: (await mtimeIso(filePath)) || info.mtime.toISOString(),
           messageCount: parsed.messages.length,
@@ -504,7 +526,9 @@ export class AgentAdapter {
             parser: 'generic-json-session-parser',
             root: readableRoots.find((root) => filePath.startsWith(root)),
             relativePath: readableRoots
-              .map((root) => (filePath.startsWith(root) ? path.relative(root, filePath) : undefined))
+              .map((root) =>
+                filePath.startsWith(root) ? path.relative(root, filePath) : undefined,
+              )
               .find(Boolean),
           },
         })

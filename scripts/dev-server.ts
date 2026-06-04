@@ -24,9 +24,8 @@ async function findPort() {
 
 const port = await findPort()
 const command = mode === 'electron' ? 'electron-vite' : 'vite'
-const args = mode === 'electron'
-  ? ['dev']
-  : ['--host', '127.0.0.1', '--port', String(port), '--strictPort']
+const args =
+  mode === 'electron' ? ['dev'] : ['--host', '127.0.0.1', '--port', String(port), '--strictPort']
 
 console.log(`Starting ${mode} dev server on http://127.0.0.1:${port}`)
 

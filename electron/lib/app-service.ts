@@ -44,7 +44,9 @@ function bytesFromRecords(records: Array<{ sizeBytes: number }>): number {
   return records.reduce((total, record) => total + record.sizeBytes, 0)
 }
 
-function usageByDateFromMetadata(metadata: Record<string, unknown>): Record<string, number> | undefined {
+function usageByDateFromMetadata(
+  metadata: Record<string, unknown>,
+): Record<string, number> | undefined {
   const value = metadata.usageByDate
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
 
@@ -87,7 +89,10 @@ export class AppService {
   private readonly openPathHandler: (targetPath: string) => Promise<unknown>
   private settings?: AppSettings
 
-  constructor(options: { userDataPath: string; openPath?: (targetPath: string) => Promise<unknown> }) {
+  constructor(options: {
+    userDataPath: string
+    openPath?: (targetPath: string) => Promise<unknown>
+  }) {
     const { userDataPath, openPath = async () => undefined } = options
     this.userDataPath = userDataPath
     this.openPathHandler = openPath
@@ -193,7 +198,9 @@ export class AppService {
     if (format === 'json') {
       await writeJson(exportPath, session)
     } else {
-      await import('node:fs/promises').then(({ writeFile }) => writeFile(exportPath, markdownForSession(session)))
+      await import('node:fs/promises').then(({ writeFile }) =>
+        writeFile(exportPath, markdownForSession(session)),
+      )
     }
 
     return exportPath
@@ -212,7 +219,10 @@ export class AppService {
   }
 
   async scanCleanup(): Promise<CleanupCandidate[]> {
-    return this.buildCleanupCandidates(this.mergeBackupStatus(this.db.getSessions()), this.db.getBackups())
+    return this.buildCleanupCandidates(
+      this.mergeBackupStatus(this.db.getSessions()),
+      this.db.getBackups(),
+    )
   }
 
   async moveCleanupToTrash(candidateIds: string[]): Promise<TrashRecord[]> {
@@ -228,7 +238,11 @@ export class AppService {
       }
 
       const deletedAt = new Date().toISOString()
-      const trashPath = path.join(this.userDataPath, 'Trash', `${sanitizeName(candidate.title)}-${candidate.id}`)
+      const trashPath = path.join(
+        this.userDataPath,
+        'Trash',
+        `${sanitizeName(candidate.title)}-${candidate.id}`,
+      )
       await ensureDir(trashPath)
 
       const movedPaths: string[] = []
@@ -317,7 +331,9 @@ export class AppService {
   }
 
   private requireSession(sessionId: string): SessionRecord {
-    const session = this.mergeBackupStatus(this.db.getSessions()).find((item) => item.id === sessionId)
+    const session = this.mergeBackupStatus(this.db.getSessions()).find(
+      (item) => item.id === sessionId,
+    )
     if (!session) throw new Error(`Session not found: ${sessionId}`)
     return session
   }
@@ -330,7 +346,10 @@ export class AppService {
     }))
   }
 
-  private buildCleanupCandidates(sessions: SessionRecord[], backups: BackupRecord[]): CleanupCandidate[] {
+  private buildCleanupCandidates(
+    sessions: SessionRecord[],
+    backups: BackupRecord[],
+  ): CleanupCandidate[] {
     const now = Date.now()
     const retentionMs = this.requireSettings().cleanupRetentionDays * oneDayMs
     const backupSessionIds = new Set(backups.map((backup) => backup.sessionId))
@@ -368,7 +387,8 @@ export class AppService {
           paths: [session.storagePath],
           sizeBytes: session.sizeBytes,
           lastUpdated: session.lastUpdated,
-          reason: 'This session file is unusually large and may include verbose logs or cached context.',
+          reason:
+            'This session file is unusually large and may include verbose logs or cached context.',
           risk: backedUp ? 'medium' : 'high',
           recoverable: true,
           backedUp,
@@ -393,7 +413,8 @@ export class AppService {
         paths: duplicates.map((backup) => backup.backupPath),
         sizeBytes: bytesFromRecords(duplicates),
         lastUpdated: duplicates[0]?.createdAt,
-        reason: 'Multiple backups have the same session id and size. Keeping the newest copy is enough.',
+        reason:
+          'Multiple backups have the same session id and size. Keeping the newest copy is enough.',
         risk: 'low',
         recoverable: true,
         backedUp: true,

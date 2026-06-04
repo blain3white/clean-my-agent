@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest an improvement or new capability.
+title: '[Feature]: '
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user need or workflow does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Describe the change you would like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and privacy notes
+      description: Mention any impact on scanning, backups, exports, cleanup, Trash, or credentials.

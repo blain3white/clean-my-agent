@@ -7,7 +7,8 @@ Clean My Agent is a local-first Electron app for scanning, backing up, exporting
 - Electron + React + TypeScript
 - Vite / electron-vite
 - Tailwind CSS + Radix/shadcn-style UI
-- Node.js 24, pnpm 10
+- Node.js 22.13+ for development, pnpm 10
+- Electron 42 provides Node.js 24.x at desktop runtime
 - Node built-in SQLite for app state
 
 ## Commands
@@ -17,6 +18,8 @@ Clean My Agent is a local-first Electron app for scanning, backing up, exporting
 - Renderer-only dev: `pnpm dev:renderer`
 - Build: `pnpm build`
 - Lint: `pnpm lint`
+- Unit tests: `pnpm test`
+- Full local gate: `pnpm check`
 - Functional smoke test: `pnpm verify:functions`
 
 ## Project Map
@@ -39,6 +42,13 @@ Clean My Agent is a local-first Electron app for scanning, backing up, exporting
 - Use existing UI primitives and lucide icons before adding new component patterns.
 - After touching cleanup, backup, export, scan, or Trash behavior, run `pnpm verify:functions`.
 - After UI-only changes, run at least `pnpm lint`; run `pnpm build` when types or shared contracts changed.
+
+## Open Source Workflow
+
+- Prefer branching feature work from `develop`; keep `main` stable and release-ready.
+- Run `pnpm check` before proposing or committing infrastructure, shared contract, Electron, or safety-sensitive changes.
+- Keep contributor-facing workflow details in `CONTRIBUTING.md` and maintainer policy details in `docs/maintainer-guide.md`.
+- Use Prettier for project formatting; avoid hand-formatting churn outside the files involved in a change.
 
 ## Commit Rules
 

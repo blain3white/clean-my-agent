@@ -1,0 +1,42 @@
+name: Bug report
+description: Report a reproducible problem in Clean My Agent.
+title: '[Bug]: '
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping improve Clean My Agent.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open...
+        2. Click...
+        3. See...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version or commit
+      placeholder: '0.1.0 or commit SHA'
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: 'macOS 15.5, Apple Silicon'
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Remove paths, tokens, API keys, or private session content before posting.
+      render: shell
