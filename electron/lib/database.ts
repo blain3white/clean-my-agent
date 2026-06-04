@@ -18,6 +18,19 @@ type SqliteModule = {
   DatabaseSync: new (path: string) => DatabaseSync
 }
 
+function compactSessionForStorage(session: SessionRecord): SessionRecord {
+  return {
+    ...session,
+    metadata: {
+      parser: session.metadata.parser,
+      root: session.metadata.root,
+      relativePath: session.metadata.relativePath,
+      sourceFormat: session.metadata.sourceFormat,
+      usageByDate: session.metadata.usageByDate,
+    },
+  }
+}
+
 export class LocalDatabase {
   private db?: DatabaseSync
   private readonly dbPath: string
@@ -81,7 +94,13 @@ export class LocalDatabase {
     try {
       db.prepare('DELETE FROM sessions').run()
       sessions.forEach((session) => {
-        statement.run(session.id, session.source, session.lastUpdated, session.sizeBytes, JSON.stringify(session))
+        statement.run(
+          session.id,
+          session.source,
+          session.lastUpdated,
+          session.sizeBytes,
+          JSON.stringify(compactSessionForStorage(session)),
+        )
       })
       db.exec('COMMIT')
     } catch (error) {

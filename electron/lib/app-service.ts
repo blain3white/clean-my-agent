@@ -25,6 +25,7 @@ import {
 } from './files'
 
 const oneDayMs = 24 * 60 * 60 * 1000
+const scanSchemaVersion = 3
 
 const agentLabels: Record<AgentSource, string> = {
   codex: 'Codex',
@@ -99,7 +100,7 @@ export class AppService {
   }
 
   async getSnapshot(forceRescan = false): Promise<DashboardSnapshot> {
-    if (forceRescan || this.db.getSessions().length === 0) {
+    if (forceRescan || this.shouldRescanCachedSessions()) {
       await this.rescan()
     }
 
@@ -150,6 +151,7 @@ export class AppService {
     const results = await Promise.all(adapters.map((adapter) => adapter.scan(settings)))
     const sessions = results.flatMap((result) => result.sessions)
     this.db.replaceSessions(this.mergeBackupStatus(sessions))
+    this.db.setSetting('scanSchemaVersion', scanSchemaVersion)
     return this.getSnapshot(false)
   }
 
@@ -306,6 +308,11 @@ export class AppService {
   private requireSettings(): AppSettings {
     if (!this.settings) throw new Error('App service is not initialized')
     return this.settings
+  }
+
+  private shouldRescanCachedSessions(): boolean {
+    if (this.db.getSessions().length === 0) return true
+    return (this.db.getSetting<number>('scanSchemaVersion') ?? 0) !== scanSchemaVersion
   }
 
   private requireSession(sessionId: string): SessionRecord {

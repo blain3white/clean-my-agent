@@ -10,6 +10,8 @@ import {
   ArrowRightLeft,
   BarChart3,
   Bot,
+  ChartNoAxesColumn,
+  ChartSpline,
   CheckCircle2,
   Circle,
   Clock,
@@ -17,6 +19,7 @@ import {
   Download,
   FileJson2,
   Gauge,
+  Grid3X3,
   HardDrive,
   HeartPulse,
   LayoutDashboard,
@@ -32,12 +35,12 @@ import {
   Trash2,
 } from 'lucide-react'
 import {
-  Area,
-  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
+  Line,
+  LineChart,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -64,12 +67,35 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDashboard } from '@/hooks/use-dashboard'
 import { useTheme } from '@/hooks/use-theme'
-import { agentLabel, estimatedCost, formatBytes, formatCost, formatRelative, formatTokens, riskAccent } from '@/lib/format'
-import type { AgentSource, CleanupCandidate, DashboardSnapshot, SessionRecord } from '@/shared/types'
+import { agentLabel, formatBytes, formatRelative, formatTokens, riskAccent } from '@/lib/format'
+import { agentSources, type AgentSource, type CleanupCandidate, type DashboardSnapshot, type SessionRecord, type UsagePoint } from '@/shared/types'
 import './App.css'
 
 type ViewId = 'overview' | 'sessions' | 'cleanup' | 'usage' | 'relay' | 'health' | 'settings'
 type AgentLogoStyle = CSSProperties & { '--agent-color': string }
+type UsageRange = 7 | 14 | 30
+type TokenActivityMode = 'line' | 'bar' | 'heat'
+type StorageViewMode = 'layout' | 'list' | 'pie'
+type ChartTooltipPayload = {
+  dataKey?: string
+  value?: unknown
+  payload?: UsagePoint
+}
+type StorageDatum = {
+  name: string
+  value: number
+  source: AgentSource
+  sessions: number
+}
+type HeatmapCell = {
+  date: string
+  day: string
+  value: number
+  level: number
+  week: number
+  gridColumn: number
+  gridRow: number
+}
 
 const navItems: Array<{ id: ViewId; label: string; icon: typeof LayoutDashboard }> = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
@@ -94,6 +120,24 @@ const sourceIconColors: Record<AgentSource, string> = {
   cursor: '#f8fafc',
   opencode: '#f8fafc',
 }
+
+const usageRanges: Array<{ value: UsageRange; label: string }> = [
+  { value: 7, label: '7d' },
+  { value: 14, label: '14d' },
+  { value: 30, label: '30d' },
+]
+
+const tokenActivityModes: Array<{ value: TokenActivityMode; label: string; icon: typeof ChartSpline }> = [
+  { value: 'line', label: 'Linear', icon: ChartSpline },
+  { value: 'bar', label: 'Bar', icon: ChartNoAxesColumn },
+  { value: 'heat', label: 'Heatmap', icon: Grid3X3 },
+]
+
+const storageViewModes: Array<{ value: StorageViewMode; label: string; icon: typeof Grid3X3 }> = [
+  { value: 'layout', label: 'Layout', icon: Grid3X3 },
+  { value: 'list', label: 'List', icon: ListFilter },
+  { value: 'pie', label: 'Pie', icon: Circle },
+]
 
 function AgentGlyph({ source }: { source: AgentSource }) {
   const iconProps = { size: 16 }
@@ -142,6 +186,497 @@ function MetricCard({
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+function UsageRangeControl({ value, onChange }: { value: UsageRange; onChange: (value: UsageRange) => void }) {
+  return (
+    <div className="range-control flex items-center rounded-lg border border-white/10 bg-white/[0.035] p-0.5">
+      {usageRanges.map((range) => (
+        <button
+          key={range.value}
+          type="button"
+          onClick={() => onChange(range.value)}
+          className={`h-6 rounded-md px-2 text-[11px] font-medium transition ${
+            value === range.value ? 'bg-white/14 text-white shadow-sm' : 'text-white/45 hover:text-white/75'
+          }`}
+        >
+          {range.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function dateKeyFromTime(time: number): string {
+  return new Date(time).toISOString().slice(0, 10)
+}
+
+function daysAgoKey(days: number): string {
+  const date = new Date()
+  date.setHours(0, 0, 0, 0)
+  date.setDate(date.getDate() - days)
+  return dateKeyFromTime(date.getTime())
+}
+
+function recentDateKeys(days: number, offset = 0): Set<string> {
+  return new Set(Array.from({ length: days }, (_, index) => daysAgoKey(index + offset)))
+}
+
+function sessionCountForDates(sessions: SessionRecord[], dates: Set<string>): number {
+  return sessions.filter((session) => dates.has(dateKeyFromTime(new Date(session.lastUpdated).getTime()))).length
+}
+
+function cleanupCountForDates(cleanup: CleanupCandidate[], dates: Set<string>): number {
+  return cleanup.filter((item) => item.lastUpdated && dates.has(dateKeyFromTime(new Date(item.lastUpdated).getTime()))).length
+}
+
+function usageTotalForDates(snapshot: DashboardSnapshot, dates: Set<string>): number {
+  return snapshot.usage.reduce((total, point) => total + (dates.has(point.date) ? point.total : 0), 0)
+}
+
+function sessionTokenTotalForDates(sessions: SessionRecord[], dates: Set<string>): number {
+  return sessions.reduce((total, session) => {
+    const usageByDate = session.metadata.usageByDate
+    if (usageByDate && typeof usageByDate === 'object' && !Array.isArray(usageByDate)) {
+      return total + Object.entries(usageByDate).reduce((sum, [date, value]) => {
+        return sum + (dates.has(date) && typeof value === 'number' && Number.isFinite(value) ? value : 0)
+      }, 0)
+    }
+
+    return dates.has(dateKeyFromTime(new Date(session.lastUpdated).getTime())) ? total + session.tokens.total : total
+  }, 0)
+}
+
+function trendDetail(current: number, previous: number, unit: string, range: UsageRange): string {
+  if (current === 0 && previous === 0) return `No ${unit} in ${range} days`
+  if (previous <= 0) return `${current.toLocaleString()} ${unit} in ${range} days`
+  const delta = ((current - previous) / previous) * 100
+  const direction = delta >= 0 ? '+' : ''
+  return `${direction}${delta.toFixed(0)}% vs prior ${range}d`
+}
+
+function rangeDateKeys(usage: UsagePoint[], range: UsageRange): Set<string> {
+  return new Set(usage.slice(-range).map((point) => point.date))
+}
+
+function heatLevel(value: number, max: number): number {
+  if (value <= 0 || max <= 0) return 0
+  return Math.min(8, Math.max(1, Math.ceil((value / max) * 8)))
+}
+
+function dayLabel(date: string): string {
+  return new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(new Date(`${date}T00:00:00`))
+}
+
+function buildHeatmapCells(usage: UsagePoint[]): HeatmapCell[] {
+  const max = Math.max(...usage.map((point) => point.total), 0)
+  const firstDate = usage[0] ? new Date(`${usage[0].date}T00:00:00`) : null
+  const firstWeekStart = firstDate ? startOfWeek(firstDate).getTime() : 0
+  return usage.map((point) => {
+    const date = new Date(`${point.date}T00:00:00`)
+    const dayIndex = date.getDay()
+    const week = firstDate ? Math.round((startOfWeek(date).getTime() - firstWeekStart) / (7 * 24 * 60 * 60 * 1000)) : 0
+    return {
+      date: point.date,
+      day: dayLabel(point.date),
+      value: point.total,
+      level: heatLevel(point.total, max),
+      week,
+      gridColumn: week + 1,
+      gridRow: dayIndex === 0 ? 7 : dayIndex,
+    }
+  })
+}
+
+function startOfWeek(date: Date): Date {
+  const start = new Date(date)
+  const dayIndex = start.getDay()
+  start.setDate(start.getDate() - (dayIndex === 0 ? 6 : dayIndex - 1))
+  start.setHours(0, 0, 0, 0)
+  return start
+}
+
+function UsageTooltip({ active, payload, label }: { active?: boolean; payload?: ChartTooltipPayload[]; label?: unknown }) {
+  if (!active || !payload?.length) return null
+  const total = Number(payload.find((item) => item.dataKey === 'total')?.value ?? 0)
+  const point = payload[0]?.payload
+  const sources = agentSources
+    .map((source) => ({ source, value: point?.[source] ?? 0 }))
+    .filter((item) => item.value > 0)
+
+  return (
+    <div className="chart-tooltip min-w-44 rounded-lg px-3 py-2 shadow-xl">
+      <div className="text-xs font-medium text-white/58">{String(label)}</div>
+      <div className="mt-1.5 flex items-center justify-between gap-5">
+        <span className="text-[13px] font-medium text-white">total</span>
+        <span className="font-mono text-sm font-semibold text-blue-300">{formatTokens(total)}</span>
+      </div>
+      {sources.length > 0 && (
+        <div className="mt-2 space-y-1 border-t border-white/8 pt-2">
+          {sources.map((item) => (
+            <div key={item.source} className="flex items-center justify-between gap-4 text-[11px]">
+              <span className="flex items-center gap-1.5 text-white/50">
+                <span className="size-1.5 rounded-full" style={{ backgroundColor: sourceColors[item.source] }} />
+                {agentLabel[item.source]}
+              </span>
+              <span className="font-mono text-white/64">{formatTokens(item.value)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TokenActivityCard({
+  usage,
+}: {
+  usage: UsagePoint[]
+}) {
+  const [mode, setMode] = useState<TokenActivityMode>('line')
+
+  return (
+    <Card className="glass-panel rounded-lg py-4">
+      <CardHeader className="pb-0">
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="text-sm text-white">Token Activity</CardTitle>
+          <div className="flex items-center gap-2">
+            <div className="range-control flex items-center rounded-lg border border-white/10 bg-white/[0.035] p-0.5">
+              {tokenActivityModes.map((activityMode) => {
+                const Icon = activityMode.icon
+                return (
+                  <Tooltip key={activityMode.value}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => setMode(activityMode.value)}
+                        aria-label={`${activityMode.label} view`}
+                        aria-pressed={mode === activityMode.value}
+                        className={`grid size-6 place-items-center rounded-md transition ${
+                          mode === activityMode.value ? 'bg-white/14 text-white shadow-sm' : 'text-white/45 hover:text-white/75'
+                        }`}
+                      >
+                        <Icon className="size-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>{activityMode.label}</TooltipContent>
+                  </Tooltip>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="h-[230px]">
+        {mode === 'line' && <TokenLineChart usage={usage} />}
+        {mode === 'bar' && <TokenBarChart usage={usage} />}
+        {mode === 'heat' && <TokenHeatmap usage={usage} />}
+      </CardContent>
+    </Card>
+  )
+}
+
+function TokenLineChart({ usage }: { usage: UsagePoint[] }) {
+  return (
+    <ResponsiveContainer className="chart-static" width="100%" height="100%">
+      <LineChart data={usage} accessibilityLayer={false} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
+        <CartesianGrid stroke="rgba(255,255,255,.07)" vertical={false} />
+        <XAxis dataKey="date" tick={{ fill: 'rgba(255,255,255,.38)', fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={18} tickFormatter={(value) => String(value).slice(5)} />
+        <YAxis tick={{ fill: 'rgba(255,255,255,.34)', fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(value) => formatTokens(Number(value))} />
+        <ChartTooltip
+          content={<UsageTooltip />}
+          cursor={{ stroke: 'rgba(147,197,253,.78)', strokeWidth: 1.5 }}
+          wrapperStyle={{ outline: 'none' }}
+        />
+        <Line
+          type="monotone"
+          dataKey="total"
+          stroke="#63a6ff"
+          strokeWidth={2.2}
+          dot={false}
+          activeDot={{ r: 5, fill: '#63a6ff', stroke: '#f8fbff', strokeWidth: 3 }}
+          isAnimationActive={false}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  )
+}
+
+function TokenBarChart({ usage }: { usage: UsagePoint[] }) {
+  return (
+    <ResponsiveContainer className="chart-static" width="100%" height="100%">
+      <BarChart data={usage} accessibilityLayer={false} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
+        <CartesianGrid stroke="rgba(255,255,255,.07)" vertical={false} />
+        <XAxis dataKey="date" tick={{ fill: 'rgba(255,255,255,.38)', fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={18} tickFormatter={(value) => String(value).slice(5)} />
+        <YAxis tick={{ fill: 'rgba(255,255,255,.34)', fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(value) => formatTokens(Number(value))} />
+        <ChartTooltip
+          content={<UsageTooltip />}
+          cursor={{ fill: 'rgba(96,165,250,.08)' }}
+          wrapperStyle={{ outline: 'none' }}
+        />
+        {agentSources.map((source) => (
+          <Bar
+            key={source}
+            dataKey={source}
+            stackId="tokens"
+            fill={sourceColors[source]}
+            radius={[0, 0, 0, 0]}
+            isAnimationActive={false}
+          />
+        ))}
+      </BarChart>
+    </ResponsiveContainer>
+  )
+}
+
+function TokenHeatmap({ usage }: { usage: UsagePoint[] }) {
+  const cells = buildHeatmapCells(usage)
+  const weekCount = Math.max(...cells.map((cell) => cell.week), 0) + 1
+  const weekLabels = cells.filter((cell, index) => index === 0 || cell.week !== cells[index - 1]?.week)
+
+  return (
+    <div className="flex h-full flex-col justify-center">
+      <div
+        className="token-heatmap-grid"
+        style={{ gridTemplateColumns: `36px repeat(${weekCount}, minmax(28px, 1fr))` }}
+      >
+        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, index) => (
+          <div key={day} className="self-center text-[11px] text-white/42" style={{ gridColumn: 1, gridRow: index + 1 }}>
+            {day}
+          </div>
+        ))}
+        {cells.map((cell) => (
+          <Tooltip key={cell.date}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={`${cell.date}: ${formatTokens(cell.value)} tokens`}
+                className="token-heatmap-cell"
+                data-level={cell.level}
+                style={{ gridColumn: cell.gridColumn + 1, gridRow: cell.gridRow }}
+              />
+            </TooltipTrigger>
+            <TooltipContent>
+              {cell.date} · {formatTokens(cell.value)}
+            </TooltipContent>
+          </Tooltip>
+        ))}
+      </div>
+      <div
+        className="mt-3 grid pl-9 text-[11px] text-white/38"
+        style={{ gridTemplateColumns: `repeat(${weekCount}, minmax(28px, 1fr))` }}
+      >
+        {weekLabels.map((cell) => (
+          <span key={cell.date} className="truncate" style={{ gridColumn: cell.gridColumn }}>
+            {cell.date.slice(5)}
+          </span>
+        ))}
+      </div>
+      <div className="mt-5 flex items-center justify-center gap-2 text-[11px] text-white/42">
+        <span>Low activity</span>
+        {Array.from({ length: 8 }, (_, index) => (
+          <span key={index} className="token-heatmap-legend-cell" data-level={index + 1} />
+        ))}
+        <span>High activity</span>
+      </div>
+    </div>
+  )
+}
+
+function storagePercent(value: number, total: number): string {
+  if (total <= 0) return '0.0%'
+  return `${((value / total) * 100).toFixed(1)}%`
+}
+
+function StorageBreakdownCard({
+  storageData,
+  storageTotal,
+  sessionCount,
+}: {
+  storageData: StorageDatum[]
+  storageTotal: number
+  sessionCount: number
+}) {
+  const [mode, setMode] = useState<StorageViewMode>('pie')
+  const title = mode === 'layout' ? 'Storage Layout' : 'Storage Breakdown'
+  const subtitle = mode === 'list' ? 'By source' : undefined
+
+  return (
+    <Card className="glass-panel rounded-lg py-4">
+      <CardHeader className="pb-0">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <CardTitle className="text-sm text-white">{title}</CardTitle>
+            {subtitle && <div className="mt-0.5 text-xs font-medium text-white/42">{subtitle}</div>}
+          </div>
+          <div className="range-control flex items-center rounded-lg border border-white/10 bg-white/[0.035] p-0.5">
+            {storageViewModes.map((viewMode) => {
+              const Icon = viewMode.icon
+              return (
+                <Tooltip key={viewMode.value}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setMode(viewMode.value)}
+                      aria-label={`${viewMode.label} view`}
+                      aria-pressed={mode === viewMode.value}
+                      className={`grid size-6 place-items-center rounded-md transition ${
+                        mode === viewMode.value ? 'bg-white/14 text-white shadow-sm' : 'text-white/45 hover:text-white/75'
+                      }`}
+                    >
+                      <Icon className="size-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{viewMode.label}</TooltipContent>
+                </Tooltip>
+              )
+            })}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="h-[230px]">
+        {mode === 'layout' && <StorageLayoutView storageData={storageData} storageTotal={storageTotal} />}
+        {mode === 'list' && <StorageListView storageData={storageData} storageTotal={storageTotal} sessionCount={sessionCount} />}
+        {mode === 'pie' && <StoragePieView storageData={storageData} storageTotal={storageTotal} sessionCount={sessionCount} />}
+      </CardContent>
+    </Card>
+  )
+}
+
+function StorageLayoutView({ storageData, storageTotal }: { storageData: StorageDatum[]; storageTotal: number }) {
+  if (storageData.length === 0) {
+    return <div className="grid h-full place-items-center text-xs text-white/45">No storage activity in this range</div>
+  }
+
+  const [primary, secondary, ...rest] = storageData
+
+  return (
+    <div className="flex h-full flex-col gap-2">
+      <div className="storage-layout-grid min-h-0 flex-1">
+        {primary && <StorageLayoutTile slice={primary} total={storageTotal} className="storage-layout-primary" />}
+        {secondary && <StorageLayoutTile slice={secondary} total={storageTotal} className="storage-layout-secondary" />}
+        {rest.length > 0 && (
+          <div className="storage-layout-rest">
+            {rest.map((slice) => (
+              <StorageLayoutTile key={slice.source} slice={slice} total={storageTotal} />
+            ))}
+          </div>
+        )}
+      </div>
+      <StorageLegend storageData={storageData} storageTotal={storageTotal} />
+    </div>
+  )
+}
+
+function StorageLayoutTile({ slice, total, className = '' }: { slice: StorageDatum; total: number; className?: string }) {
+  const percent = total > 0 ? (slice.value / total) * 100 : 0
+  const density = percent < 1 ? 'tiny' : percent < 6 ? 'compact' : 'full'
+
+  return (
+    <div
+      className={`storage-layout-tile ${className}`}
+      data-source={slice.source}
+      data-density={density}
+      style={{ '--tile-color': sourceColors[slice.source] } as CSSProperties}
+    >
+      <div className="relative z-10 min-w-0">
+        <div className="storage-layout-label truncate text-[13px] font-semibold text-white/88">{slice.name}</div>
+        {density !== 'tiny' && <div className="mt-1 text-xs font-medium text-white/62">{formatBytes(slice.value)}</div>}
+        {density === 'full' && <div className="mt-0.5 text-xs font-semibold text-white/52">{storagePercent(slice.value, total)}</div>}
+      </div>
+    </div>
+  )
+}
+
+function StorageLegend({ storageData, storageTotal }: { storageData: StorageDatum[]; storageTotal: number }) {
+  return (
+    <div className="flex min-h-5 flex-wrap items-center gap-x-3 gap-y-1 overflow-hidden">
+      {storageData.slice(0, 5).map((slice) => (
+        <div key={slice.source} className="flex min-w-0 items-center gap-1.5 text-[10px] font-medium text-white/45">
+          <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: sourceColors[slice.source] }} />
+          <span className="truncate">{slice.name} ({storagePercent(slice.value, storageTotal)})</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function StorageListView({
+  storageData,
+  storageTotal,
+  sessionCount,
+}: {
+  storageData: StorageDatum[]
+  storageTotal: number
+  sessionCount: number
+}) {
+  return (
+    <div className="storage-list-view flex h-full flex-col justify-center gap-3">
+      {storageData.length === 0 && <div className="text-xs text-white/45">No storage activity in this range</div>}
+      {storageData.slice(0, 5).map((slice) => (
+        <div key={slice.source} className="grid grid-cols-[112px_1fr_72px] items-center gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="size-2.5 rounded-full" style={{ backgroundColor: sourceColors[slice.source] }} />
+            <span className="truncate text-[13px] font-medium text-white/70">{slice.name}</span>
+          </div>
+          <div
+            className="storage-meter"
+            style={{ '--meter-color': sourceColors[slice.source], '--meter-value': `${(slice.value / Math.max(storageTotal, 1)) * 100}%` } as CSSProperties}
+          >
+            <span className="storage-meter-fill" />
+          </div>
+          <span className="shrink-0 text-right text-[13px] font-semibold text-white/58">{formatBytes(slice.value)}</span>
+        </div>
+      ))}
+      {storageTotal > 0 && (
+        <div className="mt-1 grid grid-cols-[112px_1fr_72px] items-center gap-3 border-t border-white/7 pt-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <Database className="size-4 text-blue-300" />
+            <span className="text-[13px] font-semibold text-white/70">Total</span>
+          </div>
+          <span className="text-[11px] text-white/35">{sessionCount.toLocaleString()} sessions</span>
+          <span className="text-right text-[13px] font-semibold text-white/64">{formatBytes(storageTotal)}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StoragePieView({
+  storageData,
+  storageTotal,
+  sessionCount,
+}: {
+  storageData: StorageDatum[]
+  storageTotal: number
+  sessionCount: number
+}) {
+  return (
+    <div className="grid h-full grid-cols-[150px_1fr] items-center gap-3">
+      <ResponsiveContainer className="chart-static" width="100%" height={170}>
+        <PieChart accessibilityLayer={false}>
+          <Pie data={storageData} innerRadius={44} outerRadius={72} paddingAngle={2} dataKey="value" isAnimationActive={false}>
+            {storageData.map((entry) => (
+              <Cell key={entry.name} fill={sourceColors[entry.source]} />
+            ))}
+          </Pie>
+        </PieChart>
+      </ResponsiveContainer>
+      <div className="space-y-3">
+        {storageData.length === 0 && <div className="text-xs text-white/45">No storage activity in this range</div>}
+        {storageData.slice(0, 5).map((slice) => (
+          <div key={`${slice.source}-${slice.name}`} className="flex items-center justify-between gap-3 text-xs">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="size-2.5 rounded-full" style={{ backgroundColor: sourceColors[slice.source] }} />
+              <span className="truncate text-white/70">{slice.name}</span>
+            </div>
+            <span className="text-white/48">{formatBytes(slice.value)}</span>
+          </div>
+        ))}
+        {storageTotal > 0 && <div className="border-t border-white/7 pt-2 text-[11px] text-white/38">{formatBytes(storageTotal)} across {sessionCount.toLocaleString()} sessions</div>}
+      </div>
+    </div>
   )
 }
 
@@ -218,15 +753,19 @@ function Topbar({
   activeView,
   loading,
   mockDataEnabled,
+  overviewRange,
   resolvedTheme,
   onThemeToggle,
+  onOverviewRangeChange,
   onRescan,
 }: {
   activeView: ViewId
   loading: boolean
   mockDataEnabled: boolean
+  overviewRange: UsageRange
   resolvedTheme: 'light' | 'dark'
   onThemeToggle: () => void
+  onOverviewRangeChange: (range: UsageRange) => void
   onRescan: () => Promise<void>
 }) {
   const title = navItems.find((item) => item.id === activeView)?.label ?? 'Overview'
@@ -251,6 +790,7 @@ function Topbar({
             Demo
           </Badge>
         )}
+        {activeView === 'overview' && <UsageRangeControl value={overviewRange} onChange={onOverviewRangeChange} />}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -278,87 +818,61 @@ function Topbar({
   )
 }
 
-function OverviewView({ snapshot, onSelectCleanup }: { snapshot: DashboardSnapshot; onSelectCleanup: () => void }) {
+function OverviewView({
+  snapshot,
+  usageRange,
+  onSelectCleanup,
+}: {
+  snapshot: DashboardSnapshot
+  usageRange: UsageRange
+  onSelectCleanup: () => void
+}) {
   const recentSessions = snapshot.sessions.slice(0, 6)
-  const pieData = snapshot.storage.map((slice) => ({
-    name: slice.label,
-    value: slice.sizeBytes,
-    source: slice.source,
-  }))
+  const currentRangeDates = recentDateKeys(usageRange)
+  const priorRangeDates = recentDateKeys(usageRange, usageRange)
+  const sessionsInRange = sessionCountForDates(snapshot.sessions, currentRangeDates)
+  const sessionsPriorRange = sessionCountForDates(snapshot.sessions, priorRangeDates)
+  const backupsInRange = snapshot.backups.filter((backup) => currentRangeDates.has(dateKeyFromTime(new Date(backup.createdAt).getTime()))).length
+  const backupsPriorRange = snapshot.backups.filter((backup) => priorRangeDates.has(dateKeyFromTime(new Date(backup.createdAt).getTime()))).length
+  const cleanupInRange = cleanupCountForDates(snapshot.cleanup, currentRangeDates)
+  const cleanupPriorRange = cleanupCountForDates(snapshot.cleanup, priorRangeDates)
+  const tokensInRange = sessionTokenTotalForDates(snapshot.sessions, currentRangeDates) || usageTotalForDates(snapshot, currentRangeDates)
+  const tokensPriorRange = sessionTokenTotalForDates(snapshot.sessions, priorRangeDates) || usageTotalForDates(snapshot, priorRangeDates)
+  const rangeUsage = snapshot.usage.slice(-usageRange)
+  const selectedDateKeys = rangeDateKeys(snapshot.usage, usageRange)
+  const rangeSessions = snapshot.sessions.filter((session) => selectedDateKeys.has(dateKeyFromTime(new Date(session.lastUpdated).getTime())))
+  const storageData = agentSources
+    .map((source) => {
+      const sessions = rangeSessions.filter((session) => session.source === source)
+      return {
+        name: agentLabel[source],
+        value: sessions.reduce((total, session) => total + session.sizeBytes, 0),
+        source,
+        sessions: sessions.length,
+      }
+    })
+    .filter((slice) => slice.value > 0)
+    .sort((a, b) => b.value - a.value)
+  const storageTotal = storageData.reduce((total, slice) => total + slice.value, 0)
 
   return (
     <div className="space-y-4">
       <section className="grid grid-cols-4 gap-3">
-        <MetricCard icon={Database} label="Total Sessions" value={snapshot.overview.totalSessions.toLocaleString()} detail={`${snapshot.agents.length} agent adapters`} accent="bg-emerald-400/12 text-emerald-300" />
-        <MetricCard icon={Archive} label="Backed Up" value={snapshot.overview.backedUpSessions.toLocaleString()} detail={`${Math.round((snapshot.overview.backedUpSessions / Math.max(snapshot.overview.totalSessions, 1)) * 100)}% of total`} accent="bg-blue-400/12 text-blue-300" />
-        <MetricCard icon={HardDrive} label="Reclaimable" value={formatBytes(snapshot.overview.reclaimableBytes)} detail={`${snapshot.cleanup.length} cleanup suggestions`} accent="bg-amber-400/12 text-amber-300" />
+        <MetricCard icon={Database} label="Total Sessions" value={snapshot.overview.totalSessions.toLocaleString()} detail={trendDetail(sessionsInRange, sessionsPriorRange, 'sessions', usageRange)} accent="bg-emerald-400/12 text-emerald-300" />
+        <MetricCard icon={Archive} label="Backed Up" value={snapshot.overview.backedUpSessions.toLocaleString()} detail={trendDetail(backupsInRange, backupsPriorRange, 'backups', usageRange)} accent="bg-blue-400/12 text-blue-300" />
+        <MetricCard icon={HardDrive} label="Reclaimable" value={formatBytes(snapshot.overview.reclaimableBytes)} detail={trendDetail(cleanupInRange, cleanupPriorRange, 'suggestions', usageRange)} accent="bg-amber-400/12 text-amber-300" />
         <MetricCard
           icon={Gauge}
           label="Token Usage"
           value={formatTokens(snapshot.overview.totalTokens)}
-          detail={
-            snapshot.overview.totalCostUsd
-              ? `Cost ${formatCost(snapshot.overview.totalCostUsd)}`
-              : `Estimated cost ${estimatedCost(snapshot.overview.totalTokens)}`
-          }
+          detail={trendDetail(tokensInRange, tokensPriorRange, 'tokens', usageRange)}
           accent="bg-violet-400/12 text-violet-300"
         />
       </section>
 
       <section className="grid grid-cols-[1fr_400px] gap-4">
-        <Card className="glass-panel rounded-lg py-4">
-          <CardHeader className="pb-0">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm text-white">Token Activity</CardTitle>
-              <Badge variant="outline" className="border-white/10 text-white/50">30 days</Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="h-[230px]">
-            <ResponsiveContainer className="chart-static" width="100%" height="100%">
-              <AreaChart data={snapshot.usage} accessibilityLayer={false}>
-                <defs>
-                  <linearGradient id="tokenGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#63a6ff" stopOpacity={0.45} />
-                    <stop offset="95%" stopColor="#63a6ff" stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke="rgba(255,255,255,.07)" vertical={false} />
-                <XAxis dataKey="date" tick={{ fill: 'rgba(255,255,255,.38)', fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={18} tickFormatter={(value) => String(value).slice(5)} />
-                <YAxis tick={{ fill: 'rgba(255,255,255,.34)', fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(value) => formatTokens(Number(value))} />
-                <ChartTooltip contentStyle={{ background: '#18191b', border: '1px solid rgba(255,255,255,.12)', borderRadius: 8 }} formatter={(value) => formatTokens(Number(value))} />
-                <Area type="monotone" dataKey="total" stroke="#63a6ff" strokeWidth={2} fill="url(#tokenGradient)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        <Card className="glass-panel rounded-lg py-4">
-          <CardHeader className="pb-0">
-            <CardTitle className="text-sm text-white">Storage Breakdown</CardTitle>
-          </CardHeader>
-          <CardContent className="grid h-[230px] grid-cols-[150px_1fr] items-center gap-3">
-            <ResponsiveContainer className="chart-static" width="100%" height={170}>
-              <PieChart accessibilityLayer={false}>
-                <Pie data={pieData} innerRadius={44} outerRadius={72} paddingAngle={2} dataKey="value">
-                  {pieData.map((entry) => (
-                    <Cell key={entry.name} fill={sourceColors[entry.source as AgentSource] ?? '#8b95a5'} />
-                  ))}
-                </Pie>
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="space-y-3">
-              {snapshot.storage.slice(0, 5).map((slice) => (
-                <div key={`${slice.source}-${slice.label}`} className="flex items-center justify-between gap-3 text-xs">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="size-2.5 rounded-full" style={{ backgroundColor: sourceColors[slice.source as AgentSource] ?? '#8b95a5' }} />
-                    <span className="truncate text-white/70">{slice.label}</span>
-                  </div>
-                  <span className="text-white/48">{formatBytes(slice.sizeBytes)}</span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+        <TokenActivityCard usage={rangeUsage} />
+        <StorageBreakdownCard storageData={storageData} storageTotal={storageTotal} sessionCount={rangeSessions.length} />
       </section>
 
       <section className="grid grid-cols-[1fr_400px] gap-4">
@@ -901,13 +1415,14 @@ function SettingsView({
 
 function App() {
   const [activeView, setActiveView] = useState<ViewId>('overview')
+  const [overviewRange, setOverviewRange] = useState<UsageRange>(30)
   const dashboard = useDashboard()
   const theme = useTheme()
 
   const content = useMemo(() => {
     switch (activeView) {
       case 'overview':
-        return <OverviewView snapshot={dashboard.snapshot} onSelectCleanup={() => setActiveView('cleanup')} />
+        return <OverviewView snapshot={dashboard.snapshot} usageRange={overviewRange} onSelectCleanup={() => setActiveView('cleanup')} />
       case 'sessions':
         return <SessionsView sessions={dashboard.snapshot.sessions} onBackup={dashboard.backupSession} onExport={(id) => dashboard.exportSession(id, 'markdown')} onRelay={dashboard.exportUniversalRelay} />
       case 'cleanup':
@@ -923,7 +1438,7 @@ function App() {
       default:
         return null
     }
-  }, [activeView, dashboard])
+  }, [activeView, dashboard, overviewRange])
 
   return (
     <TooltipProvider>
@@ -934,8 +1449,10 @@ function App() {
             activeView={activeView}
             loading={dashboard.loading}
             mockDataEnabled={dashboard.mockDataEnabled}
+            overviewRange={overviewRange}
             resolvedTheme={theme.resolvedTheme}
             onThemeToggle={() => theme.setPreference(theme.resolvedTheme === 'dark' ? 'light' : 'dark')}
+            onOverviewRangeChange={setOverviewRange}
             onRescan={dashboard.rescan}
           />
           <div className="content-scroll no-drag-region min-h-0 flex-1 overflow-y-auto overflow-x-hidden">

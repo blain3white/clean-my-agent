@@ -355,6 +355,7 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
   const messages: UniversalRelayMessage[] = []
   const metadata: JsonRecord = {}
   const usageByDate: Record<string, number> = {}
+  let sampleForHints: unknown
   let tokens = emptyTokens()
 
   if (filePath.endsWith('.jsonl')) {
@@ -383,7 +384,7 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
         const record = toRecord(json)
         const dateKey = record ? dateKeyFromRecord(record) : undefined
         if (dateKey && usage.total > 0) usageByDate[dateKey] = (usageByDate[dateKey] ?? 0) + usage.total
-        metadata.sample = metadata.sample ?? json
+        sampleForHints ??= json
       } catch {
         if (messages.length < 3000 && line.length > 24) {
           messages.push({
@@ -399,7 +400,7 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
     const text = await safeReadText(filePath)
     try {
       const json = JSON.parse(text) as unknown
-      metadata.sample = json
+      sampleForHints = json
       if (isOpenCodeStorageRecord(json)) metadata.sourceFormat = 'opencode-storage-json'
       if (isCursorWorkspaceRecord(json)) metadata.sourceFormat = 'cursor-workspace-json'
       const record = toRecord(json)
@@ -430,8 +431,8 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
 
   return {
     title: firstTitle(messages, path.basename(filePath)),
-    projectPath: findStringByKeys(metadata.sample, ['cwd', 'projectPath', 'project_path', 'workspace', 'workspacePath']),
-    branch: findStringByKeys(metadata.sample, ['branch', 'gitBranch', 'git_branch']),
+    projectPath: findStringByKeys(sampleForHints, ['cwd', 'projectPath', 'project_path', 'workspace', 'workspacePath']),
+    branch: findStringByKeys(sampleForHints, ['branch', 'gitBranch', 'git_branch']),
     messages,
     tokens,
     usageByDate,

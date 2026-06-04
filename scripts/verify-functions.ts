@@ -86,6 +86,7 @@ async function main() {
   assert.equal(session.tokens.cacheRead, 30, 'cache read tokens should be counted')
   assert.equal(session.tokens.total, 3340, 'token total should include cache creation, cache read, and Codex cached input tokens')
   assert.equal(session.tokens.costUsd, 0.75, 'Claude/Codex style costUSD should be accumulated')
+  assert.equal('sample' in session.metadata, false, 'raw JSON samples should not be stored in SQLite')
   const today = new Date().toISOString().slice(0, 10)
   assert.equal(
     snapshot.usage.find((point) => point.date === today)?.total,
@@ -118,6 +119,26 @@ async function main() {
 
   await service.restoreTrash(trash[0].id)
   assert.equal((await service.getSnapshot(true)).sessions.some((item) => item.id === session.id), true)
+
+  const staleService = new AppService({
+    userDataPath: await mkdtemp(path.join(os.tmpdir(), 'clean-my-agent-stale-user-data-')),
+    openPath: async () => undefined,
+  })
+  await staleService.init()
+  staleService.updateSettings({
+    cleanupRetentionDays: 30,
+    scanRoots: Object.fromEntries(sources.map((source) => [source, source === 'codex' ? [path.join(fixtureRoot, source)] : [path.join(fixtureRoot, 'missing', source)]])),
+    exportDirectory: path.join(userDataPath, 'StaleExports'),
+  })
+  await staleService.rescan()
+  const staleSnapshot = await staleService.getSnapshot(false)
+  staleSnapshot.sessions[0].tokens.total = 1
+  staleSnapshot.sessions[0].metadata.usageByDate = { [today]: 1 }
+  // Simulate an app upgrade where cached session rows were produced by an older parser.
+  ;(staleService as unknown as { db: { replaceSessions: (sessions: unknown[]) => void; setSetting: (key: string, value: unknown) => void } }).db.replaceSessions(staleSnapshot.sessions)
+  ;(staleService as unknown as { db: { setSetting: (key: string, value: unknown) => void } }).db.setSetting('scanSchemaVersion', 1)
+  const refreshedSnapshot = await staleService.getSnapshot(false)
+  assert.equal(refreshedSnapshot.overview.totalTokens, 3340, 'stale scan cache should be invalidated automatically')
 
   console.log('Function verification passed')
 }
