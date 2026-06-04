@@ -4,6 +4,7 @@ import type { AppSettings, CleanMyAgentApi, ExportFormat } from '../src/shared/t
 const api: CleanMyAgentApi = {
   getSnapshot: () => ipcRenderer.invoke('app:getSnapshot'),
   rescan: () => ipcRenderer.invoke('app:rescan'),
+  refreshRecentSessions: () => ipcRenderer.invoke('app:refreshRecentSessions'),
   backupSession: (sessionId: string) => ipcRenderer.invoke('session:backup', sessionId),
   exportSession: (sessionId: string, format: ExportFormat) =>
     ipcRenderer.invoke('session:export', sessionId, format),

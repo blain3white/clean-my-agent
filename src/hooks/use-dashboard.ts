@@ -15,6 +15,7 @@ type DashboardState = {
   mockDataEnabled: boolean
   setMockDataEnabled: (enabled: boolean) => Promise<void>
   rescan: () => Promise<void>
+  refreshRecentSessions: () => Promise<void>
   backupSession: (sessionId: string) => Promise<void>
   exportSession: (sessionId: string, format: ExportFormat) => Promise<void>
   exportUniversalRelay: (sessionId: string) => Promise<void>
@@ -182,6 +183,30 @@ export function useDashboard(): DashboardState {
       rescan: async () => {
         await load(true)
         toast.success(settings.mockDataEnabled ? 'Demo data refreshed' : 'Agent data scanned')
+      },
+      refreshRecentSessions: async () => {
+        if (settings.mockDataEnabled) {
+          setSnapshot(mockSnapshot)
+          toast.success('Demo data refreshed')
+          return
+        }
+
+        if (!window.cleanMyAgent) {
+          toast.info('Recent refresh is available in the desktop app')
+          return
+        }
+
+        setLoading(true)
+        try {
+          const next = await window.cleanMyAgent.refreshRecentSessions()
+          setSnapshot(next)
+          toast.success('Recent sessions refreshed')
+        } catch (error) {
+          console.error(error)
+          toast.error('Could not refresh recent sessions.')
+        } finally {
+          setLoading(false)
+        }
       },
       backupSession: async (sessionId: string) => {
         if (!window.cleanMyAgent) {

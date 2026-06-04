@@ -109,6 +109,37 @@ export class LocalDatabase {
     }
   }
 
+  upsertSessions(sessions: SessionRecord[]): void {
+    if (sessions.length === 0) return
+
+    const db = this.requireDb()
+    const statement = db.prepare(`
+      INSERT INTO sessions (id, source, last_updated, size_bytes, data)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        source = excluded.source,
+        last_updated = excluded.last_updated,
+        size_bytes = excluded.size_bytes,
+        data = excluded.data
+    `)
+    db.exec('BEGIN')
+    try {
+      sessions.forEach((session) => {
+        statement.run(
+          session.id,
+          session.source,
+          session.lastUpdated,
+          session.sizeBytes,
+          JSON.stringify(compactSessionForStorage(session)),
+        )
+      })
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
   getSessions(): SessionRecord[] {
     const rows = this.requireDb()
       .prepare('SELECT data FROM sessions ORDER BY last_updated DESC')

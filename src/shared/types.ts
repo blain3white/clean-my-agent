@@ -179,6 +179,7 @@ export type ThemePreference = 'system' | 'light' | 'dark'
 export type CleanMyAgentApi = {
   getSnapshot: () => Promise<DashboardSnapshot>
   rescan: () => Promise<DashboardSnapshot>
+  refreshRecentSessions: () => Promise<DashboardSnapshot>
   backupSession: (sessionId: string) => Promise<BackupRecord>
   exportSession: (sessionId: string, format: ExportFormat) => Promise<string>
   scanCleanup: () => Promise<CleanupCandidate[]>
