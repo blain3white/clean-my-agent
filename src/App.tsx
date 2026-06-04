@@ -3140,7 +3140,7 @@ function App() {
             snapshot={dashboard.snapshot}
             usageRange={overviewRange}
             loading={dashboard.loading}
-            onRefresh={dashboard.rescan}
+            onRefresh={dashboard.refreshRecentSessions}
             onSelectCleanup={() => setActiveView('cleanup')}
           />
         )

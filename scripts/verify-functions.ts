@@ -7,10 +7,10 @@ import type { AgentSource } from '../src/shared/types'
 
 const sources: AgentSource[] = ['codex', 'claude', 'cursor', 'gemini', 'opencode']
 
-async function writeSession(root: string, source: AgentSource, daysOld: number) {
+async function writeSession(root: string, source: AgentSource, daysOld: number, name = 'session') {
   const dir = path.join(root, source)
   await mkdir(dir, { recursive: true })
-  const filePath = path.join(dir, `${source}-session.jsonl`)
+  const filePath = path.join(dir, `${source}-${name}.jsonl`)
   const workspace = path.join('/tmp', 'clean-my-agent-fixture', source)
   const date = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000)
   const timestamp = date.toISOString()
@@ -128,6 +128,18 @@ async function main() {
   const backup = await service.backupSession(session.id)
   assert.ok((await stat(backup.backupPath)).size > 0, 'backup file should be written')
 
+  const recentFile = await writeSession(fixtureRoot, 'codex', 0, 'recent')
+  const recentSnapshot = await service.refreshRecentSessions(10)
+  assert.ok(
+    recentSnapshot.sessions.some(
+      (item) =>
+        item.source === 'codex' &&
+        item.storagePath === recentFile &&
+        item.lastUpdated.slice(0, 10) === today,
+    ),
+    'recent refresh should update the latest session without a full rescan',
+  )
+
   const markdownPath = await service.exportSession(session.id, 'markdown')
   assert.match(await readFile(markdownPath, 'utf8'), /# Refactor codex auth flow/)
 
@@ -179,6 +191,7 @@ async function main() {
   })
   await staleService.rescan()
   const staleSnapshot = await staleService.getSnapshot(false)
+  const expectedStaleTokenTotal = staleSnapshot.overview.totalTokens
   staleSnapshot.sessions[0].tokens.total = 1
   staleSnapshot.sessions[0].metadata.usageByDate = { [today]: 1 }
   // Simulate an app upgrade where cached session rows were produced by an older parser.
@@ -196,7 +209,7 @@ async function main() {
   const refreshedSnapshot = await staleService.getSnapshot(false)
   assert.equal(
     refreshedSnapshot.overview.totalTokens,
-    3340,
+    expectedStaleTokenTotal,
     'stale scan cache should be invalidated automatically',
   )
 

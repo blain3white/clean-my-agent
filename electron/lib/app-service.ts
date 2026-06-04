@@ -197,6 +197,28 @@ export class AppService {
     return this.getSnapshot(false)
   }
 
+  async refreshRecentSessions(limit = 10): Promise<DashboardSnapshot> {
+    const settings = this.requireSettings()
+    const candidateGroups = await Promise.all(
+      adapters.map(async (adapter) => ({
+        adapter,
+        candidates: await adapter.recentCandidates(settings, limit),
+      })),
+    )
+    const latestCandidates = candidateGroups
+      .flatMap(({ adapter, candidates }) => candidates.map((candidate) => ({ adapter, candidate })))
+      .sort((a, b) => b.candidate.mtimeMs - a.candidate.mtimeMs)
+      .slice(0, limit)
+
+    const sessions = (
+      await Promise.all(
+        latestCandidates.map(({ adapter, candidate }) => adapter.scanCandidates([candidate])),
+      )
+    ).flat()
+    this.db.upsertSessions(this.mergeBackupStatus(sessions))
+    return this.getSnapshot(false)
+  }
+
   async backupSession(sessionId: string): Promise<BackupRecord> {
     const session = this.requireSession(sessionId)
     const createdAt = new Date().toISOString()

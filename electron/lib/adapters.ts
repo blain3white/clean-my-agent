@@ -20,7 +20,7 @@ import {
   toRecord,
   type JsonRecord,
 } from './agent-storage-formats'
-import { expandHome, hashId, listFiles, mtimeIso, pathSize, readable, safeReadText } from './files'
+import { expandHome, hashId, listFiles, pathSize, readable, safeReadText } from './files'
 
 type AgentDefinition = {
   source: AgentSource
@@ -38,6 +38,16 @@ type ParsedSession = {
   tokens: TokenUsage
   usageByDate: Record<string, number>
   metadata: JsonRecord
+}
+
+type SessionFileCandidate = {
+  path: string
+  root?: string
+  relativePath?: string
+  sizeBytes: number
+  createdAt: string
+  lastUpdated: string
+  mtimeMs: number
 }
 
 const emptyTokens = (): TokenUsage => ({
@@ -496,58 +506,23 @@ export class AgentAdapter {
     return (configured?.length ? configured : this.definition.roots).map(expandHome)
   }
 
+  async recentCandidates(settings: AppSettings, limit: number): Promise<SessionFileCandidate[]> {
+    const roots = await this.readableRoots(settings)
+    const candidates = await this.fileCandidates(roots)
+    return candidates.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, limit)
+  }
+
   async scan(
     settings: AppSettings,
   ): Promise<{ state: AgentInstallState; sessions: SessionRecord[] }> {
     const roots = this.roots(settings)
-    const readableRoots = []
-    for (const root of roots) {
-      if (await readable(root)) readableRoots.push(root)
-    }
-
-    const files = (
-      await Promise.all(readableRoots.map((root) => listFiles(root, this.definition.patterns)))
-    ).flat()
+    const readableRoots = await this.readableRoots(settings)
+    const files = await this.fileCandidates(readableRoots)
 
     const sessions: SessionRecord[] = []
-    for (const filePath of files) {
+    for (const candidate of files) {
       try {
-        const info = await stat(filePath)
-        if (info.size === 0) continue
-        if (info.size > 250_000_000) continue
-
-        const parsed = await parseJsonLike(filePath)
-        const id = hashId([this.definition.source, filePath])
-        sessions.push({
-          id,
-          source: this.definition.source,
-          title: parsed.title ?? path.basename(filePath),
-          projectName: projectNameFromPath(parsed.projectPath, filePath),
-          projectPath: parsed.projectPath,
-          branch: parsed.branch,
-          storagePath: filePath,
-          storageKind:
-            filePath.endsWith('.db') || filePath.endsWith('.sqlite') ? 'database' : 'file',
-          storageState: 'live',
-          createdAt: info.birthtime.toISOString(),
-          lastUpdated: (await mtimeIso(filePath)) || info.mtime.toISOString(),
-          messageCount: parsed.messages.length,
-          tokens: parsed.tokens,
-          sizeBytes: info.size,
-          backupStatus: 'pending',
-          tags: [this.definition.source],
-          searchText: searchTextFromParsed(parsed),
-          metadata: {
-            ...parsed.metadata,
-            parser: 'generic-json-session-parser',
-            root: readableRoots.find((root) => filePath.startsWith(root)),
-            relativePath: readableRoots
-              .map((root) =>
-                filePath.startsWith(root) ? path.relative(root, filePath) : undefined,
-              )
-              .find(Boolean),
-          },
-        })
+        sessions.push(await this.parseCandidate(candidate))
       } catch {
         continue
       }
@@ -578,6 +553,18 @@ export class AgentAdapter {
     }
   }
 
+  async scanCandidates(candidates: SessionFileCandidate[]): Promise<SessionRecord[]> {
+    const sessions: SessionRecord[] = []
+    for (const candidate of candidates) {
+      try {
+        sessions.push(await this.parseCandidate(candidate))
+      } catch {
+        continue
+      }
+    }
+    return sessions
+  }
+
   async toUniversal(session: SessionRecord): Promise<UniversalRelayDocument> {
     const parsed = await parseJsonLike(session.storagePath)
     return {
@@ -596,6 +583,80 @@ export class AgentAdapter {
       warnings: [
         'This is a generic relay export. Agent-specific import converters can transform this document later.',
       ],
+    }
+  }
+
+  private async readableRoots(settings: AppSettings): Promise<string[]> {
+    const roots = this.roots(settings)
+    const readableRoots = []
+    for (const root of roots) {
+      if (await readable(root)) readableRoots.push(root)
+    }
+    return readableRoots
+  }
+
+  private async fileCandidates(roots: string[]): Promise<SessionFileCandidate[]> {
+    const filesByRoot = await Promise.all(
+      roots.map(async (root) => ({
+        root,
+        files: await listFiles(root, this.definition.patterns),
+      })),
+    )
+
+    const candidates: SessionFileCandidate[] = []
+    for (const { root, files } of filesByRoot) {
+      for (const filePath of files) {
+        try {
+          const info = await stat(filePath)
+          if (info.size === 0) continue
+          if (info.size > 250_000_000) continue
+
+          candidates.push({
+            path: filePath,
+            root,
+            relativePath: path.relative(root, filePath),
+            sizeBytes: info.size,
+            createdAt: info.birthtime.toISOString(),
+            lastUpdated: info.mtime.toISOString(),
+            mtimeMs: info.mtimeMs,
+          })
+        } catch {
+          continue
+        }
+      }
+    }
+
+    return candidates
+  }
+
+  private async parseCandidate(candidate: SessionFileCandidate): Promise<SessionRecord> {
+    const parsed = await parseJsonLike(candidate.path)
+    const id = hashId([this.definition.source, candidate.path])
+    return {
+      id,
+      source: this.definition.source,
+      title: parsed.title ?? path.basename(candidate.path),
+      projectName: projectNameFromPath(parsed.projectPath, candidate.path),
+      projectPath: parsed.projectPath,
+      branch: parsed.branch,
+      storagePath: candidate.path,
+      storageKind:
+        candidate.path.endsWith('.db') || candidate.path.endsWith('.sqlite') ? 'database' : 'file',
+      storageState: 'live',
+      createdAt: candidate.createdAt,
+      lastUpdated: candidate.lastUpdated,
+      messageCount: parsed.messages.length,
+      tokens: parsed.tokens,
+      sizeBytes: candidate.sizeBytes,
+      backupStatus: 'pending',
+      tags: [this.definition.source],
+      searchText: searchTextFromParsed(parsed),
+      metadata: {
+        ...parsed.metadata,
+        parser: 'generic-json-session-parser',
+        root: candidate.root,
+        relativePath: candidate.relativePath,
+      },
     }
   }
 }
