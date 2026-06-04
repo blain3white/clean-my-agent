@@ -1363,7 +1363,11 @@ function OverviewView({
                 disabled={loading}
                 className="text-blue-300 hover:bg-blue-400/10 hover:text-blue-200"
               >
-                {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCcw className="size-3.5" />}
+                {loading ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <RefreshCcw className="size-3.5" />
+                )}
                 Refresh
               </Button>
             </div>
