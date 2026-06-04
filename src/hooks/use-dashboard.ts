@@ -5,6 +5,7 @@ import {
   agentSources,
   type AgentSource,
   type AppSettings,
+  type CleanupCandidate,
   type DashboardSnapshot,
   type ExportFormat,
 } from '@/shared/types'
@@ -16,8 +17,11 @@ type DashboardState = {
   setMockDataEnabled: (enabled: boolean) => Promise<void>
   rescan: () => Promise<void>
   backupSession: (sessionId: string) => Promise<void>
+  archiveSession: (sessionId: string) => Promise<void>
+  restoreArchive: (archiveId: string) => Promise<void>
   exportSession: (sessionId: string, format: ExportFormat) => Promise<void>
   exportUniversalRelay: (sessionId: string) => Promise<void>
+  scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<void>
 }
 
@@ -70,6 +74,7 @@ const emptySnapshot = (): DashboardSnapshot => ({
   })),
   sessions: [],
   cleanup: [],
+  archives: [],
   backups: [],
   trash: [],
   usage: [],
@@ -192,6 +197,24 @@ export function useDashboard(): DashboardState {
         toast.success(`Backup created: ${record.title}`)
         await load(false)
       },
+      archiveSession: async (sessionId: string) => {
+        if (!window.cleanMyAgent) {
+          toast.info('Vault archive is available in the desktop app')
+          return
+        }
+        const record = await window.cleanMyAgent.archiveSession(sessionId)
+        toast.success(`Archived to Vault: ${record.title}`)
+        await load(false)
+      },
+      restoreArchive: async (archiveId: string) => {
+        if (!window.cleanMyAgent) {
+          toast.info('Archive restore is available in the desktop app')
+          return
+        }
+        await window.cleanMyAgent.restoreArchive(archiveId)
+        toast.success('Session restored from Vault')
+        await load(true)
+      },
       exportSession: async (sessionId: string, format: ExportFormat) => {
         if (!window.cleanMyAgent) {
           toast.info('Export is available in the desktop app')
@@ -208,6 +231,25 @@ export function useDashboard(): DashboardState {
         const exportPath = await window.cleanMyAgent.exportUniversalRelay(sessionId)
         toast.success(`Universal JSON exported to ${exportPath}`)
       },
+      scanCleanup: async () => {
+        if (settings.mockDataEnabled || !window.cleanMyAgent) {
+          toast.success(settings.mockDataEnabled ? 'Demo cleanup scanned' : 'Cleanup demo scanned')
+          return snapshot.cleanup
+        }
+
+        const cleanup = await window.cleanMyAgent.scanCleanup()
+        setSnapshot((current) => ({
+          ...current,
+          cleanup,
+          overview: {
+            ...current.overview,
+            reclaimableBytes: cleanup.reduce((total, item) => total + item.sizeBytes, 0),
+            highRiskCleanupCount: cleanup.filter((item) => item.risk === 'high').length,
+          },
+        }))
+        toast.success('Cleanup scan complete')
+        return cleanup
+      },
       moveCleanupToTrash: async (candidateIds: string[]) => {
         if (!window.cleanMyAgent) {
           toast.info('Trash cleanup is available in the desktop app')
@@ -220,7 +262,7 @@ export function useDashboard(): DashboardState {
         await load(true)
       },
     }),
-    [load, settings],
+    [load, settings, snapshot.cleanup],
   )
 
   return {

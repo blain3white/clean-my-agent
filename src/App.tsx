@@ -1,15 +1,17 @@
-import { type CSSProperties, useMemo, useState } from 'react'
+import { type CSSProperties, type ReactNode, useMemo, useRef, useState } from 'react'
 import CodexIcon from '@lobehub/icons/es/Codex'
 import ClaudeCodeIcon from '@lobehub/icons/es/ClaudeCode'
 import CursorIcon from '@lobehub/icons/es/Cursor'
 import GeminiIcon from '@lobehub/icons/es/Gemini'
 import OpenCodeIcon from '@lobehub/icons/es/OpenCode'
+import { AnimatePresence, motion } from 'motion/react'
 import {
   Activity,
   Archive,
   ArrowRightLeft,
   BarChart3,
   Bot,
+  CalendarDays,
   ChartNoAxesColumn,
   ChartSpline,
   CheckCircle2,
@@ -17,7 +19,9 @@ import {
   Clock,
   Database,
   Download,
+  Eye,
   FileJson2,
+  FlaskConical,
   Gauge,
   Grid3X3,
   HardDrive,
@@ -25,12 +29,14 @@ import {
   LayoutDashboard,
   ListFilter,
   Loader2,
+  MessageSquare,
   Moon,
   Pin,
   RefreshCcw,
   Search,
   Settings,
   ShieldCheck,
+  Sparkles,
   Sun,
   Trash2,
 } from 'lucide-react'
@@ -70,6 +76,7 @@ import { useTheme } from '@/hooks/use-theme'
 import { agentLabel, formatBytes, formatRelative, formatTokens, riskAccent } from '@/lib/format'
 import {
   agentSources,
+  type ArchiveRecord,
   type AgentSource,
   type CleanupCandidate,
   type DashboardSnapshot,
@@ -91,7 +98,7 @@ type ChartTooltipPayload = {
 type StorageDatum = {
   name: string
   value: number
-  source: AgentSource
+  source: AgentSource | 'archives'
   sessions: number
 }
 type StorageChartTooltipPayload = {
@@ -111,7 +118,6 @@ type HeatmapCell = {
   gridColumn: number
   gridRow: number
 }
-
 const navItems: Array<{ id: ViewId; label: string; icon: typeof LayoutDashboard }> = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'sessions', label: 'Sessions', icon: Database },
@@ -130,8 +136,15 @@ const sourceColors: Record<AgentSource, string> = {
   opencode: '#60a5fa',
 }
 
+const storageSourceColors: Record<AgentSource | 'archives', string> = {
+  ...sourceColors,
+  archives: '#34d399',
+}
+
+const storageSources: Array<AgentSource | 'archives'> = [...agentSources, 'archives']
+
 const tokenBarGlowColors: Record<
-  AgentSource,
+  AgentSource | 'archives',
   { bright: string; base: string; deep: string; glow: string }
 > = {
   codex: { bright: '#c4b5fd', base: '#9f7aea', deep: '#6d4bd8', glow: '#a78bfa' },
@@ -139,6 +152,7 @@ const tokenBarGlowColors: Record<
   cursor: { bright: '#f8fafc', base: '#cbd5e1', deep: '#718096', glow: '#cbd5e1' },
   gemini: { bright: '#7dd3fc', base: '#38bdf8', deep: '#0e7490', glow: '#38bdf8' },
   opencode: { bright: '#93c5fd', base: '#60a5fa', deep: '#2563eb', glow: '#60a5fa' },
+  archives: { bright: '#86efac', base: '#34d399', deep: '#047857', glow: '#34d399' },
 }
 
 const sourceIconColors: Record<AgentSource, string> = {
@@ -151,7 +165,6 @@ const usageRanges: Array<{ value: UsageRange; label: string }> = [
   { value: 7, label: '7d' },
   { value: 14, label: '14d' },
   { value: 30, label: '30d' },
-  { value: 'all', label: 'All' },
 ]
 
 const heatmapTimeLabels = ['00', '04', '08', '12', '16', '20', '24']
@@ -325,16 +338,15 @@ function rangeDateKeys(usage: UsagePoint[], range: UsageRange): Set<string> {
   return new Set(usage.slice(-days).map((point) => point.date))
 }
 
-function heatmapLabelEvery(range: UsageRange): number {
-  if (range === 7) return 1
-  if (range === 14) return 2
-  if (range === 30) return 3
-  return 30
-}
-
 function heatLevel(value: number, max: number): number {
   if (value <= 0 || max <= 0) return 0
   return Math.min(9, Math.max(1, Math.ceil((value / max) * 9)))
+}
+
+function heatmapLabelEvery(days: number): number {
+  if (days <= 7) return 1
+  if (days <= 14) return 2
+  return 3
 }
 
 function buildHeatmapCells(usage: UsagePoint[]): HeatmapCell[] {
@@ -408,9 +420,16 @@ function UsageTooltip({
   )
 }
 
-function TokenActivityCard({ usage, usageRange }: { usage: UsagePoint[]; usageRange: UsageRange }) {
+function TokenActivityCard({
+  usage,
+  heatmapUsage,
+}: {
+  usage: UsagePoint[]
+  heatmapUsage: UsagePoint[]
+}) {
   const [mode, setMode] = useState<TokenActivityMode>('bar')
-  const minWidth = mode === 'heat' ? Math.max(620, 72 + usage.length * 21) : 580
+  const heatUsageDays = Math.min(30, heatmapUsage.length)
+  const minWidth = mode === 'heat' ? Math.max(620, 72 + heatUsageDays * 21) : 580
 
   return (
     <Card className="glass-panel token-activity-card rounded-lg py-4" style={{ minWidth }}>
@@ -449,7 +468,7 @@ function TokenActivityCard({ usage, usageRange }: { usage: UsagePoint[]; usageRa
       <CardContent className="h-[230px]">
         {mode === 'line' && <TokenLineChart usage={usage} />}
         {mode === 'bar' && <TokenBarChart usage={usage} />}
-        {mode === 'heat' && <TokenHeatmap usage={usage} usageRange={usageRange} />}
+        {mode === 'heat' && <TokenHeatmap usage={heatmapUsage} />}
       </CardContent>
     </Card>
   )
@@ -607,18 +626,21 @@ function TokenBarChart({ usage }: { usage: UsagePoint[] }) {
   )
 }
 
-function TokenHeatmap({ usage, usageRange }: { usage: UsagePoint[]; usageRange: UsageRange }) {
-  const cells = buildHeatmapCells(usage)
-  const labelEvery = heatmapLabelEvery(usageRange)
-  const dateLabels = usage
+function TokenHeatmap({ usage }: { usage: UsagePoint[] }) {
+  const heatmapUsage = usage.slice(-30)
+  const cells = buildHeatmapCells(heatmapUsage)
+  const labelEvery = heatmapLabelEvery(heatmapUsage.length)
+  const dateLabels = heatmapUsage
     .map((point, index) => ({ point, index }))
-    .filter(({ index }) => index === 0 || index === usage.length - 1 || index % labelEvery === 0)
+    .filter(
+      ({ index }) => index === 0 || index === heatmapUsage.length - 1 || index % labelEvery === 0,
+    )
 
   return (
     <div className="flex h-full flex-col justify-center">
       <div
         className="token-heatmap-grid"
-        style={{ gridTemplateColumns: `36px repeat(${usage.length}, 16px)` }}
+        style={{ gridTemplateColumns: `36px repeat(${heatmapUsage.length}, 16px)` }}
       >
         {heatmapTimeLabels.map((time, index) => (
           <div
@@ -646,9 +668,14 @@ function TokenHeatmap({ usage, usageRange }: { usage: UsagePoint[]; usageRange: 
           </Tooltip>
         ))}
       </div>
-      <div className="mt-3 flex justify-between pl-9 text-[11px] text-white/38">
-        {dateLabels.map(({ point }) => (
-          <span key={point.date}>{point.date.slice(5)}</span>
+      <div
+        className="token-heatmap-axis mt-3 grid pl-9 text-[11px] text-white/38"
+        style={{ gridTemplateColumns: `repeat(${heatmapUsage.length}, 16px)` }}
+      >
+        {dateLabels.map(({ point, index }) => (
+          <span key={point.date} style={{ gridColumn: index + 1 }}>
+            {point.date.slice(5)}
+          </span>
         ))}
       </div>
       <div className="mt-5 flex items-center justify-center gap-2 text-[11px] text-white/42">
@@ -667,7 +694,7 @@ function storagePercent(value: number, total: number): string {
   return `${((value / total) * 100).toFixed(1)}%`
 }
 
-function storageVisualStyle(source: AgentSource): StorageVisualStyle {
+function storageVisualStyle(source: AgentSource | 'archives'): StorageVisualStyle {
   const colors = tokenBarGlowColors[source]
   return {
     '--storage-color': colors.base,
@@ -683,7 +710,7 @@ function StorageSummaryBody({ slice, total }: { slice: StorageDatum; total: numb
       <div className="flex items-center gap-2 text-xs font-medium text-white/58">
         <span
           className="size-2.5 rounded-full"
-          style={{ backgroundColor: sourceColors[slice.source] }}
+          style={{ backgroundColor: storageSourceColors[slice.source] }}
         />
         <span className="truncate">{slice.name}</span>
       </div>
@@ -909,7 +936,7 @@ function StorageLegend({
         >
           <span
             className="size-2 shrink-0 rounded-full"
-            style={{ backgroundColor: sourceColors[slice.source] }}
+            style={{ backgroundColor: storageSourceColors[slice.source] }}
           />
           <span className="truncate">
             {slice.name} ({storagePercent(slice.value, storageTotal)})
@@ -941,7 +968,7 @@ function StorageLineView({
               <div className="flex min-w-0 items-center gap-2">
                 <span
                   className="size-2.5 rounded-full"
-                  style={{ backgroundColor: sourceColors[slice.source] }}
+                  style={{ backgroundColor: storageSourceColors[slice.source] }}
                 />
                 <span className="truncate text-[13px] font-medium text-white/70">{slice.name}</span>
               </div>
@@ -1004,7 +1031,7 @@ function StoragePieView({
                 values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 .31 0"
               />
             </filter>
-            {agentSources.map((source) => {
+            {storageSources.map((source) => {
               const colors = tokenBarGlowColors[source]
               return (
                 <linearGradient
@@ -1038,7 +1065,7 @@ function StoragePieView({
             opacity={0.29}
           >
             {storageData.map((entry) => (
-              <Cell key={`halo-${entry.name}`} fill={sourceColors[entry.source]} />
+              <Cell key={`halo-${entry.name}`} fill={storageSourceColors[entry.source]} />
             ))}
           </Pie>
           <Pie
@@ -1074,7 +1101,7 @@ function StoragePieView({
             <div className="flex min-w-0 items-center gap-2">
               <span
                 className="size-2.5 rounded-full"
-                style={{ backgroundColor: sourceColors[slice.source] }}
+                style={{ backgroundColor: storageSourceColors[slice.source] }}
               />
               <span className="truncate text-white/70">{slice.name}</span>
             </div>
@@ -1258,10 +1285,14 @@ function Topbar({
 function OverviewView({
   snapshot,
   usageRange,
+  loading,
+  onRefresh,
   onSelectCleanup,
 }: {
   snapshot: DashboardSnapshot
   usageRange: UsageRange
+  loading: boolean
+  onRefresh: () => Promise<void>
   onSelectCleanup: () => void
 }) {
   const recentSessions = snapshot.sessions.slice(0, 6)
@@ -1291,16 +1322,14 @@ function OverviewView({
   const rangeSessions = snapshot.sessions.filter((session) =>
     selectedDateKeys.has(dateKeyFromTime(new Date(session.lastUpdated).getTime())),
   )
-  const storageData = agentSources
-    .map((source) => {
-      const sessions = rangeSessions.filter((session) => session.source === source)
-      return {
-        name: agentLabel[source],
-        value: sessions.reduce((total, session) => total + session.sizeBytes, 0),
-        source,
-        sessions: sessions.length,
-      }
-    })
+  const storageData = snapshot.storage
+    .filter((slice) => slice.source in storageSourceColors)
+    .map((slice) => ({
+      name: slice.label,
+      value: slice.sizeBytes,
+      source: slice.source as AgentSource | 'archives',
+      sessions: slice.sessions ?? 0,
+    }))
     .filter((slice) => slice.value > 0)
     .sort((a, b) => b.value - a.value)
   const storageTotal = storageData.reduce((total, slice) => total + slice.value, 0)
@@ -1339,7 +1368,7 @@ function OverviewView({
       </section>
 
       <section className="grid grid-cols-[1fr_400px] gap-4">
-        <TokenActivityCard usage={rangeUsage} usageRange={usageRange} />
+        <TokenActivityCard usage={rangeUsage} heatmapUsage={snapshot.usage} />
         <StorageBreakdownCard
           storageData={storageData}
           storageTotal={storageTotal}
@@ -1355,9 +1384,16 @@ function OverviewView({
               <Button
                 variant="ghost"
                 size="sm"
+                onClick={() => void onRefresh()}
+                disabled={loading}
                 className="text-blue-300 hover:bg-blue-400/10 hover:text-blue-200"
               >
-                View all
+                {loading ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <RefreshCcw className="size-3.5" />
+                )}
+                Refresh
               </Button>
             </div>
           </CardHeader>
@@ -1430,21 +1466,40 @@ function CleanupMiniRow({ candidate }: { candidate: CleanupCandidate }) {
 
 function SessionsView({
   sessions,
+  archives,
   onBackup,
+  onArchive,
+  onRestoreArchive,
   onExport,
   onRelay,
 }: {
   sessions: SessionRecord[]
+  archives: ArchiveRecord[]
   onBackup: (sessionId: string) => Promise<void>
+  onArchive: (sessionId: string) => Promise<void>
+  onRestoreArchive: (archiveId: string) => Promise<void>
   onExport: (sessionId: string) => Promise<void>
   onRelay: (sessionId: string) => Promise<void>
 }) {
   const [query, setQuery] = useState('')
   const [agent, setAgent] = useState<'all' | AgentSource>('all')
+  const archivesBySessionId = new Map(archives.map((archive) => [archive.sessionId, archive]))
   const filtered = sessions.filter((session) => {
-    const haystack =
-      `${session.title} ${session.projectName} ${session.branch ?? ''} ${agentLabel[session.source]}`.toLowerCase()
-    return haystack.includes(query.toLowerCase()) && (agent === 'all' || session.source === agent)
+    const haystack = [
+      session.title,
+      session.projectName,
+      session.projectPath,
+      session.branch,
+      agentLabel[session.source],
+      session.storageState,
+      session.searchText,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+    return (
+      haystack.includes(query.trim().toLowerCase()) && (agent === 'all' || session.source === agent)
+    )
   })
 
   return (
@@ -1463,7 +1518,7 @@ function SessionsView({
               <Input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search sessions..."
+                placeholder="Search sessions and previews..."
                 className="h-8 w-64 border-white/10 bg-white/5 pl-8 text-white placeholder:text-white/30"
               />
             </div>
@@ -1494,97 +1549,131 @@ function SessionsView({
                 <TableHead className="text-white/45">Updated</TableHead>
                 <TableHead className="text-right text-white/45">Tokens</TableHead>
                 <TableHead className="text-right text-white/45">Size</TableHead>
-                <TableHead className="text-white/45">Backup</TableHead>
+                <TableHead className="text-white/45">State</TableHead>
                 <TableHead className="text-right text-white/45">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.slice(0, 80).map((session) => (
-                <TableRow key={session.id} className="border-white/7 hover:bg-white/[0.035]">
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <AgentGlyph source={session.source} />
-                      <span className="text-xs text-white/70">{agentLabel[session.source]}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="max-w-[240px] truncate font-medium text-white/82">
-                    {session.title}
-                  </TableCell>
-                  <TableCell className="max-w-[180px] truncate text-white/55">
-                    {session.projectName}
-                  </TableCell>
-                  <TableCell className="max-w-[160px] truncate text-white/45">
-                    {session.branch ?? 'Unknown'}
-                  </TableCell>
-                  <TableCell className="text-white/45">
-                    {formatRelative(session.lastUpdated)}
-                  </TableCell>
-                  <TableCell className="text-right text-white/60">
-                    {formatTokens(session.tokens.total)}
-                  </TableCell>
-                  <TableCell className="text-right text-white/60">
-                    {formatBytes(session.sizeBytes)}
-                  </TableCell>
-                  <TableCell>
-                    {session.backupStatus === 'backed-up' ? (
-                      <Badge className="bg-emerald-400/10 text-emerald-300">
-                        <CheckCircle2 className="size-3" />
-                        Backed Up
-                      </Badge>
-                    ) : (
-                      <Badge
-                        variant="outline"
-                        className="border-amber-400/20 bg-amber-400/10 text-amber-300"
-                      >
-                        Pending
-                      </Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex justify-end gap-1">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            onClick={() => void onBackup(session.id)}
-                            className="text-white/55 hover:bg-white/10 hover:text-white"
-                          >
-                            <Archive className="size-3.5" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Backup session</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            onClick={() => void onExport(session.id)}
-                            className="text-white/55 hover:bg-white/10 hover:text-white"
-                          >
-                            <Download className="size-3.5" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Export Markdown</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            onClick={() => void onRelay(session.id)}
-                            className="text-white/55 hover:bg-white/10 hover:text-white"
-                          >
-                            <FileJson2 className="size-3.5" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Export universal relay JSON</TooltipContent>
-                      </Tooltip>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {filtered.slice(0, 80).map((session) => {
+                const archive = archivesBySessionId.get(session.id)
+                return (
+                  <TableRow key={session.id} className="border-white/7 hover:bg-white/[0.035]">
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <AgentGlyph source={session.source} />
+                        <span className="text-xs text-white/70">{agentLabel[session.source]}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="max-w-[240px] truncate font-medium text-white/82">
+                      {session.title}
+                    </TableCell>
+                    <TableCell className="max-w-[180px] truncate text-white/55">
+                      {session.projectName}
+                    </TableCell>
+                    <TableCell className="max-w-[160px] truncate text-white/45">
+                      {session.branch ?? 'Unknown'}
+                    </TableCell>
+                    <TableCell className="text-white/45">
+                      {formatRelative(session.lastUpdated)}
+                    </TableCell>
+                    <TableCell className="text-right text-white/60">
+                      {formatTokens(session.tokens.total)}
+                    </TableCell>
+                    <TableCell className="text-right text-white/60">
+                      {formatBytes(session.sizeBytes)}
+                    </TableCell>
+                    <TableCell>
+                      {session.storageState === 'archived' ? (
+                        <Badge className="bg-emerald-400/10 text-emerald-300">
+                          <Archive className="size-3" />
+                          Vault
+                        </Badge>
+                      ) : session.backupStatus === 'backed-up' ? (
+                        <Badge className="bg-blue-400/10 text-blue-300">
+                          <CheckCircle2 className="size-3" />
+                          Live
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className="border-amber-400/20 bg-amber-400/10 text-amber-300"
+                        >
+                          Live
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-1">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={() => void onBackup(session.id)}
+                              disabled={session.storageState === 'archived'}
+                              className="text-white/55 hover:bg-white/10 hover:text-white"
+                            >
+                              <Archive className="size-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Backup session</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={() =>
+                                session.storageState === 'archived' && archive
+                                  ? void onRestoreArchive(archive.id)
+                                  : void onArchive(session.id)
+                              }
+                              className="text-white/55 hover:bg-white/10 hover:text-white"
+                            >
+                              {session.storageState === 'archived' ? (
+                                <RefreshCcw className="size-3.5" />
+                              ) : (
+                                <HardDrive className="size-3.5" />
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {session.storageState === 'archived'
+                              ? 'Restore from Vault'
+                              : 'Archive to Vault'}
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={() => void onExport(session.id)}
+                              className="text-white/55 hover:bg-white/10 hover:text-white"
+                            >
+                              <Download className="size-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Export Markdown</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={() => void onRelay(session.id)}
+                              className="text-white/55 hover:bg-white/10 hover:text-white"
+                            >
+                              <FileJson2 className="size-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Export universal relay JSON</TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
             </TableBody>
           </Table>
         </div>
@@ -1593,241 +1682,1154 @@ function SessionsView({
   )
 }
 
-function CleanupView({
-  cleanup,
-  onMoveToTrash,
-}: {
-  cleanup: CleanupCandidate[]
-  onMoveToTrash: (candidateIds: string[]) => Promise<void>
-}) {
-  const [selected, setSelected] = useState<string[]>(cleanup.slice(0, 3).map((item) => item.id))
-  const selectedBytes = cleanup
-    .filter((item) => selected.includes(item.id))
-    .reduce((total, item) => total + item.sizeBytes, 0)
-  const selectedItems = cleanup.filter((item) => selected.includes(item.id))
-  const accentByKind: Record<CleanupCandidate['kind'], string> = {
-    'old-session': 'text-emerald-300 bg-emerald-400/13 ring-emerald-400/28',
-    'backed-up-session': 'text-emerald-300 bg-emerald-400/13 ring-emerald-400/28',
-    'large-log': 'text-amber-300 bg-amber-400/13 ring-amber-400/28',
-    'duplicate-backup': 'text-blue-300 bg-blue-400/13 ring-blue-400/28',
-    'temp-file': 'text-sky-300 bg-sky-400/13 ring-sky-400/28',
-    'orphan-session': 'text-violet-300 bg-violet-400/13 ring-violet-400/28',
-    'invalid-cache': 'text-red-300 bg-red-400/13 ring-red-400/28',
-  }
-  const selectedColor = (index: number) =>
-    ['bg-emerald-300', 'bg-amber-300', 'bg-blue-300', 'bg-violet-300', 'bg-sky-300'][index % 5]
+type CleanupStage = 'idle' | 'scanning' | 'complete' | 'review'
+type CleanupScanStage = Exclude<CleanupStage, 'review'>
+type CleanupFilter = 'all' | 'high' | 'medium' | 'low' | 'recoverable'
+type CleanupSort = 'size' | 'risk' | 'agent'
+type CleanupSourceProgress = {
+  source: AgentSource
+  scanned: number
+  total: number
+  status: 'Waiting' | 'Scanning' | 'Complete'
+}
+type CleanupCategoryKey = 'large' | 'inactive' | 'test'
+type CleanupCategorySummary = {
+  key: CleanupCategoryKey
+  title: string
+  description: string
+  bytes: number
+  count: number
+  action: 'Recommended' | 'Review' | 'Safe'
+  icon: typeof Activity
+  accent: string
+}
 
-  return (
-    <div className="grid grid-cols-[minmax(0,1fr)_334px] gap-6 max-[1120px]:grid-cols-1">
+type CleanupViewProps = {
+  cleanup: CleanupCandidate[]
+  agents: DashboardSnapshot['agents']
+  onScanCleanup: () => Promise<CleanupCandidate[]>
+  onMoveToTrash: (candidateIds: string[]) => Promise<void>
+}
+
+const cleanupSourceWeights: Record<AgentSource, { start: number; end: number }> = {
+  codex: { start: 0, end: 24 },
+  claude: { start: 12, end: 48 },
+  cursor: { start: 34, end: 72 },
+  gemini: { start: 52, end: 88 },
+  opencode: { start: 72, end: 100 },
+}
+
+const cleanupRiskRank: Record<CleanupCandidate['risk'], number> = {
+  high: 3,
+  medium: 2,
+  low: 1,
+}
+
+const cleanupStageTransition = {
+  type: 'spring',
+  stiffness: 260,
+  damping: 30,
+  mass: 0.86,
+} as const
+
+const cleanupStageVariants = {
+  initial: { opacity: 0, y: 22, scale: 0.985, filter: 'blur(8px)' },
+  animate: { opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' },
+  exit: { opacity: 0, y: -18, scale: 0.988, filter: 'blur(6px)' },
+} as const
+
+const cleanupBodyTransition = {
+  duration: 0.42,
+  ease: [0.22, 1, 0.36, 1],
+} as const
+
+const cleanupBodyVariants = {
+  initial: { opacity: 0, y: 18, filter: 'blur(5px)' },
+  animate: { opacity: 1, y: 0, filter: 'blur(0px)' },
+  exit: { opacity: 0, y: -14, filter: 'blur(4px)' },
+} as const
+
+const cleanupKindMeta: Record<
+  CleanupCandidate['kind'],
+  { category: CleanupCategoryKey; label: string; icon: typeof Activity; accent: string }
+> = {
+  'old-session': {
+    category: 'inactive',
+    label: 'old session',
+    icon: CalendarDays,
+    accent: 'text-sky-300 bg-sky-400/12 ring-sky-400/22',
+  },
+  'backed-up-session': {
+    category: 'inactive',
+    label: 'old session',
+    icon: CalendarDays,
+    accent: 'text-emerald-300 bg-emerald-400/12 ring-emerald-400/22',
+  },
+  'large-log': {
+    category: 'large',
+    label: 'large chat',
+    icon: MessageSquare,
+    accent: 'text-emerald-300 bg-emerald-400/13 ring-emerald-400/24',
+  },
+  'duplicate-backup': {
+    category: 'test',
+    label: 'recoverable',
+    icon: Archive,
+    accent: 'text-blue-300 bg-blue-400/12 ring-blue-400/24',
+  },
+  'temp-file': {
+    category: 'test',
+    label: 'test chat',
+    icon: FlaskConical,
+    accent: 'text-violet-300 bg-violet-400/13 ring-violet-400/24',
+  },
+  'orphan-session': {
+    category: 'inactive',
+    label: 'old session',
+    icon: Clock,
+    accent: 'text-amber-300 bg-amber-400/13 ring-amber-400/24',
+  },
+  'invalid-cache': {
+    category: 'test',
+    label: 'test chat',
+    icon: FlaskConical,
+    accent: 'text-red-300 bg-red-400/12 ring-red-400/24',
+  },
+}
+
+function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupViewProps) {
+  const [stage, setStage] = useState<CleanupStage>('idle')
+  const [progress, setProgress] = useState(0)
+  const [visibleCleanup, setVisibleCleanup] = useState<CleanupCandidate[]>(cleanup)
+  const [selected, setSelected] = useState<string[]>([])
+  const [filter, setFilter] = useState<CleanupFilter>('all')
+  const [sort, setSort] = useState<CleanupSort>('size')
+  const [cleaning, setCleaning] = useState(false)
+  const [cleaningIds, setCleaningIds] = useState<string[]>([])
+  const [cleaned, setCleaned] = useState(false)
+  const [backgroundMode, setBackgroundMode] = useState(false)
+  const scanRunRef = useRef(0)
+
+  const sourceTotals = useMemo(
+    () =>
+      agentSources.reduce(
+        (acc, source) => {
+          const agent = agents.find((item) => item.source === source)
+          const sourceCandidates = visibleCleanup.filter((item) => item.source === source).length
+          acc[source] = Math.max(agent?.sessionCount ?? 0, sourceCandidates, 1)
+          return acc
+        },
+        {} as Record<AgentSource, number>,
+      ),
+    [agents, visibleCleanup],
+  )
+
+  const sourceProgress = useMemo<CleanupSourceProgress[]>(
+    () =>
+      agentSources.map((source) => {
+        const weight = cleanupSourceWeights[source]
+        const total = sourceTotals[source]
+        const localProgress = Math.min(
+          1,
+          Math.max(0, (progress - weight.start) / (weight.end - weight.start)),
+        )
+        const scanned = Math.min(total, Math.floor(total * localProgress))
+        const status =
+          progress >= weight.end ? 'Complete' : progress > weight.start ? 'Scanning' : 'Waiting'
+        return { source, scanned, total, status }
+      }),
+    [progress, sourceTotals],
+  )
+
+  const categories = useMemo<CleanupCategorySummary[]>(() => {
+    const seed: Record<CleanupCategoryKey, CleanupCategorySummary> = {
+      large: {
+        key: 'large',
+        title: 'Large chats',
+        description: 'Sessions with unusually large context or logs',
+        bytes: 0,
+        count: 0,
+        action: 'Recommended',
+        icon: MessageSquare,
+        accent: 'text-emerald-300 bg-emerald-400/13 ring-emerald-400/24',
+      },
+      inactive: {
+        key: 'inactive',
+        title: '90 days inactive',
+        description: 'Sessions not opened in over 90 days',
+        bytes: 0,
+        count: 0,
+        action: 'Review',
+        icon: CalendarDays,
+        accent: 'text-blue-300 bg-blue-400/13 ring-blue-400/24',
+      },
+      test: {
+        key: 'test',
+        title: 'Test chats',
+        description: 'Short 1-2 message sessions and throwaway prompts',
+        bytes: 0,
+        count: 0,
+        action: 'Safe',
+        icon: FlaskConical,
+        accent: 'text-violet-300 bg-violet-400/13 ring-violet-400/24',
+      },
+    }
+
+    for (const candidate of visibleCleanup) {
+      const category = cleanupKindMeta[candidate.kind].category
+      seed[category].bytes += candidate.sizeBytes
+      seed[category].count += 1
+    }
+
+    return [seed.large, seed.inactive, seed.test]
+  }, [visibleCleanup])
+
+  const totalBytes = useMemo(
+    () => visibleCleanup.reduce((total, item) => total + item.sizeBytes, 0),
+    [visibleCleanup],
+  )
+
+  const filteredCleanup = useMemo(() => {
+    const result = visibleCleanup.filter((candidate) => {
+      if (filter === 'all') return true
+      if (filter === 'recoverable') return candidate.recoverable
+      return candidate.risk === filter
+    })
+
+    return [...result].sort((a, b) => {
+      if (sort === 'risk') return cleanupRiskRank[b.risk] - cleanupRiskRank[a.risk]
+      if (sort === 'agent') {
+        return agentLabel[a.source ?? 'codex'].localeCompare(agentLabel[b.source ?? 'codex'])
+      }
+      return b.sizeBytes - a.sizeBytes
+    })
+  }, [filter, sort, visibleCleanup])
+
+  const selectedBytes = useMemo(
+    () =>
+      visibleCleanup
+        .filter((item) => selected.includes(item.id))
+        .reduce((total, item) => total + item.sizeBytes, 0),
+    [selected, visibleCleanup],
+  )
+  const selectedItems = useMemo(
+    () => visibleCleanup.filter((item) => selected.includes(item.id)),
+    [selected, visibleCleanup],
+  )
+  const selectedAllVisible =
+    filteredCleanup.length > 0 && filteredCleanup.every((item) => selected.includes(item.id))
+  const firstSelected = selectedItems[0]
+
+  const beginScan = async () => {
+    if (stage === 'scanning') return
+
+    const runId = scanRunRef.current + 1
+    scanRunRef.current = runId
+    setStage('scanning')
+    setProgress(0)
+    setBackgroundMode(false)
+    setCleaned(false)
+    setCleaningIds([])
+    setSelected([])
+
+    const startedAt = Date.now()
+    const minimumVisualScanMs = 4200
+    let scanResult: CleanupCandidate[] | undefined
+    let scanError: unknown
+    let scanSettled = false
+    const scanPromise = onScanCleanup()
+      .then((items) => {
+        scanResult = items
+      })
+      .catch((error: unknown) => {
+        scanError = error
+      })
+      .finally(() => {
+        scanSettled = true
+      })
+
+    await new Promise<void>((resolve) => {
+      const timer = window.setInterval(() => {
+        if (scanRunRef.current !== runId) {
+          window.clearInterval(timer)
+          resolve()
+          return
+        }
+
+        const elapsed = Date.now() - startedAt
+        const targetProgress = Math.min(94, Math.floor((elapsed / minimumVisualScanMs) * 94))
+        setProgress((current) => {
+          return Math.max(current, targetProgress)
+        })
+
+        if (elapsed >= minimumVisualScanMs && scanSettled) {
+          void scanPromise.then(() => {
+            window.clearInterval(timer)
+            resolve()
+          })
+        }
+      }, 120)
+    })
+
+    if (scanRunRef.current !== runId) return
+
+    if (scanError) {
+      console.error(scanError)
+      setStage('idle')
+      setProgress(0)
+      return
+    }
+
+    setVisibleCleanup(scanResult ?? [])
+    setProgress(100)
+    window.setTimeout(() => {
+      if (scanRunRef.current === runId) setStage('complete')
+    }, 680)
+  }
+
+  const cancelScan = () => {
+    scanRunRef.current += 1
+    setStage('idle')
+    setProgress(0)
+    setBackgroundMode(false)
+  }
+
+  const toggleSelected = (id: string) => {
+    setSelected((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    )
+  }
+
+  const toggleVisibleSelected = () => {
+    const visibleIds = filteredCleanup.map((item) => item.id)
+    setSelected((current) => {
+      if (selectedAllVisible) return current.filter((id) => !visibleIds.includes(id))
+      return Array.from(new Set([...current, ...visibleIds]))
+    })
+  }
+
+  const moveSelectedToTrash = async () => {
+    if (selected.length === 0 || cleaning) return
+    setCleaning(true)
+    setCleaned(false)
+    setCleaningIds(selected)
+    const removing = selected
+    try {
+      await onMoveToTrash(removing)
+      window.setTimeout(() => {
+        setVisibleCleanup((current) => current.filter((item) => !removing.includes(item.id)))
+        setSelected([])
+        setCleaningIds([])
+        setCleaning(false)
+        setCleaned(true)
+        window.setTimeout(() => setCleaned(false), 1500)
+      }, 520)
+    } catch (error) {
+      console.error(error)
+      setCleaningIds([])
+      setCleaning(false)
+    }
+  }
+
+  const reviewPanel = (
+    <div className="cleanup-review-grid grid grid-cols-[minmax(0,1fr)_332px] gap-5 max-[1180px]:grid-cols-1">
       <Card className="glass-panel overflow-hidden rounded-lg py-0">
-        <CardHeader className="flex-row items-center justify-between gap-3 px-8 pb-0 pt-8">
-          <div>
+        <CardHeader className="flex-row items-center justify-between gap-4 px-7 pb-0 pt-6">
+          <div className="min-w-0">
             <CardTitle className="text-[20px] font-semibold text-white">
-              Cleanup Suggestions
+              Cleanup candidates
             </CardTitle>
-            <p className="mt-3 text-[15px] text-white/60">
-              Review each suggestion. Items are backed up first and can be recovered.
+            <p className="mt-2 text-sm text-white/52">
+              Review local sessions before moving anything to app Trash.
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-2">
             <Button
               variant="outline"
               size="lg"
-              className="h-9 rounded-lg border-white/12 bg-white/5 px-3 text-[15px] font-normal text-white/82 hover:bg-white/10"
+              onClick={toggleVisibleSelected}
+              className="h-9 rounded-lg border-white/12 bg-white/5 px-3 text-[13px] font-normal text-white/76 hover:bg-white/10"
             >
-              <ListFilter className="size-4" />
-              Filter
+              <CheckCircle2 className="size-4" />
+              {selectedAllVisible ? 'Deselect visible' : 'Select visible'}
             </Button>
-            <select className="h-9 rounded-lg border border-white/12 bg-white/5 px-3 text-[15px] text-white/82 outline-none">
-              <option>Sort: Size</option>
-              <option>Sort: Risk</option>
-              <option>Sort: Agent</option>
-            </select>
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={() => void beginScan()}
+              className="h-9 rounded-lg border-white/12 bg-white/5 px-3 text-[13px] font-normal text-white/76 hover:bg-white/10"
+            >
+              <RefreshCcw className="size-4" />
+              Scan again
+            </Button>
           </div>
         </CardHeader>
-        <CardContent className="px-6 pb-0 pt-7">
-          <div className="space-y-3">
-            {cleanup.map((candidate) => {
-              const checked = selected.includes(candidate.id)
-              return (
-                <div
-                  key={candidate.id}
-                  className={`cleanup-row group grid min-h-[145px] grid-cols-[28px_58px_minmax(0,1fr)_104px] items-center gap-4 rounded-lg border px-4 py-5 text-left transition max-[1280px]:grid-cols-[24px_58px_minmax(0,1fr)] max-[1280px]:items-start ${
-                    checked
-                      ? 'border-white/12 bg-white/[0.055]'
-                      : 'border-white/9 bg-white/[0.03] hover:bg-white/[0.05]'
+        <CardContent className="px-6 pb-6 pt-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/8 bg-white/[0.035] p-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {(
+                [
+                  ['all', 'All'],
+                  ['high', 'High'],
+                  ['medium', 'Medium'],
+                  ['low', 'Low'],
+                  ['recoverable', 'Recoverable'],
+                ] satisfies Array<[CleanupFilter, string]>
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setFilter(value)}
+                  className={`h-8 rounded-md px-3 text-xs transition ${
+                    filter === value
+                      ? 'bg-emerald-400/16 text-emerald-200 ring-1 ring-emerald-300/24'
+                      : 'text-white/52 hover:bg-white/8 hover:text-white/78'
                   }`}
                 >
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSelected((current) =>
-                        checked
-                          ? current.filter((id) => id !== candidate.id)
-                          : [...current, candidate.id],
-                      )
-                    }
-                    aria-label={`${checked ? 'Deselect' : 'Select'} ${candidate.title}`}
-                    className={`grid size-6 place-items-center rounded-md border transition ${
-                      checked
-                        ? 'border-white/22 bg-white/10 text-white'
-                        : 'border-white/16 bg-black/12 text-transparent group-hover:text-white/45'
-                    }`}
-                  >
-                    <CheckCircle2 className="size-4" />
-                  </button>
-                  <div
-                    className={`grid size-[58px] place-items-center rounded-lg ring-1 shadow-[inset_0_1px_0_rgb(255_255_255_/_10%)] ${accentByKind[candidate.kind]}`}
-                  >
-                    {candidate.kind === 'duplicate-backup' ? (
-                      <Archive className="size-7" />
-                    ) : checked ? (
-                      <CheckCircle2 className="size-7" />
-                    ) : (
-                      <Trash2 className="size-7" />
-                    )}
-                  </div>
-                  <div className="min-w-0 max-[1280px]:pr-2">
-                    <div className="flex min-w-0 flex-wrap items-center gap-2.5">
-                      <div className="min-w-0 truncate text-[18px] font-semibold text-white">
-                        {candidate.title}
-                      </div>
-                      <Badge
-                        variant="outline"
-                        className={`h-6 rounded-full px-3 text-xs capitalize ring-1 ${riskAccent[candidate.risk]}`}
-                      >
-                        {candidate.risk} risk
-                      </Badge>
-                      {candidate.backedUp && (
-                        <Badge className="h-6 rounded-full bg-emerald-400/10 px-3 text-xs text-emerald-300 ring-1 ring-emerald-400/20">
-                          Backed up
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="mt-2 text-[15px] leading-6 text-white/58">{candidate.reason}</p>
-                    <div className="mt-4 flex flex-wrap gap-3 text-[13px] text-white/42">
-                      <span>
-                        {candidate.paths.length} path{candidate.paths.length === 1 ? '' : 's'}
-                      </span>
-                      <span>·</span>
-                      <span>{candidate.recoverable ? 'Recoverable from Trash' : 'Permanent'}</span>
-                      {candidate.source && (
-                        <>
-                          <span>·</span>
-                          <span>{agentLabel[candidate.source]}</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  <div className="text-right max-[1280px]:col-start-3 max-[1280px]:text-left">
-                    <div
-                      className={`text-[22px] font-semibold ${candidate.kind === 'duplicate-backup' ? 'text-blue-300' : candidate.risk === 'medium' ? 'text-amber-300' : 'text-emerald-300'}`}
-                    >
-                      {formatBytes(candidate.sizeBytes)}
-                    </div>
-                    <div className="mt-2 text-[13px] text-white/48">
-                      {candidate.kind.replaceAll('-', ' ')}
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
+                  {label}
+                </button>
+              ))}
+            </div>
+            <label className="flex items-center gap-2 text-xs text-white/44">
+              <ListFilter className="size-4" />
+              <select
+                value={sort}
+                onChange={(event) => setSort(event.target.value as CleanupSort)}
+                className="h-8 rounded-md border border-white/10 bg-black/18 px-2 text-xs text-white/76 outline-none"
+              >
+                <option value="size">Sort: Size</option>
+                <option value="risk">Sort: Risk</option>
+                <option value="agent">Sort: Agent</option>
+              </select>
+            </label>
           </div>
-          <div className="mt-5 flex items-center justify-between border-t border-white/8 px-1 py-7">
-            <div className="flex items-start gap-3">
-              <ShieldCheck className="mt-1 size-5 text-emerald-300" />
-              <div>
-                <div className="text-[16px] font-medium text-white">
-                  {selected.length} suggestions selected
+
+          <div className="mt-4 space-y-3">
+            {filteredCleanup.length === 0 ? (
+              <div className="grid min-h-[260px] place-items-center rounded-lg border border-white/8 bg-white/[0.03] text-center">
+                <div>
+                  <CheckCircle2 className="mx-auto size-10 text-emerald-300" />
+                  <div className="mt-3 text-sm font-medium text-white">No candidates here</div>
+                  <div className="mt-1 text-xs text-white/42">
+                    Try another filter or scan again.
+                  </div>
                 </div>
-                <div className="mt-1 text-sm text-white/52">
-                  {formatBytes(selectedBytes)} reclaimable
+              </div>
+            ) : (
+              filteredCleanup.map((candidate, index) => (
+                <CleanupCandidateRow
+                  key={candidate.id}
+                  candidate={candidate}
+                  checked={selected.includes(candidate.id)}
+                  cleaning={cleaningIds.includes(candidate.id)}
+                  index={index}
+                  onToggle={() => toggleSelected(candidate.id)}
+                />
+              ))
+            )}
+          </div>
+
+          <div className="mt-5 flex items-center justify-between border-t border-white/8 px-1 pt-5">
+            <div className="flex items-start gap-3">
+              <ShieldCheck className="mt-0.5 size-5 text-emerald-300" />
+              <div>
+                <div className="text-sm font-medium text-white">
+                  {selected.length} candidate{selected.length === 1 ? '' : 's'} selected
+                </div>
+                <div className="mt-1 text-xs text-white/45">
+                  {formatBytes(selectedBytes)} recoverable after backup and Trash move.
                 </div>
               </div>
             </div>
             <Button
               variant="outline"
               size="lg"
-              onClick={() => setSelected([])}
-              disabled={selected.length === 0}
-              className="h-9 rounded-lg border-white/12 bg-white/5 px-4 text-[15px] font-normal text-white/72 hover:bg-white/10 hover:text-white"
+              onClick={() => setStage('complete')}
+              className="h-9 rounded-lg border-white/12 bg-white/5 px-4 text-[13px] font-normal text-white/72 hover:bg-white/10 hover:text-white"
             >
-              Deselect all
+              Summary
             </Button>
           </div>
         </CardContent>
       </Card>
 
-      <Card className="glass-panel sticky top-6 h-fit rounded-lg py-0">
-        <CardHeader className="flex-row items-center justify-between px-7 pb-0 pt-8">
-          <CardTitle className="text-[20px] font-semibold text-white">Clean Queue</CardTitle>
-          <Pin className="size-5 text-white/82" />
-        </CardHeader>
-        <CardContent className="px-7 pb-6 pt-7">
-          <div>
-            <div className="flex items-end gap-2 text-white">
-              <span className="text-[46px] font-semibold leading-none">
-                {formatBytes(selectedBytes).split(' ')[0]}
-              </span>
-              <span className="pb-1 text-[25px] font-semibold">
-                {formatBytes(selectedBytes).split(' ')[1] ?? ''}
-              </span>
-            </div>
-            <div className="mt-3 text-[15px] text-white/58">{selected.length} items selected</div>
-          </div>
-          <Separator className="my-7 bg-white/10" />
-          <div className="space-y-5 text-[15px] text-white/62">
-            <div className="flex items-center gap-3">
-              <ShieldCheck className="size-5 text-emerald-300" />
-              Backed up before removal
-            </div>
-            <div className="flex items-center gap-3">
-              <Trash2 className="size-5 text-blue-300" />
-              Moved to app Trash
-            </div>
-            <div className="flex items-center gap-3">
-              <Clock className="size-5 text-amber-300" />
-              Trash retention is configurable
-            </div>
-            <div className="flex items-center gap-3">
-              <RefreshCcw className="size-5 text-violet-300" />
-              Easily recoverable
-            </div>
-          </div>
-          <Separator className="my-7 bg-white/10" />
-          <div>
-            <div className="text-[15px] font-medium text-white">Selected items</div>
-            <div className="mt-4 space-y-3">
-              {selectedItems.map((item, index) => (
-                <div key={item.id} className="flex items-center gap-2 text-[14px]">
-                  <span className={`size-2.5 rounded-full ${selectedColor(index)}`} />
-                  <span className="min-w-0 flex-1 truncate text-white/58">
-                    {item.kind.replaceAll('-', ' ')}
-                  </span>
-                  <span className="text-white/58">{formatBytes(item.sizeBytes)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          <Separator className="my-7 bg-white/10" />
-          <div className="flex items-center justify-between text-[16px]">
-            <span className="text-white">Total reclaimable</span>
-            <span className="font-semibold text-white">{formatBytes(selectedBytes)}</span>
-          </div>
-          <Button
-            onClick={() => void onMoveToTrash(selected)}
-            disabled={selected.length === 0}
-            className="mt-6 h-11 w-full rounded-lg bg-blue-500 text-[16px] font-semibold text-white shadow-[0_10px_24px_rgb(37_99_235_/_28%)] hover:bg-blue-400"
+      <CleanupQueuePanel
+        selectedItems={selectedItems}
+        selectedBytes={selectedBytes}
+        firstSelected={firstSelected}
+        cleaning={cleaning}
+        cleaned={cleaned}
+        onMoveToTrash={() => void moveSelectedToTrash()}
+        onClear={() => setSelected([])}
+      />
+    </div>
+  )
+
+  if (stage === 'review') {
+    return (
+      <motion.div
+        key={stage}
+        variants={cleanupStageVariants}
+        initial="initial"
+        animate="animate"
+        exit="exit"
+        transition={cleanupStageTransition}
+      >
+        {reviewPanel}
+      </motion.div>
+    )
+  }
+
+  return (
+    <CleanupScanShell
+      stage={stage}
+      progress={progress}
+      sourceProgress={sourceProgress}
+      backgroundMode={backgroundMode}
+      totalBytes={totalBytes}
+      categories={categories}
+      onStart={() => void beginScan()}
+      onCancel={cancelScan}
+      onReview={() => setStage('review')}
+      onScanAgain={() => void beginScan()}
+      onRunInBackground={() => setBackgroundMode(true)}
+    />
+  )
+}
+
+function CleanupScanShell({
+  stage,
+  progress,
+  sourceProgress,
+  backgroundMode,
+  totalBytes,
+  categories,
+  onStart,
+  onCancel,
+  onReview,
+  onScanAgain,
+  onRunInBackground,
+}: {
+  stage: CleanupScanStage
+  progress: number
+  sourceProgress: CleanupSourceProgress[]
+  backgroundMode: boolean
+  totalBytes: number
+  categories: CleanupCategorySummary[]
+  onStart: () => void
+  onCancel: () => void
+  onReview: () => void
+  onScanAgain: () => void
+  onRunInBackground: () => void
+}) {
+  const orbProps =
+    stage === 'idle'
+      ? {
+          mode: 'idle' as const,
+          progress: 0,
+          icon: <Search className="size-16" />,
+          title: 'Start Scan',
+          onClick: onStart,
+        }
+      : stage === 'scanning'
+        ? {
+            mode: 'scanning' as const,
+            progress,
+            title: 'Scanning...',
+          }
+        : {
+            mode: 'complete' as const,
+            progress: 100,
+            icon: <CheckCircle2 className="size-12" />,
+            title: formatBytes(totalBytes),
+            detail: totalBytes > 0 ? 'Ready to clean' : 'Nothing to clean',
+          }
+
+  return (
+    <div className="cleanup-stage cleanup-stage-centered min-h-[calc(100vh-7.5rem)]">
+      {backgroundMode && (
+        <div className="cleanup-floating-progress">
+          <span>{Math.round(progress)}%</span>
+          <small>Scanning in background</small>
+        </div>
+      )}
+      <div className={`cleanup-orb-slot cleanup-orb-slot-${stage}`}>
+        <CleanupOrbButton {...orbProps} />
+      </div>
+      <motion.div
+        className="cleanup-stage-body"
+        animate={{ y: stage === 'idle' ? 0 : -72 }}
+        transition={cleanupStageTransition}
+      >
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={stage}
+            variants={cleanupBodyVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            transition={cleanupBodyTransition}
           >
-            <Trash2 className="size-5" />
-            Move to Trash
-          </Button>
-          <p className="mt-3 text-center text-[13px] text-white/45">
-            Files will be moved to app Trash
-          </p>
+            {stage === 'idle' ? (
+              <CleanupIdleBody />
+            ) : stage === 'scanning' ? (
+              <CleanupScanningBody
+                progress={progress}
+                sourceProgress={sourceProgress}
+                onRunInBackground={onRunInBackground}
+                onCancel={onCancel}
+              />
+            ) : (
+              <CleanupCompleteBody
+                totalBytes={totalBytes}
+                categories={categories}
+                onReview={onReview}
+                onScanAgain={onScanAgain}
+                onRunInBackground={onRunInBackground}
+              />
+            )}
+          </motion.div>
+        </AnimatePresence>
+      </motion.div>
+    </div>
+  )
+}
+
+function CleanupIdleBody() {
+  return (
+    <>
+      <div className="mt-14 text-center text-[15px] text-white/58">
+        Scan large chats, inactive chats, and test chats.
+      </div>
+      <div className="mt-7 flex flex-wrap justify-center gap-3">
+        <CleanupPill icon={<MessageSquare className="size-4" />} label="Large chats" />
+        <CleanupPill icon={<Clock className="size-4" />} label="90 days inactive" />
+        <CleanupPill icon={<FlaskConical className="size-4" />} label="Test chats" />
+      </div>
+      <CleanupSafetyNote className="mt-28" text="All session data is analyzed locally." />
+    </>
+  )
+}
+
+function CleanupScanningBody({
+  progress,
+  sourceProgress,
+  onRunInBackground,
+  onCancel,
+}: {
+  progress: number
+  sourceProgress: CleanupSourceProgress[]
+  onRunInBackground: () => void
+  onCancel: () => void
+}) {
+  return (
+    <>
+      <div className="mt-6 text-center text-[15px] text-white/58">
+        Analyzing session size, inactivity, and test chats
+      </div>
+      <Card className="cleanup-scan-card mt-7 w-full max-w-[760px] rounded-lg py-0">
+        <CardContent className="px-5 py-5">
+          <div className="space-y-4">
+            {sourceProgress.map((item) => (
+              <CleanupSourceRow key={item.source} item={item} />
+            ))}
+          </div>
         </CardContent>
       </Card>
+      <CleanupSafetyNote className="mt-8" text="All session data is analyzed locally." />
+      <div className="mt-6 flex items-center justify-center gap-3">
+        <Button
+          variant="outline"
+          size="lg"
+          onClick={onRunInBackground}
+          className="cleanup-action-button h-11 rounded-lg border-white/14 bg-white/5 px-6 text-[15px] text-white/84 hover:bg-white/10"
+        >
+          <Archive className="size-4" />
+          Run in Background
+        </Button>
+        <Button
+          variant="outline"
+          size="lg"
+          onClick={onCancel}
+          className="cleanup-action-button h-11 rounded-lg border-white/14 bg-white/5 px-7 text-[15px] text-white/84 hover:bg-white/10"
+        >
+          Cancel
+        </Button>
+      </div>
+      <p className="mt-5 text-center text-xs text-white/36">
+        You can continue using the app while scanning. {Math.round(progress)}% complete.
+      </p>
+    </>
+  )
+}
+
+function CleanupCompleteBody({
+  totalBytes,
+  categories,
+  onReview,
+  onScanAgain,
+  onRunInBackground,
+}: {
+  totalBytes: number
+  categories: CleanupCategorySummary[]
+  onReview: () => void
+  onScanAgain: () => void
+  onRunInBackground: () => void
+}) {
+  return (
+    <>
+      <div className="mt-6 text-center text-[15px] text-white/58">
+        Large chats, inactive chats, and test chats were found locally.
+      </div>
+      <Card className="cleanup-result-card mt-6 w-full max-w-[744px] overflow-hidden rounded-lg py-0">
+        <CardContent className="px-6 py-0">
+          {categories.map((category) => (
+            <CleanupCategoryRow key={category.key} category={category} />
+          ))}
+        </CardContent>
+      </Card>
+      <div className="mt-7 flex items-center justify-center gap-4">
+        <Button
+          onClick={onReview}
+          disabled={totalBytes === 0}
+          className="cleanup-primary-action h-12 min-w-[236px] rounded-lg bg-emerald-400 text-[15px] font-semibold text-emerald-950 shadow-[0_18px_38px_rgb(52_211_153_/_26%)] hover:bg-emerald-300"
+        >
+          <Sparkles className="size-4" />
+          Review Cleanup
+        </Button>
+        <Button
+          variant="outline"
+          size="lg"
+          onClick={onScanAgain}
+          className="cleanup-action-button h-12 min-w-[212px] rounded-lg border-white/14 bg-white/5 text-[15px] text-white/84 hover:bg-white/10"
+        >
+          <RefreshCcw className="size-4" />
+          Scan Again
+        </Button>
+      </div>
+      <button
+        type="button"
+        onClick={onRunInBackground}
+        className="mt-6 flex items-center gap-2 text-sm text-white/48 transition hover:text-white/72"
+      >
+        <Archive className="size-4" />
+        Run in Background
+      </button>
+      <CleanupSafetyNote className="mt-9" text="All session data was analyzed locally." />
+    </>
+  )
+}
+
+function CleanupOrbButton({
+  mode,
+  progress,
+  icon,
+  title,
+  detail,
+  onClick,
+}: {
+  mode: 'idle' | 'scanning' | 'complete'
+  progress: number
+  icon?: ReactNode
+  title: string
+  detail?: string
+  onClick?: () => void
+}) {
+  const size = mode === 'idle' || mode === 'complete' ? 320 : 250
+  const orbY = mode === 'idle' ? 0 : mode === 'scanning' ? -86 : -92
+  const stroke = mode === 'scanning' ? 8 : 7
+  const radius = size / 2 - stroke * 2
+  const circumference = 2 * Math.PI * radius
+  const dashOffset = circumference - (progress / 100) * circumference
+  const displayParts = title.split(' ')
+
+  const content =
+    mode === 'scanning' ? (
+      <>
+        <span className="cleanup-orb-percent">{Math.round(progress)}%</span>
+        <span className="cleanup-orb-status">{title}</span>
+      </>
+    ) : mode === 'complete' ? (
+      <>
+        <span className="cleanup-orb-check">{icon}</span>
+        <span className="cleanup-orb-size">
+          <span>{displayParts[0]}</span>
+          <small>{displayParts.slice(1).join(' ')}</small>
+        </span>
+        {detail && <span className="cleanup-orb-ready">{detail}</span>}
+      </>
+    ) : (
+      <>
+        <span className="cleanup-orb-icon">{icon}</span>
+        <span className="cleanup-orb-label">{title}</span>
+      </>
+    )
+
+  return (
+    <motion.button
+      type="button"
+      onClick={onClick}
+      disabled={!onClick}
+      className={`cleanup-orb cleanup-orb-${mode}`}
+      aria-label={onClick ? title : undefined}
+      layout
+      initial={false}
+      animate={{ width: size, height: size, y: orbY, opacity: 1, scale: 1 }}
+      whileHover={onClick ? { scale: 1.012 } : undefined}
+      whileTap={onClick ? { scale: 0.985 } : undefined}
+      transition={cleanupStageTransition}
+    >
+      <span className="cleanup-orb-particles" />
+      <svg className="cleanup-orb-ring" width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle
+          className="cleanup-orb-track"
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          strokeWidth={stroke}
+        />
+        <circle
+          className="cleanup-orb-progress"
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          strokeWidth={stroke}
+          strokeDasharray={circumference}
+          strokeDashoffset={mode === 'idle' ? 0 : dashOffset}
+        />
+      </svg>
+      <AnimatePresence mode="wait">
+        <motion.span
+          key={mode}
+          className={`cleanup-orb-content cleanup-orb-content-${mode}`}
+          initial={{ opacity: 0, y: 10, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: -8, scale: 0.98 }}
+          transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+        >
+          {content}
+        </motion.span>
+      </AnimatePresence>
+    </motion.button>
+  )
+}
+
+function CleanupPill({ icon, label }: { icon: ReactNode; label: string }) {
+  return (
+    <div className="flex h-12 min-w-[170px] items-center justify-center gap-3 rounded-lg border border-white/10 bg-white/[0.035] px-5 text-[14px] text-white/72 shadow-[inset_0_1px_0_rgb(255_255_255_/_6%)]">
+      <span className="text-emerald-300">{icon}</span>
+      {label}
     </div>
+  )
+}
+
+function CleanupSafetyNote({ className, text }: { className?: string; text: string }) {
+  return (
+    <div
+      className={`flex items-center justify-center gap-3 text-sm text-white/43 ${className ?? ''}`}
+    >
+      <ShieldCheck className="size-4 text-white/38" />
+      {text}
+    </div>
+  )
+}
+
+function CleanupSourceRow({ item }: { item: CleanupSourceProgress }) {
+  const percent =
+    item.total === 0 ? 0 : Math.min(100, Math.round((item.scanned / item.total) * 100))
+  const StatusIcon =
+    item.status === 'Complete' ? CheckCircle2 : item.status === 'Scanning' ? Loader2 : Clock
+
+  return (
+    <div className="grid grid-cols-[180px_minmax(0,1fr)_90px_100px] items-center gap-4 max-[980px]:grid-cols-[150px_minmax(0,1fr)_82px_96px]">
+      <div className="flex min-w-0 items-center gap-3">
+        <AgentGlyph source={item.source} />
+        <span className="truncate text-sm font-medium text-white/82">
+          {agentLabel[item.source]}
+        </span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+        <div
+          className="h-full rounded-full bg-emerald-300 transition-[width] duration-500 ease-out shadow-[0_0_14px_rgb(52_211_153_/_55%)]"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+      <div className="text-right text-xs tabular-nums text-white/58">
+        {item.scanned} / {item.total}
+      </div>
+      <div className="flex items-center gap-2 text-xs text-white/50">
+        <StatusIcon
+          className={`size-4 ${
+            item.status === 'Complete'
+              ? 'text-emerald-300'
+              : item.status === 'Scanning'
+                ? 'animate-spin text-emerald-300'
+                : 'text-white/38'
+          }`}
+        />
+        {item.status}
+      </div>
+    </div>
+  )
+}
+
+function CleanupCategoryRow({ category }: { category: CleanupCategorySummary }) {
+  const Icon = category.icon
+  const ActionIcon =
+    category.action === 'Recommended' ? Sparkles : category.action === 'Review' ? Eye : ShieldCheck
+  const actionClass =
+    category.action === 'Recommended'
+      ? 'border-emerald-300/32 bg-emerald-400/10 text-emerald-300'
+      : category.action === 'Review'
+        ? 'border-blue-300/28 bg-blue-400/10 text-blue-300'
+        : 'border-white/14 bg-white/5 text-white/58'
+
+  return (
+    <div className="cleanup-category-row grid grid-cols-[64px_minmax(0,1fr)_142px_92px] items-center gap-3 border-b border-white/8 py-5 last:border-b-0">
+      <div className={`grid size-12 place-items-center rounded-lg ring-1 ${category.accent}`}>
+        <Icon className="size-6" />
+      </div>
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 text-[15px] font-semibold text-white">
+          {category.title}
+          {category.count > 0 && (
+            <span className="rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-medium text-white/48">
+              {category.count}
+            </span>
+          )}
+        </div>
+        <p className="mt-1 text-[13px] text-white/52">{category.description}</p>
+      </div>
+      <Badge
+        variant="outline"
+        className={`h-7 justify-center rounded-full px-3 text-xs ring-1 ${actionClass}`}
+      >
+        <ActionIcon className="mr-1 size-3.5" />
+        {category.action}
+      </Badge>
+      <div className="text-right text-[16px] font-semibold text-white">
+        {formatBytes(category.bytes)}
+      </div>
+    </div>
+  )
+}
+
+function CleanupCandidateRow({
+  candidate,
+  checked,
+  cleaning,
+  index,
+  onToggle,
+}: {
+  candidate: CleanupCandidate
+  checked: boolean
+  cleaning: boolean
+  index: number
+  onToggle: () => void
+}) {
+  const meta = cleanupKindMeta[candidate.kind]
+  const Icon = meta.icon
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div
+          className={`cleanup-candidate-row group relative grid min-h-[116px] grid-cols-[30px_52px_minmax(0,1fr)_104px] items-center gap-4 overflow-hidden rounded-lg border px-4 py-4 transition max-[1280px]:grid-cols-[28px_48px_minmax(0,1fr)] ${
+            checked
+              ? 'border-emerald-300/20 bg-emerald-400/[0.055]'
+              : 'border-white/9 bg-white/[0.03] hover:bg-white/[0.055]'
+          } ${candidate.risk === 'high' ? 'cleanup-high-risk' : ''} ${cleaning ? 'cleanup-row-removing' : ''}`}
+          style={{ animationDelay: `${Math.min(index * 70, 420)}ms` }}
+        >
+          {cleaning && <div className="cleanup-cleaning-bar" />}
+          <button
+            type="button"
+            onClick={onToggle}
+            disabled={cleaning}
+            aria-label={`${checked ? 'Deselect' : 'Select'} ${candidate.title}`}
+            className={`grid size-6 place-items-center rounded-md border transition ${
+              checked
+                ? 'border-emerald-300/42 bg-emerald-400/16 text-emerald-200'
+                : 'border-white/16 bg-black/12 text-transparent group-hover:text-white/45'
+            }`}
+          >
+            <CheckCircle2 className="size-4" />
+          </button>
+          <div
+            className={`grid size-[52px] place-items-center rounded-lg ring-1 shadow-[inset_0_1px_0_rgb(255_255_255_/_10%)] ${meta.accent}`}
+          >
+            <Icon className="size-6" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <div className="min-w-0 truncate text-[16px] font-semibold text-white">
+                {candidate.title}
+              </div>
+              <Badge
+                variant="outline"
+                className={`h-6 rounded-full px-2.5 text-[11px] capitalize ring-1 ${riskAccent[candidate.risk]}`}
+              >
+                {candidate.risk}
+              </Badge>
+              <Badge className="h-6 rounded-full bg-white/6 px-2.5 text-[11px] text-white/58 ring-1 ring-white/10">
+                {meta.label}
+              </Badge>
+              {candidate.recoverable && (
+                <Badge className="h-6 rounded-full bg-emerald-400/10 px-2.5 text-[11px] text-emerald-300 ring-1 ring-emerald-400/20">
+                  recoverable
+                </Badge>
+              )}
+            </div>
+            <p className="mt-2 line-clamp-2 text-[13px] leading-5 text-white/52">
+              {candidate.reason}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-white/36">
+              <span>
+                {candidate.paths.length} path{candidate.paths.length === 1 ? '' : 's'}
+              </span>
+              {candidate.source && (
+                <>
+                  <span>/</span>
+                  <span>{agentLabel[candidate.source]}</span>
+                </>
+              )}
+              {candidate.lastUpdated && (
+                <>
+                  <span>/</span>
+                  <span>{formatRelative(candidate.lastUpdated)}</span>
+                </>
+              )}
+            </div>
+          </div>
+          <div className="text-right max-[1280px]:col-start-3 max-[1280px]:text-left">
+            <div className="text-[19px] font-semibold text-white">
+              {formatBytes(candidate.sizeBytes)}
+            </div>
+            <div className="mt-1 text-[11px] uppercase text-white/38">
+              {candidate.backedUp ? 'backed up' : 'backup first'}
+            </div>
+          </div>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent className="chart-tooltip block max-w-[340px] rounded-lg px-3 py-3 text-left text-white">
+        <div className="text-xs font-semibold text-white">{candidate.title}</div>
+        <div className="mt-1 text-[11px] leading-4 text-white/58">
+          {candidate.reason}{' '}
+          {candidate.recoverable ? 'This item remains recoverable from app Trash.' : ''}
+        </div>
+        <div className="mt-2 truncate text-[11px] text-white/38">{candidate.paths[0]}</div>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function CleanupQueuePanel({
+  selectedItems,
+  selectedBytes,
+  firstSelected,
+  cleaning,
+  cleaned,
+  onMoveToTrash,
+  onClear,
+}: {
+  selectedItems: CleanupCandidate[]
+  selectedBytes: number
+  firstSelected?: CleanupCandidate
+  cleaning: boolean
+  cleaned: boolean
+  onMoveToTrash: () => void
+  onClear: () => void
+}) {
+  const selectedColor = (index: number) =>
+    ['bg-emerald-300', 'bg-amber-300', 'bg-blue-300', 'bg-violet-300', 'bg-sky-300'][index % 5]
+  const [sizeValue, sizeUnit = ''] = formatBytes(selectedBytes).split(' ')
+
+  return (
+    <Card className="glass-panel sticky top-5 h-fit rounded-lg py-0">
+      <CardHeader className="flex-row items-center justify-between px-6 pb-0 pt-6">
+        <CardTitle className="text-[18px] font-semibold text-white">Clean Queue</CardTitle>
+        {cleaned ? (
+          <CheckCircle2 className="cleanup-success-pop size-5 text-emerald-300" />
+        ) : (
+          <Pin className="size-5 text-white/76" />
+        )}
+      </CardHeader>
+      <CardContent className="px-6 pb-6 pt-6">
+        <div className="flex items-end gap-2 text-white">
+          <span className="text-[42px] font-semibold leading-none">{sizeValue}</span>
+          <span className="pb-1 text-[22px] font-semibold">{sizeUnit}</span>
+        </div>
+        <div className="mt-2 text-sm text-white/52">
+          {selectedItems.length} item{selectedItems.length === 1 ? '' : 's'} selected
+        </div>
+
+        {firstSelected ? (
+          <div className="mt-5 rounded-lg border border-white/8 bg-white/[0.035] p-4">
+            <div className="text-xs uppercase text-white/34">Selected detail</div>
+            <div className="mt-2 text-sm font-medium text-white">{firstSelected.title}</div>
+            <p className="mt-2 text-xs leading-5 text-white/46">{firstSelected.reason}</p>
+          </div>
+        ) : (
+          <div className="mt-5 rounded-lg border border-white/8 bg-white/[0.03] p-4 text-sm text-white/46">
+            Select sessions to build a safe cleanup queue.
+          </div>
+        )}
+
+        <Separator className="my-6 bg-white/10" />
+        <div className="space-y-4 text-[13px] text-white/60">
+          <div className="flex items-center gap-3">
+            <ShieldCheck className="size-4 text-emerald-300" />
+            Backed up before removal
+          </div>
+          <div className="flex items-center gap-3">
+            <Trash2 className="size-4 text-blue-300" />
+            Moved to app Trash
+          </div>
+          <div className="flex items-center gap-3">
+            <RefreshCcw className="size-4 text-violet-300" />
+            Recoverable while retained
+          </div>
+        </div>
+        <Separator className="my-6 bg-white/10" />
+        <div className="max-h-[190px] space-y-3 overflow-auto pr-1">
+          {selectedItems.map((item, index) => (
+            <div key={item.id} className="flex items-center gap-2 text-[13px]">
+              <span className={`size-2.5 rounded-full ${selectedColor(index)}`} />
+              <span className="min-w-0 flex-1 truncate text-white/56">
+                {cleanupKindMeta[item.kind].label}
+              </span>
+              <span className="text-white/56">{formatBytes(item.sizeBytes)}</span>
+            </div>
+          ))}
+        </div>
+        <Button
+          onClick={onMoveToTrash}
+          disabled={selectedItems.length === 0 || cleaning}
+          className={`cleanup-primary-action mt-6 h-11 w-full rounded-lg text-[15px] font-semibold ${
+            cleaning
+              ? 'bg-emerald-400/80 text-emerald-950'
+              : 'bg-blue-500 text-white shadow-[0_12px_28px_rgb(37_99_235_/_28%)] hover:bg-blue-400'
+          }`}
+        >
+          {cleaning ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+          {cleaning ? 'Backing up...' : 'Move to Trash'}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onClear}
+          disabled={selectedItems.length === 0 || cleaning}
+          className="mt-2 h-8 w-full text-xs text-white/42 hover:bg-white/7 hover:text-white/70"
+        >
+          Clear selection
+        </Button>
+        {cleaned && (
+          <div className="cleanup-success-pop mt-3 text-center text-xs font-medium text-emerald-300">
+            Cleanup moved to Trash
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -2137,6 +3139,8 @@ function App() {
           <OverviewView
             snapshot={dashboard.snapshot}
             usageRange={overviewRange}
+            loading={dashboard.loading}
+            onRefresh={dashboard.rescan}
             onSelectCleanup={() => setActiveView('cleanup')}
           />
         )
@@ -2144,7 +3148,10 @@ function App() {
         return (
           <SessionsView
             sessions={dashboard.snapshot.sessions}
+            archives={dashboard.snapshot.archives}
             onBackup={dashboard.backupSession}
+            onArchive={dashboard.archiveSession}
+            onRestoreArchive={dashboard.restoreArchive}
             onExport={(id) => dashboard.exportSession(id, 'markdown')}
             onRelay={dashboard.exportUniversalRelay}
           />
@@ -2153,6 +3160,8 @@ function App() {
         return (
           <CleanupView
             cleanup={dashboard.snapshot.cleanup}
+            agents={dashboard.snapshot.agents}
+            onScanCleanup={dashboard.scanCleanup}
             onMoveToTrash={dashboard.moveCleanupToTrash}
           />
         )

@@ -4,6 +4,8 @@ export type AgentSource = (typeof agentSources)[number]
 
 export type BackupStatus = 'backed-up' | 'pending' | 'unknown'
 
+export type SessionStorageState = 'live' | 'archived'
+
 export type RiskLevel = 'low' | 'medium' | 'high'
 
 export type TokenUsage = {
@@ -38,6 +40,7 @@ export type SessionRecord = {
   branch?: string
   storagePath: string
   storageKind: 'file' | 'directory' | 'database'
+  storageState: SessionStorageState
   createdAt?: string
   lastUpdated: string
   messageCount: number
@@ -45,7 +48,25 @@ export type SessionRecord = {
   sizeBytes: number
   backupStatus: BackupStatus
   tags: string[]
+  searchText?: string
   metadata: Record<string, unknown>
+}
+
+export type ArchiveRecord = {
+  id: string
+  sessionId: string
+  source: AgentSource
+  title: string
+  createdAt: string
+  archivedAt: string
+  originalPath: string
+  archivePath: string
+  originalBytes: number
+  compressedBytes: number
+  contentHash: string
+  compression: 'brotli'
+  restorable: boolean
+  session: SessionRecord
 }
 
 export type BackupRecord = {
@@ -108,7 +129,7 @@ export type UsagePoint = {
 }
 
 export type StorageSlice = {
-  source: AgentSource | 'backups' | 'trash' | 'logs' | 'cache'
+  source: AgentSource | 'archives' | 'backups' | 'trash' | 'logs' | 'cache'
   label: string
   sizeBytes: number
   sessions?: number
@@ -131,6 +152,7 @@ export type DashboardSnapshot = {
   agents: AgentInstallState[]
   sessions: SessionRecord[]
   cleanup: CleanupCandidate[]
+  archives: ArchiveRecord[]
   backups: BackupRecord[]
   trash: TrashRecord[]
   usage: UsagePoint[]
@@ -180,6 +202,8 @@ export type CleanMyAgentApi = {
   getSnapshot: () => Promise<DashboardSnapshot>
   rescan: () => Promise<DashboardSnapshot>
   backupSession: (sessionId: string) => Promise<BackupRecord>
+  archiveSession: (sessionId: string) => Promise<ArchiveRecord>
+  restoreArchive: (archiveId: string) => Promise<void>
   exportSession: (sessionId: string, format: ExportFormat) => Promise<string>
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<TrashRecord[]>

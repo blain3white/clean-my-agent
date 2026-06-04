@@ -356,6 +356,20 @@ function firstTitle(messages: UniversalRelayMessage[], fallback: string): string
   return text.replace(/\s+/g, ' ').trim().slice(0, 72) || fallback
 }
 
+function searchTextFromParsed(parsed: ParsedSession): string {
+  return [
+    parsed.title,
+    parsed.projectPath,
+    parsed.branch,
+    ...parsed.messages.slice(0, 40).map((message) => message.text),
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .join('\n')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 16_000)
+}
+
 function projectNameFromPath(projectPath: string | undefined, filePath: string): string {
   if (projectPath) return path.basename(projectPath)
   const parent = path.basename(path.dirname(filePath))
@@ -514,6 +528,7 @@ export class AgentAdapter {
           storagePath: filePath,
           storageKind:
             filePath.endsWith('.db') || filePath.endsWith('.sqlite') ? 'database' : 'file',
+          storageState: 'live',
           createdAt: info.birthtime.toISOString(),
           lastUpdated: (await mtimeIso(filePath)) || info.mtime.toISOString(),
           messageCount: parsed.messages.length,
@@ -521,6 +536,7 @@ export class AgentAdapter {
           sizeBytes: info.size,
           backupStatus: 'pending',
           tags: [this.definition.source],
+          searchText: searchTextFromParsed(parsed),
           metadata: {
             ...parsed.metadata,
             parser: 'generic-json-session-parser',

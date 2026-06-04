@@ -124,6 +124,7 @@ const sessions: SessionRecord[] = sessionBase.map((session) => ({
   branch: session.branch,
   storagePath: `/demo/${session.source}/${session.id}.jsonl`,
   storageKind: 'file',
+  storageState: session.id.endsWith('-2') ? 'archived' : 'live',
   createdAt: ago(session.hoursAgo + 72),
   lastUpdated: ago(session.hoursAgo),
   messageCount: session.messages,
@@ -140,6 +141,7 @@ const sessions: SessionRecord[] = sessionBase.map((session) => ({
   sizeBytes: session.sizeMb * MB,
   backupStatus: session.backedUp ? 'backed-up' : 'pending',
   tags: [session.source, 'demo'],
+  searchText: `${session.title} ${session.projectName} ${session.branch} demo session archive cleanup token search`,
   metadata: {},
 }))
 
@@ -312,6 +314,24 @@ export const mockSnapshot: DashboardSnapshot = {
       format: 'raw-copy',
     },
   ],
+  archives: sessions
+    .filter((session) => session.storageState === 'archived')
+    .map((session) => ({
+      id: `archive-${session.id}`,
+      sessionId: session.id,
+      source: session.source,
+      title: session.title,
+      createdAt: session.createdAt ?? ago(72),
+      archivedAt: ago(12),
+      originalPath: `/demo/${session.source}/${session.id}.jsonl`,
+      archivePath: `/demo/vault/${session.source}/${session.id}.jsonl.br`,
+      originalBytes: session.sizeBytes,
+      compressedBytes: Math.round(session.sizeBytes * 0.18),
+      contentHash: `demo-${session.id}`,
+      compression: 'brotli',
+      restorable: true,
+      session,
+    })),
   trash: [],
   usage,
   storage: [
@@ -320,5 +340,6 @@ export const mockSnapshot: DashboardSnapshot = {
     { source: 'cursor', label: 'Cursor', sizeBytes: 8.9 * GB, sessions: 22 },
     { source: 'gemini', label: 'Gemini', sizeBytes: 4.2 * GB, sessions: 14 },
     { source: 'opencode', label: 'OpenCode', sizeBytes: 3.0 * GB, sessions: 8 },
+    { source: 'archives', label: 'Vault', sizeBytes: 1.7 * GB, sessions: 4 },
   ],
 }

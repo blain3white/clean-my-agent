@@ -29,8 +29,8 @@ function createWindow(): void {
   const iconPath = getAppIconPath()
 
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 820,
+    width: 1440,
+    height: 900,
     minWidth: 1040,
     minHeight: 700,
     title: appName,
@@ -67,6 +67,12 @@ function registerIpc(): void {
   ipcMain.handle('app:getSnapshot', () => service.getSnapshot(false))
   ipcMain.handle('app:rescan', () => service.getSnapshot(true))
   ipcMain.handle('session:backup', (_event, sessionId: string) => service.backupSession(sessionId))
+  ipcMain.handle('session:archive', (_event, sessionId: string) =>
+    service.archiveSession(sessionId),
+  )
+  ipcMain.handle('archive:restore', (_event, archiveId: string) =>
+    service.restoreArchive(archiveId),
+  )
   ipcMain.handle('session:export', (_event, sessionId: string, format: ExportFormat) =>
     service.exportSession(sessionId, format),
   )
