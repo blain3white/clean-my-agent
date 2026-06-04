@@ -12,7 +12,8 @@ async function writeSession(root: string, source: AgentSource, daysOld: number) 
   await mkdir(dir, { recursive: true })
   const filePath = path.join(dir, `${source}-session.jsonl`)
   const workspace = path.join('/tmp', 'clean-my-agent-fixture', source)
-  const timestamp = new Date().toISOString()
+  const date = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000)
+  const timestamp = date.toISOString()
   const lines = [
     {
       role: 'user',
@@ -48,7 +49,6 @@ async function writeSession(root: string, source: AgentSource, daysOld: number) 
     },
   ]
   await writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`)
-  const date = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000)
   await utimes(filePath, date, date)
   return filePath
 }
@@ -88,10 +88,16 @@ async function main() {
   assert.equal(session.tokens.costUsd, 0.75, 'Claude/Codex style costUSD should be accumulated')
   assert.equal('sample' in session.metadata, false, 'raw JSON samples should not be stored in SQLite')
   const today = new Date().toISOString().slice(0, 10)
+  const fixtureUsageDate = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
   assert.equal(
-    snapshot.usage.find((point) => point.date === today)?.total,
+    snapshot.usage.find((point) => point.date === fixtureUsageDate)?.total,
     sources.length * 3340,
-    'usage chart should bucket tokens by message timestamp',
+    'usage chart should bucket tokens by message timestamp beyond the last 30 days',
+  )
+  assert.equal(snapshot.usage.length, 365, 'usage chart should keep one year of daily buckets')
+  assert.ok(
+    snapshot.usage.some((point) => point.date === fixtureUsageDate && point.total > 0),
+    'usage chart should include active days within the one-year range',
   )
 
   const backup = await service.backupSession(session.id)

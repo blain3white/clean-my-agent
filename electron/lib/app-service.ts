@@ -25,6 +25,7 @@ import {
 } from './files'
 
 const oneDayMs = 24 * 60 * 60 * 1000
+const usageHistoryDays = 365
 const scanSchemaVersion = 3
 
 const agentLabels: Record<AgentSource, string> = {
@@ -404,7 +405,7 @@ export class AppService {
 
   private buildUsage(sessions: SessionRecord[]): UsagePoint[] {
     const points = new Map<string, UsagePoint>()
-    for (let offset = 29; offset >= 0; offset -= 1) {
+    for (let offset = usageHistoryDays - 1; offset >= 0; offset -= 1) {
       const date = new Date(Date.now() - offset * oneDayMs)
       const key = formatDateKey(date)
       points.set(key, {

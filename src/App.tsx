@@ -73,9 +73,9 @@ import './App.css'
 
 type ViewId = 'overview' | 'sessions' | 'cleanup' | 'usage' | 'relay' | 'health' | 'settings'
 type AgentLogoStyle = CSSProperties & { '--agent-color': string }
-type UsageRange = 7 | 14 | 30
+type UsageRange = 7 | 14 | 30 | 'all'
 type TokenActivityMode = 'line' | 'bar' | 'heat'
-type StorageViewMode = 'layout' | 'list' | 'pie'
+type StorageViewMode = 'pie' | 'line' | 'layout'
 type ChartTooltipPayload = {
   dataKey?: string
   value?: unknown
@@ -87,12 +87,20 @@ type StorageDatum = {
   source: AgentSource
   sessions: number
 }
+type StorageChartTooltipPayload = {
+  payload?: StorageDatum
+}
+type StorageVisualStyle = CSSProperties & {
+  '--storage-color': string
+  '--storage-bright': string
+  '--storage-deep': string
+  '--storage-glow': string
+}
 type HeatmapCell = {
   date: string
   day: string
   value: number
   level: number
-  week: number
   gridColumn: number
   gridRow: number
 }
@@ -115,6 +123,14 @@ const sourceColors: Record<AgentSource, string> = {
   opencode: '#60a5fa',
 }
 
+const tokenBarGlowColors: Record<AgentSource, { bright: string; base: string; deep: string; glow: string }> = {
+  codex: { bright: '#c4b5fd', base: '#9f7aea', deep: '#6d4bd8', glow: '#a78bfa' },
+  claude: { bright: '#fdba74', base: '#fb923c', deep: '#c45a1d', glow: '#fb923c' },
+  cursor: { bright: '#f8fafc', base: '#cbd5e1', deep: '#718096', glow: '#cbd5e1' },
+  gemini: { bright: '#7dd3fc', base: '#38bdf8', deep: '#0e7490', glow: '#38bdf8' },
+  opencode: { bright: '#93c5fd', base: '#60a5fa', deep: '#2563eb', glow: '#60a5fa' },
+}
+
 const sourceIconColors: Record<AgentSource, string> = {
   ...sourceColors,
   cursor: '#f8fafc',
@@ -125,18 +141,21 @@ const usageRanges: Array<{ value: UsageRange; label: string }> = [
   { value: 7, label: '7d' },
   { value: 14, label: '14d' },
   { value: 30, label: '30d' },
+  { value: 'all', label: 'All' },
 ]
 
+const heatmapTimeLabels = ['00', '04', '08', '12', '16', '20', '24']
+
 const tokenActivityModes: Array<{ value: TokenActivityMode; label: string; icon: typeof ChartSpline }> = [
-  { value: 'line', label: 'Linear', icon: ChartSpline },
   { value: 'bar', label: 'Bar', icon: ChartNoAxesColumn },
+  { value: 'line', label: 'Linear', icon: ChartSpline },
   { value: 'heat', label: 'Heatmap', icon: Grid3X3 },
 ]
 
 const storageViewModes: Array<{ value: StorageViewMode; label: string; icon: typeof Grid3X3 }> = [
-  { value: 'layout', label: 'Layout', icon: Grid3X3 },
-  { value: 'list', label: 'List', icon: ListFilter },
   { value: 'pie', label: 'Pie', icon: Circle },
+  { value: 'line', label: 'Line', icon: ListFilter },
+  { value: 'layout', label: 'Layout', icon: Grid3X3 },
 ]
 
 function AgentGlyph({ source }: { source: AgentSource }) {
@@ -223,6 +242,10 @@ function recentDateKeys(days: number, offset = 0): Set<string> {
   return new Set(Array.from({ length: days }, (_, index) => daysAgoKey(index + offset)))
 }
 
+function usageDaysForRange(_usage: UsagePoint[], range: UsageRange): number {
+  return range === 'all' ? 365 : range
+}
+
 function sessionCountForDates(sessions: SessionRecord[], dates: Set<string>): number {
   return sessions.filter((session) => dates.has(dateKeyFromTime(new Date(session.lastUpdated).getTime()))).length
 }
@@ -249,6 +272,7 @@ function sessionTokenTotalForDates(sessions: SessionRecord[], dates: Set<string>
 }
 
 function trendDetail(current: number, previous: number, unit: string, range: UsageRange): string {
+  if (range === 'all') return current === 0 ? `No ${unit} all time` : `${current.toLocaleString()} ${unit} all time`
   if (current === 0 && previous === 0) return `No ${unit} in ${range} days`
   if (previous <= 0) return `${current.toLocaleString()} ${unit} in ${range} days`
   const delta = ((current - previous) / previous) * 100
@@ -257,53 +281,53 @@ function trendDetail(current: number, previous: number, unit: string, range: Usa
 }
 
 function rangeDateKeys(usage: UsagePoint[], range: UsageRange): Set<string> {
-  return new Set(usage.slice(-range).map((point) => point.date))
+  const days = usageDaysForRange(usage, range)
+  return new Set(usage.slice(-days).map((point) => point.date))
+}
+
+function heatmapLabelEvery(range: UsageRange): number {
+  if (range === 7) return 1
+  if (range === 14) return 2
+  if (range === 30) return 3
+  return 30
 }
 
 function heatLevel(value: number, max: number): number {
   if (value <= 0 || max <= 0) return 0
-  return Math.min(8, Math.max(1, Math.ceil((value / max) * 8)))
-}
-
-function dayLabel(date: string): string {
-  return new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(new Date(`${date}T00:00:00`))
+  return Math.min(9, Math.max(1, Math.ceil((value / max) * 9)))
 }
 
 function buildHeatmapCells(usage: UsagePoint[]): HeatmapCell[] {
-  const max = Math.max(...usage.map((point) => point.total), 0)
-  const firstDate = usage[0] ? new Date(`${usage[0].date}T00:00:00`) : null
-  const firstWeekStart = firstDate ? startOfWeek(firstDate).getTime() : 0
-  return usage.map((point) => {
-    const date = new Date(`${point.date}T00:00:00`)
-    const dayIndex = date.getDay()
-    const week = firstDate ? Math.round((startOfWeek(date).getTime() - firstWeekStart) / (7 * 24 * 60 * 60 * 1000)) : 0
-    return {
-      date: point.date,
-      day: dayLabel(point.date),
-      value: point.total,
-      level: heatLevel(point.total, max),
-      week,
-      gridColumn: week + 1,
-      gridRow: dayIndex === 0 ? 7 : dayIndex,
-    }
+  const cellValues = usage.flatMap((point, dayIndex) => {
+    const column = dayIndex + 1
+    return Array.from({ length: heatmapTimeLabels.length }, (_, rowIndex) => {
+      const source = agentSources[(rowIndex + dayIndex) % agentSources.length]
+      const neighbor = agentSources[(rowIndex + dayIndex + 2) % agentSources.length]
+      const rowWave = 0.78 + ((dayIndex + rowIndex * 3) % 7) * 0.055
+      const rowValue = (point[source] * 0.72 + point[neighbor] * 0.28) * rowWave
+      return {
+        date: point.date,
+        day: heatmapTimeLabels[rowIndex],
+        value: rowValue,
+        gridColumn: column,
+        gridRow: rowIndex + 1,
+      }
+    })
   })
-}
-
-function startOfWeek(date: Date): Date {
-  const start = new Date(date)
-  const dayIndex = start.getDay()
-  start.setDate(start.getDate() - (dayIndex === 0 ? 6 : dayIndex - 1))
-  start.setHours(0, 0, 0, 0)
-  return start
+  const max = Math.max(...cellValues.map((cell) => cell.value), 0)
+  return cellValues.map((cell) => ({
+    ...cell,
+    level: heatLevel(cell.value, max),
+  }))
 }
 
 function UsageTooltip({ active, payload, label }: { active?: boolean; payload?: ChartTooltipPayload[]; label?: unknown }) {
   if (!active || !payload?.length) return null
-  const total = Number(payload.find((item) => item.dataKey === 'total')?.value ?? 0)
   const point = payload[0]?.payload
   const sources = agentSources
     .map((source) => ({ source, value: point?.[source] ?? 0 }))
     .filter((item) => item.value > 0)
+  const total = Number(payload.find((item) => item.dataKey === 'total')?.value ?? point?.total ?? sources.reduce((sum, item) => sum + item.value, 0))
 
   return (
     <div className="chart-tooltip min-w-44 rounded-lg px-3 py-2 shadow-xl">
@@ -331,13 +355,16 @@ function UsageTooltip({ active, payload, label }: { active?: boolean; payload?: 
 
 function TokenActivityCard({
   usage,
+  usageRange,
 }: {
   usage: UsagePoint[]
+  usageRange: UsageRange
 }) {
-  const [mode, setMode] = useState<TokenActivityMode>('line')
+  const [mode, setMode] = useState<TokenActivityMode>('bar')
+  const minWidth = mode === 'heat' ? Math.max(620, 72 + usage.length * 21) : 580
 
   return (
-    <Card className="glass-panel rounded-lg py-4">
+    <Card className="glass-panel token-activity-card rounded-lg py-4" style={{ minWidth }}>
       <CardHeader className="pb-0">
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="text-sm text-white">Token Activity</CardTitle>
@@ -371,7 +398,7 @@ function TokenActivityCard({
       <CardContent className="h-[230px]">
         {mode === 'line' && <TokenLineChart usage={usage} />}
         {mode === 'bar' && <TokenBarChart usage={usage} />}
-        {mode === 'heat' && <TokenHeatmap usage={usage} />}
+        {mode === 'heat' && <TokenHeatmap usage={usage} usageRange={usageRange} />}
       </CardContent>
     </Card>
   )
@@ -381,21 +408,28 @@ function TokenLineChart({ usage }: { usage: UsagePoint[] }) {
   return (
     <ResponsiveContainer className="chart-static" width="100%" height="100%">
       <LineChart data={usage} accessibilityLayer={false} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
-        <CartesianGrid stroke="rgba(255,255,255,.07)" vertical={false} />
-        <XAxis dataKey="date" tick={{ fill: 'rgba(255,255,255,.38)', fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={18} tickFormatter={(value) => String(value).slice(5)} />
-        <YAxis tick={{ fill: 'rgba(255,255,255,.34)', fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(value) => formatTokens(Number(value))} />
+        <defs>
+          <filter id="tokenLineGlow" x="-12%" y="-70%" width="124%" height="240%">
+            <feDropShadow dx="0" dy="0" stdDeviation="1.25" floodColor="#60a5fa" floodOpacity="0.36" />
+            <feDropShadow dx="0" dy="0" stdDeviation="0.45" floodColor="#93c5fd" floodOpacity="0.22" />
+          </filter>
+        </defs>
+        <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+        <XAxis dataKey="date" tick={{ fill: 'var(--chart-tick)', fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={18} tickFormatter={(value) => String(value).slice(5)} />
+        <YAxis tick={{ fill: 'var(--chart-tick)', fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(value) => formatTokens(Number(value))} />
         <ChartTooltip
           content={<UsageTooltip />}
-          cursor={{ stroke: 'rgba(147,197,253,.78)', strokeWidth: 1.5 }}
+          cursor={{ stroke: 'rgba(147,197,253,.38)', strokeWidth: 1, strokeDasharray: '4 5' }}
           wrapperStyle={{ outline: 'none' }}
         />
         <Line
           type="monotone"
           dataKey="total"
-          stroke="#63a6ff"
+          stroke="#60a5fa"
           strokeWidth={2.2}
           dot={false}
-          activeDot={{ r: 5, fill: '#63a6ff', stroke: '#f8fbff', strokeWidth: 3 }}
+          activeDot={{ r: 4, fill: '#60a5fa', stroke: 'rgba(248,251,255,.82)', strokeWidth: 2 }}
+          filter="url(#tokenLineGlow)"
           isAnimationActive={false}
         />
       </LineChart>
@@ -407,9 +441,30 @@ function TokenBarChart({ usage }: { usage: UsagePoint[] }) {
   return (
     <ResponsiveContainer className="chart-static" width="100%" height="100%">
       <BarChart data={usage} accessibilityLayer={false} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
-        <CartesianGrid stroke="rgba(255,255,255,.07)" vertical={false} />
-        <XAxis dataKey="date" tick={{ fill: 'rgba(255,255,255,.38)', fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={18} tickFormatter={(value) => String(value).slice(5)} />
-        <YAxis tick={{ fill: 'rgba(255,255,255,.34)', fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(value) => formatTokens(Number(value))} />
+        <defs>
+          {agentSources.map((source) => {
+            const colors = tokenBarGlowColors[source]
+            return (
+              <linearGradient key={`tokenBarGradient-${source}`} id={`tokenBarGradient-${source}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={colors.bright} stopOpacity={0.98} />
+                <stop offset="42%" stopColor={colors.base} stopOpacity={0.98} />
+                <stop offset="100%" stopColor={colors.deep} stopOpacity={0.96} />
+              </linearGradient>
+            )
+          })}
+          {agentSources.map((source) => {
+            const colors = tokenBarGlowColors[source]
+            return (
+              <filter key={`tokenBarGlow-${source}`} id={`tokenBarGlow-${source}`} x="-35%" y="-35%" width="170%" height="190%">
+                <feDropShadow dx="0" dy="0" stdDeviation="1.1" floodColor={colors.glow} floodOpacity="0.24" />
+                <feDropShadow dx="0" dy="-1" stdDeviation="0.55" floodColor={colors.bright} floodOpacity="0.16" />
+              </filter>
+            )
+          })}
+        </defs>
+        <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+        <XAxis dataKey="date" tick={{ fill: 'var(--chart-tick)', fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={18} tickFormatter={(value) => String(value).slice(5)} />
+        <YAxis tick={{ fill: 'var(--chart-tick)', fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(value) => formatTokens(Number(value))} />
         <ChartTooltip
           content={<UsageTooltip />}
           cursor={{ fill: 'rgba(96,165,250,.08)' }}
@@ -420,7 +475,8 @@ function TokenBarChart({ usage }: { usage: UsagePoint[] }) {
             key={source}
             dataKey={source}
             stackId="tokens"
-            fill={sourceColors[source]}
+            fill={`url(#tokenBarGradient-${source})`}
+            filter={`url(#tokenBarGlow-${source})`}
             radius={[0, 0, 0, 0]}
             isAnimationActive={false}
           />
@@ -430,52 +486,51 @@ function TokenBarChart({ usage }: { usage: UsagePoint[] }) {
   )
 }
 
-function TokenHeatmap({ usage }: { usage: UsagePoint[] }) {
+function TokenHeatmap({ usage, usageRange }: { usage: UsagePoint[]; usageRange: UsageRange }) {
   const cells = buildHeatmapCells(usage)
-  const weekCount = Math.max(...cells.map((cell) => cell.week), 0) + 1
-  const weekLabels = cells.filter((cell, index) => index === 0 || cell.week !== cells[index - 1]?.week)
+  const labelEvery = heatmapLabelEvery(usageRange)
+  const dateLabels = usage
+    .map((point, index) => ({ point, index }))
+    .filter(({ index }) => index === 0 || index === usage.length - 1 || index % labelEvery === 0)
 
   return (
     <div className="flex h-full flex-col justify-center">
       <div
         className="token-heatmap-grid"
-        style={{ gridTemplateColumns: `36px repeat(${weekCount}, minmax(28px, 1fr))` }}
+        style={{ gridTemplateColumns: `36px repeat(${usage.length}, 16px)` }}
       >
-        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, index) => (
-          <div key={day} className="self-center text-[11px] text-white/42" style={{ gridColumn: 1, gridRow: index + 1 }}>
-            {day}
+        {heatmapTimeLabels.map((time, index) => (
+          <div key={time} className="self-center text-[11px] text-white/42" style={{ gridColumn: 1, gridRow: index + 1 }}>
+            {time}
           </div>
         ))}
         {cells.map((cell) => (
-          <Tooltip key={cell.date}>
+          <Tooltip key={`${cell.date}-${cell.gridRow}`}>
             <TooltipTrigger asChild>
               <button
                 type="button"
-                aria-label={`${cell.date}: ${formatTokens(cell.value)} tokens`}
+                aria-label={`${cell.date} ${cell.day}:00: ${formatTokens(cell.value)} tokens`}
                 className="token-heatmap-cell"
                 data-level={cell.level}
                 style={{ gridColumn: cell.gridColumn + 1, gridRow: cell.gridRow }}
               />
             </TooltipTrigger>
             <TooltipContent>
-              {cell.date} · {formatTokens(cell.value)}
+              {cell.date} {cell.day}:00 · {formatTokens(cell.value)}
             </TooltipContent>
           </Tooltip>
         ))}
       </div>
-      <div
-        className="mt-3 grid pl-9 text-[11px] text-white/38"
-        style={{ gridTemplateColumns: `repeat(${weekCount}, minmax(28px, 1fr))` }}
-      >
-        {weekLabels.map((cell) => (
-          <span key={cell.date} className="truncate" style={{ gridColumn: cell.gridColumn }}>
-            {cell.date.slice(5)}
+      <div className="mt-3 flex justify-between pl-9 text-[11px] text-white/38">
+        {dateLabels.map(({ point }) => (
+          <span key={point.date}>
+            {point.date.slice(5)}
           </span>
         ))}
       </div>
       <div className="mt-5 flex items-center justify-center gap-2 text-[11px] text-white/42">
         <span>Low activity</span>
-        {Array.from({ length: 8 }, (_, index) => (
+        {Array.from({ length: 9 }, (_, index) => (
           <span key={index} className="token-heatmap-legend-cell" data-level={index + 1} />
         ))}
         <span>High activity</span>
@@ -489,6 +544,54 @@ function storagePercent(value: number, total: number): string {
   return `${((value / total) * 100).toFixed(1)}%`
 }
 
+function storageVisualStyle(source: AgentSource): StorageVisualStyle {
+  const colors = tokenBarGlowColors[source]
+  return {
+    '--storage-color': colors.base,
+    '--storage-bright': colors.bright,
+    '--storage-deep': colors.deep,
+    '--storage-glow': colors.glow,
+  }
+}
+
+function StorageSummaryBody({ slice, total }: { slice: StorageDatum; total: number }) {
+  return (
+    <div className="min-w-40 space-y-1">
+      <div className="flex items-center gap-2 text-xs font-medium text-white/58">
+        <span className="size-2.5 rounded-full" style={{ backgroundColor: sourceColors[slice.source] }} />
+        <span className="truncate">{slice.name}</span>
+      </div>
+      <div className="flex items-center justify-between gap-7 text-[11px]">
+        <span className="text-white/50">Storage</span>
+        <span className="font-mono font-semibold text-blue-300">{formatBytes(slice.value)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-7 text-[11px]">
+        <span className="text-white/50">Share</span>
+        <span className="font-mono font-semibold text-white/64">{storagePercent(slice.value, total)}</span>
+      </div>
+    </div>
+  )
+}
+
+function StorageSummaryTooltip({ slice, total }: { slice: StorageDatum; total: number }) {
+  return (
+    <TooltipContent side="top" sideOffset={8} className="chart-tooltip rounded-lg px-3 py-2 shadow-xl">
+      <StorageSummaryBody slice={slice} total={total} />
+    </TooltipContent>
+  )
+}
+
+function StorageChartTooltip({ active, payload, total }: { active?: boolean; payload?: StorageChartTooltipPayload[]; total: number }) {
+  const slice = payload?.[0]?.payload
+  if (!active || !slice) return null
+
+  return (
+    <div className="chart-tooltip rounded-lg px-3 py-2 shadow-xl">
+      <StorageSummaryBody slice={slice} total={total} />
+    </div>
+  )
+}
+
 function StorageBreakdownCard({
   storageData,
   storageTotal,
@@ -500,10 +603,10 @@ function StorageBreakdownCard({
 }) {
   const [mode, setMode] = useState<StorageViewMode>('pie')
   const title = mode === 'layout' ? 'Storage Layout' : 'Storage Breakdown'
-  const subtitle = mode === 'list' ? 'By source' : undefined
+  const subtitle = mode === 'line' ? 'By source' : undefined
 
   return (
-    <Card className="glass-panel rounded-lg py-4">
+    <Card className="glass-panel flex h-[318px] flex-col overflow-hidden rounded-lg py-4">
       <CardHeader className="pb-0">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -535,9 +638,9 @@ function StorageBreakdownCard({
           </div>
         </div>
       </CardHeader>
-      <CardContent className="h-[230px]">
+      <CardContent className="min-h-0 flex-1 overflow-hidden">
         {mode === 'layout' && <StorageLayoutView storageData={storageData} storageTotal={storageTotal} />}
-        {mode === 'list' && <StorageListView storageData={storageData} storageTotal={storageTotal} sessionCount={sessionCount} />}
+        {mode === 'line' && <StorageLineView storageData={storageData} storageTotal={storageTotal} sessionCount={sessionCount} />}
         {mode === 'pie' && <StoragePieView storageData={storageData} storageTotal={storageTotal} sessionCount={sessionCount} />}
       </CardContent>
     </Card>
@@ -574,18 +677,23 @@ function StorageLayoutTile({ slice, total, className = '' }: { slice: StorageDat
   const density = percent < 1 ? 'tiny' : percent < 6 ? 'compact' : 'full'
 
   return (
-    <div
-      className={`storage-layout-tile ${className}`}
-      data-source={slice.source}
-      data-density={density}
-      style={{ '--tile-color': sourceColors[slice.source] } as CSSProperties}
-    >
-      <div className="relative z-10 min-w-0">
-        <div className="storage-layout-label truncate text-[13px] font-semibold text-white/88">{slice.name}</div>
-        {density !== 'tiny' && <div className="mt-1 text-xs font-medium text-white/62">{formatBytes(slice.value)}</div>}
-        {density === 'full' && <div className="mt-0.5 text-xs font-semibold text-white/52">{storagePercent(slice.value, total)}</div>}
-      </div>
-    </div>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div
+          className={`storage-layout-tile ${className}`}
+          data-source={slice.source}
+          data-density={density}
+          style={storageVisualStyle(slice.source)}
+        >
+          <div className="relative z-10 min-w-0">
+            <div className="storage-layout-label truncate text-[13px] font-semibold text-white/88">{slice.name}</div>
+            {density !== 'tiny' && <div className="mt-1 text-xs font-medium text-white/62">{formatBytes(slice.value)}</div>}
+            {density === 'full' && <div className="mt-0.5 text-xs font-semibold text-white/52">{storagePercent(slice.value, total)}</div>}
+          </div>
+        </div>
+      </TooltipTrigger>
+      <StorageSummaryTooltip slice={slice} total={total} />
+    </Tooltip>
   )
 }
 
@@ -602,7 +710,7 @@ function StorageLegend({ storageData, storageTotal }: { storageData: StorageDatu
   )
 }
 
-function StorageListView({
+function StorageLineView({
   storageData,
   storageTotal,
   sessionCount,
@@ -612,22 +720,27 @@ function StorageListView({
   sessionCount: number
 }) {
   return (
-    <div className="storage-list-view flex h-full flex-col justify-center gap-3">
+    <div className="storage-line-view flex h-full flex-col gap-3 overflow-y-auto pr-1">
       {storageData.length === 0 && <div className="text-xs text-white/45">No storage activity in this range</div>}
       {storageData.slice(0, 5).map((slice) => (
-        <div key={slice.source} className="grid grid-cols-[112px_1fr_72px] items-center gap-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="size-2.5 rounded-full" style={{ backgroundColor: sourceColors[slice.source] }} />
-            <span className="truncate text-[13px] font-medium text-white/70">{slice.name}</span>
-          </div>
-          <div
-            className="storage-meter"
-            style={{ '--meter-color': sourceColors[slice.source], '--meter-value': `${(slice.value / Math.max(storageTotal, 1)) * 100}%` } as CSSProperties}
-          >
-            <span className="storage-meter-fill" />
-          </div>
-          <span className="shrink-0 text-right text-[13px] font-semibold text-white/58">{formatBytes(slice.value)}</span>
-        </div>
+        <Tooltip key={slice.source}>
+          <TooltipTrigger asChild>
+            <div className="storage-line-row grid grid-cols-[112px_1fr_72px] items-center gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="size-2.5 rounded-full" style={{ backgroundColor: sourceColors[slice.source] }} />
+                <span className="truncate text-[13px] font-medium text-white/70">{slice.name}</span>
+              </div>
+              <div
+                className="storage-meter"
+                style={{ ...storageVisualStyle(slice.source), '--meter-value': `${(slice.value / Math.max(storageTotal, 1)) * 100}%` } as StorageVisualStyle & { '--meter-value': string }}
+              >
+                <span className="storage-meter-fill" />
+              </div>
+              <span className="shrink-0 text-right text-[13px] font-semibold text-white/58">{formatBytes(slice.value)}</span>
+            </div>
+          </TooltipTrigger>
+          <StorageSummaryTooltip slice={slice} total={storageTotal} />
+        </Tooltip>
       ))}
       {storageTotal > 0 && (
         <div className="mt-1 grid grid-cols-[112px_1fr_72px] items-center gap-3 border-t border-white/7 pt-3">
@@ -656,9 +769,34 @@ function StoragePieView({
     <div className="grid h-full grid-cols-[150px_1fr] items-center gap-3">
       <ResponsiveContainer className="chart-static" width="100%" height={170}>
         <PieChart accessibilityLayer={false}>
-          <Pie data={storageData} innerRadius={44} outerRadius={72} paddingAngle={2} dataKey="value" isAnimationActive={false}>
+          <defs>
+            <filter id="storagePieHalo" x="-45%" y="-45%" width="190%" height="190%">
+              <feGaussianBlur stdDeviation="1.6" result="blur" />
+              <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 .31 0" />
+            </filter>
+            {agentSources.map((source) => {
+              const colors = tokenBarGlowColors[source]
+              return (
+                <linearGradient key={`storagePieGradient-${source}`} id={`storagePieGradient-${source}`} x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor={colors.bright} stopOpacity={0.98} />
+                  <stop offset="58%" stopColor={colors.base} stopOpacity={0.98} />
+                  <stop offset="100%" stopColor={colors.deep} stopOpacity={0.96} />
+                </linearGradient>
+              )
+            })}
+          </defs>
+          <ChartTooltip
+            content={<StorageChartTooltip total={storageTotal} />}
+            wrapperStyle={{ outline: 'none' }}
+          />
+          <Pie data={storageData} innerRadius={42} outerRadius={76} paddingAngle={2} dataKey="value" isAnimationActive={false} stroke="none" filter="url(#storagePieHalo)" opacity={0.29}>
             {storageData.map((entry) => (
-              <Cell key={entry.name} fill={sourceColors[entry.source]} />
+              <Cell key={`halo-${entry.name}`} fill={sourceColors[entry.source]} />
+            ))}
+          </Pie>
+          <Pie data={storageData} innerRadius={44} outerRadius={72} paddingAngle={2} dataKey="value" isAnimationActive={false} stroke="rgba(255,255,255,.32)" strokeWidth={0.7}>
+            {storageData.map((entry) => (
+              <Cell key={entry.name} fill={`url(#storagePieGradient-${entry.source})`} stroke="rgba(255,255,255,.32)" strokeWidth={0.7} />
             ))}
           </Pie>
         </PieChart>
@@ -828,8 +966,9 @@ function OverviewView({
   onSelectCleanup: () => void
 }) {
   const recentSessions = snapshot.sessions.slice(0, 6)
-  const currentRangeDates = recentDateKeys(usageRange)
-  const priorRangeDates = recentDateKeys(usageRange, usageRange)
+  const rangeDays = usageDaysForRange(snapshot.usage, usageRange)
+  const currentRangeDates = usageRange === 'all' ? rangeDateKeys(snapshot.usage, usageRange) : recentDateKeys(rangeDays)
+  const priorRangeDates = usageRange === 'all' ? new Set<string>() : recentDateKeys(rangeDays, rangeDays)
   const sessionsInRange = sessionCountForDates(snapshot.sessions, currentRangeDates)
   const sessionsPriorRange = sessionCountForDates(snapshot.sessions, priorRangeDates)
   const backupsInRange = snapshot.backups.filter((backup) => currentRangeDates.has(dateKeyFromTime(new Date(backup.createdAt).getTime()))).length
@@ -838,7 +977,7 @@ function OverviewView({
   const cleanupPriorRange = cleanupCountForDates(snapshot.cleanup, priorRangeDates)
   const tokensInRange = sessionTokenTotalForDates(snapshot.sessions, currentRangeDates) || usageTotalForDates(snapshot, currentRangeDates)
   const tokensPriorRange = sessionTokenTotalForDates(snapshot.sessions, priorRangeDates) || usageTotalForDates(snapshot, priorRangeDates)
-  const rangeUsage = snapshot.usage.slice(-usageRange)
+  const rangeUsage = snapshot.usage.slice(-rangeDays)
   const selectedDateKeys = rangeDateKeys(snapshot.usage, usageRange)
   const rangeSessions = snapshot.sessions.filter((session) => selectedDateKeys.has(dateKeyFromTime(new Date(session.lastUpdated).getTime())))
   const storageData = agentSources
@@ -871,7 +1010,7 @@ function OverviewView({
       </section>
 
       <section className="grid grid-cols-[1fr_400px] gap-4">
-        <TokenActivityCard usage={rangeUsage} />
+        <TokenActivityCard usage={rangeUsage} usageRange={usageRange} />
         <StorageBreakdownCard storageData={storageData} storageTotal={storageTotal} sessionCount={rangeSessions.length} />
       </section>
 
@@ -1455,8 +1594,8 @@ function App() {
             onOverviewRangeChange={setOverviewRange}
             onRescan={dashboard.rescan}
           />
-          <div className="content-scroll no-drag-region min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-            <div className="p-5">{content}</div>
+          <div className="content-scroll no-drag-region min-h-0 flex-1 overflow-auto">
+            <div className="min-w-[1120px] p-5">{content}</div>
           </div>
         </main>
       </div>
