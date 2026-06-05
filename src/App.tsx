@@ -1874,6 +1874,19 @@ type CleanupCategorySummary = {
   icon: typeof Activity
   accent: string
 }
+type CleanupWorkspaceHint = {
+  key: string
+  label: string
+  detail: string
+}
+type CleanupCandidateGroup = {
+  id: string
+  source: AgentSource
+  workspace: CleanupWorkspaceHint
+  candidates: CleanupCandidate[]
+  bytes: number
+  latestOpened?: string
+}
 type CleanupPersistedViewState = {
   stage: 'complete'
   savedAt: string
@@ -1883,6 +1896,7 @@ type CleanupPersistedViewState = {
 type CleanupViewProps = {
   cleanup: CleanupCandidate[]
   agents: DashboardSnapshot['agents']
+  sessions: SessionRecord[]
   onScanCleanup: () => Promise<CleanupCandidate[]>
   onMoveToTrash: (candidateIds: string[]) => Promise<void>
 }
@@ -1908,6 +1922,7 @@ const cleanupOrbMorphTransition = {
 const cleanupOrbMaxSize = 320
 const cleanupOrbMinSize = 248
 const cleanupScanningOrbScale = 250 / cleanupOrbMaxSize
+const cleanupMaxVisibleGroupSessions = 80
 
 const cleanupViewStateStorageKey = 'clean-my-agent.cleanupViewState'
 
@@ -2030,12 +2045,142 @@ function cleanupCategoryForCandidate(candidate: CleanupCandidate): CleanupCatego
 
 function defaultCleanupSelection(candidates: CleanupCandidate[]): string[] {
   return candidates
-    .filter((candidate) => candidate.recoverable)
-    .filter((candidate) => cleanupCategoryForCandidate(candidate) === 'inactive')
+    .filter((candidate) => {
+      const category = cleanupCategoryForCandidate(candidate)
+      return category === 'inactive' || category === 'test'
+    })
     .map((candidate) => candidate.id)
 }
 
-function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupViewProps) {
+function cleanupTimestamp(value: string | undefined): number {
+  if (!value) return 0
+  const timestamp = new Date(value).getTime()
+  return Number.isFinite(timestamp) ? timestamp : 0
+}
+
+function cleanupSessionForCandidate(
+  candidate: CleanupCandidate,
+  sessionById: Map<string, SessionRecord>,
+): SessionRecord | undefined {
+  for (const sessionId of candidate.sessionIds) {
+    const session = sessionById.get(sessionId)
+    if (session) return session
+  }
+  return undefined
+}
+
+function cleanupDirectoryFromPath(pathValue: string): string {
+  const normalized = pathValue.replaceAll('\\', '/').replace(/\/+/g, '/')
+  const parts = normalized.split('/').filter(Boolean)
+  if (parts.length === 0) return normalized || 'Unknown path'
+
+  const lastPart = parts.at(-1) ?? ''
+  const looksLikeFile = /\.[a-z0-9]{1,12}$/i.test(lastPart)
+  const directoryParts = looksLikeFile ? parts.slice(0, -1) : parts
+  if (directoryParts.length === 0) return normalized
+
+  const prefix = normalized.startsWith('/') ? '/' : ''
+  return `${prefix}${directoryParts.join('/')}`
+}
+
+function cleanupCompactPath(pathValue: string, maxLength = 72): string {
+  if (pathValue.length <= maxLength) return pathValue
+  const headLength = Math.max(18, Math.floor(maxLength * 0.38))
+  const tailLength = Math.max(24, maxLength - headLength - 3)
+  return `${pathValue.slice(0, headLength)}...${pathValue.slice(-tailLength)}`
+}
+
+function cleanupPathLabel(pathValue: string): string {
+  const normalized = pathValue.replaceAll('\\', '/')
+  const parts = normalized.split('/').filter(Boolean)
+  if (parts.length === 0) return 'Unknown workspace'
+  return parts.slice(-2).join('/')
+}
+
+function cleanupWorkspaceForCandidate(
+  candidate: CleanupCandidate,
+  session: SessionRecord | undefined,
+): CleanupWorkspaceHint {
+  if (session?.projectPath) {
+    return {
+      key: session.projectPath,
+      label: session.projectName || cleanupPathLabel(session.projectPath),
+      detail: session.projectPath,
+    }
+  }
+
+  if (session?.projectName) {
+    return {
+      key: `project:${session.projectName}`,
+      label: session.projectName,
+      detail: 'Project name only',
+    }
+  }
+
+  const primaryPath = candidate.paths[0]
+  if (!primaryPath) {
+    return {
+      key: 'unknown',
+      label: 'Unknown workspace',
+      detail: 'No local path available',
+    }
+  }
+
+  const directory = cleanupDirectoryFromPath(primaryPath)
+  return {
+    key: directory,
+    label: cleanupPathLabel(directory),
+    detail: directory,
+  }
+}
+
+function cleanupCandidateSource(
+  candidate: CleanupCandidate,
+  session: SessionRecord | undefined,
+): AgentSource {
+  return candidate.source ?? session?.source ?? 'codex'
+}
+
+function buildCleanupCandidateGroups(
+  candidates: CleanupCandidate[],
+  sessionById: Map<string, SessionRecord>,
+): CleanupCandidateGroup[] {
+  const groups = new Map<string, CleanupCandidateGroup>()
+
+  for (const candidate of candidates) {
+    const session = cleanupSessionForCandidate(candidate, sessionById)
+    const source = cleanupCandidateSource(candidate, session)
+    const workspace = cleanupWorkspaceForCandidate(candidate, session)
+    const id = `${source}:${workspace.key}`
+    const existing =
+      groups.get(id) ??
+      ({
+        id,
+        source,
+        workspace,
+        candidates: [],
+        bytes: 0,
+      } satisfies CleanupCandidateGroup)
+
+    existing.candidates.push(candidate)
+    existing.bytes += candidate.sizeBytes
+
+    const currentLatest = cleanupTimestamp(existing.latestOpened)
+    const candidateLatest = cleanupTimestamp(candidate.lastUpdated)
+    if (candidateLatest > currentLatest) existing.latestOpened = candidate.lastUpdated
+
+    groups.set(id, existing)
+  }
+
+  return Array.from(groups.values()).sort((a, b) => {
+    const sourceDelta = agentSources.indexOf(a.source) - agentSources.indexOf(b.source)
+    if (sourceDelta !== 0) return sourceDelta
+    if (b.bytes !== a.bytes) return b.bytes - a.bytes
+    return a.workspace.label.localeCompare(b.workspace.label)
+  })
+}
+
+function CleanupView({ cleanup, agents, sessions, onScanCleanup, onMoveToTrash }: CleanupViewProps) {
   const [persistedState] = useState(() => readCleanupViewState())
   const [stage, setStage] = useState<CleanupStage>(() => persistedState?.stage ?? 'idle')
   const [orbPhase, setOrbPhase] = useState<CleanupOrbPhase>(() =>
@@ -2053,6 +2198,10 @@ function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupV
   const [cleaned, setCleaned] = useState(false)
   const scanRunRef = useRef(0)
   const visibleCleanup = localCleanup ?? cleanup
+  const sessionById = useMemo(
+    () => new Map(sessions.map((session) => [session.id, session])),
+    [sessions],
+  )
 
   const sourceTotals = useMemo(
     () =>
@@ -2290,6 +2439,16 @@ function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupV
     })
   }
 
+  const toggleCandidateSetSelected = (ids: string[]) => {
+    if (ids.length === 0) return
+
+    setSelected((current) => {
+      const allSelected = ids.every((id) => current.includes(id))
+      if (allSelected) return current.filter((id) => !ids.includes(id))
+      return Array.from(new Set([...current, ...ids]))
+    })
+  }
+
   const toggleVisibleSelected = () => {
     const visibleIds = filteredCleanup.map((item) => item.id)
     setSelected((current) => {
@@ -2468,6 +2627,7 @@ function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupV
       totalBytes={totalBytes}
       categories={categories}
       candidates={visibleCleanup}
+      sessionById={sessionById}
       selected={selected}
       cleaning={cleaning}
       cleaningIds={cleaningIds}
@@ -2476,6 +2636,7 @@ function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupV
       onScanAgain={resetCleanupStart}
       onClean={() => void moveSelectedToTrash()}
       onToggleCandidate={toggleSelected}
+      onToggleCandidates={toggleCandidateSetSelected}
       onToggleCategory={toggleCategorySelected}
       reviewPanel={reviewPanel}
     />
@@ -2490,6 +2651,7 @@ function CleanupScanShell({
   totalBytes,
   categories,
   candidates,
+  sessionById,
   selected,
   cleaning,
   cleaningIds,
@@ -2498,6 +2660,7 @@ function CleanupScanShell({
   onScanAgain,
   onClean,
   onToggleCandidate,
+  onToggleCandidates,
   onToggleCategory,
   reviewPanel,
 }: {
@@ -2508,6 +2671,7 @@ function CleanupScanShell({
   totalBytes: number
   categories: CleanupCategorySummary[]
   candidates: CleanupCandidate[]
+  sessionById: Map<string, SessionRecord>
   selected: string[]
   cleaning: boolean
   cleaningIds: string[]
@@ -2516,6 +2680,7 @@ function CleanupScanShell({
   onScanAgain: () => void
   onClean: () => void
   onToggleCandidate: (id: string) => void
+  onToggleCandidates: (ids: string[]) => void
   onToggleCategory: (category: CleanupCategoryKey) => void
   reviewPanel: ReactNode
 }) {
@@ -2548,16 +2713,21 @@ function CleanupScanShell({
     Math.max(48, stageSize.height - orbSize - 124),
   )
   const raisedTop = clampNumber(stageSize.height * 0.075, 34, 92)
-  const orbTop = stage === 'idle' ? idleTop : raisedTop
-  const orbLeft = stageSize.width / 2 - orbSize / 2
+  const completeOrbSize = clampNumber(stageSize.height * 0.31, 224, cleanupOrbMaxSize)
+  const activeOrbSize = stage === 'complete' ? completeOrbSize : orbSize
+  const orbTop = stage === 'idle' ? idleTop : stage === 'complete' ? 42 : raisedTop
+  const orbLeft =
+    stage === 'complete'
+      ? clampNumber(stageSize.width - activeOrbSize - 64, 420, stageSize.width - activeOrbSize - 28)
+      : stageSize.width / 2 - activeOrbSize / 2
   const visualOrbSize =
-    orbMode === 'scanning' ? orbSize * cleanupScanningOrbScale : orbSize
-  const visualOrbOffset = (orbSize - visualOrbSize) / 2
+    orbMode === 'scanning' ? activeOrbSize * cleanupScanningOrbScale : activeOrbSize
+  const visualOrbOffset = (activeOrbSize - visualOrbSize) / 2
   const contentGap =
     stageSize.height < 680 ? 8 : stageSize.height < 760 ? 10 : stageSize.height < 920 ? 18 : 24
   const baseContentTop =
     stage === 'idle'
-      ? idleTop + orbSize + contentGap
+      ? idleTop + activeOrbSize + contentGap
       : raisedTop + visualOrbOffset + visualOrbSize + contentGap
   const contentTop =
     stage === 'complete' ? Math.max(360, baseContentTop - 34) : baseContentTop
@@ -2575,14 +2745,16 @@ function CleanupScanShell({
       reviewPanel
     ) : (
       <CleanupCompleteBody
-        categories={categories}
-        candidates={candidates}
+          categories={categories}
+          candidates={candidates}
+          sessionById={sessionById}
         selected={selected}
         cleaning={cleaning}
         cleaningIds={cleaningIds}
         onClean={onClean}
         onScanAgain={onScanAgain}
         onToggleCandidate={onToggleCandidate}
+        onToggleCandidates={onToggleCandidates}
         onToggleCategory={onToggleCategory}
       />
     )
@@ -2628,13 +2800,13 @@ function CleanupScanShell({
         animate={{
           left: orbLeft,
           top: orbTop,
-          width: orbSize,
-          height: orbSize,
+          width: activeOrbSize,
+          height: activeOrbSize,
           opacity: stage === 'review' ? 0 : 1,
         }}
         transition={cleanupOrbMorphTransition}
       >
-        <CleanupOrbButton {...orbProps} size={orbSize} />
+        <CleanupOrbButton {...orbProps} size={activeOrbSize} />
       </motion.div>
       <div className={`cleanup-view-layer cleanup-view-layer-${stage}`}>
         <div
@@ -2727,25 +2899,30 @@ function CleanupScanningBody({
 function CleanupCompleteBody({
   categories,
   candidates,
+  sessionById,
   selected,
   cleaning,
   cleaningIds,
   onClean,
   onScanAgain,
   onToggleCandidate,
+  onToggleCandidates,
   onToggleCategory,
 }: {
   categories: CleanupCategorySummary[]
   candidates: CleanupCandidate[]
+  sessionById: Map<string, SessionRecord>
   selected: string[]
   cleaning: boolean
   cleaningIds: string[]
   onClean: () => void
   onScanAgain: () => void
   onToggleCandidate: (id: string) => void
+  onToggleCandidates: (ids: string[]) => void
   onToggleCategory: (category: CleanupCategoryKey) => void
 }) {
   const [expandedCategory, setExpandedCategory] = useState<CleanupCategoryKey>('inactive')
+  const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null)
   const candidatesByCategory = useMemo(() => {
     const grouped: Record<CleanupCategoryKey, CleanupCandidate[]> = {
       large: [],
@@ -2759,33 +2936,61 @@ function CleanupCompleteBody({
 
     return grouped
   }, [candidates])
+  const groupsByCategory = useMemo(
+    () => ({
+      large: buildCleanupCandidateGroups(candidatesByCategory.large, sessionById),
+      inactive: buildCleanupCandidateGroups(candidatesByCategory.inactive, sessionById),
+      test: buildCleanupCandidateGroups(candidatesByCategory.test, sessionById),
+    }),
+    [candidatesByCategory, sessionById],
+  )
   const selectedCount = candidates.filter((candidate) => selected.includes(candidate.id)).length
+  const selectedBytes = candidates
+    .filter((candidate) => selected.includes(candidate.id))
+    .reduce((total, candidate) => total + candidate.sizeBytes, 0)
 
   return (
-    <>
-      <div className="cleanup-complete-description text-center text-[14px] text-white/58">
-        Large chats, inactive chats, and test chats were found locally.
+    <div className="cleanup-complete-layout">
+      <div className="cleanup-complete-list">
+        <div className="cleanup-complete-description text-[14px] text-white/58">
+          Large chats, inactive chats, and test chats were found locally.
+        </div>
+        <div className="cleanup-result-accordion mt-4">
+          {categories.map((category) => (
+            <CleanupCategoryRow
+              key={category.key}
+              category={category}
+              candidates={candidatesByCategory[category.key]}
+              groups={groupsByCategory[category.key]}
+              expanded={expandedCategory === category.key}
+              expandedGroupId={expandedGroupId}
+              selected={selected}
+              cleaningIds={cleaningIds}
+              onToggleExpanded={() => {
+                setExpandedCategory(category.key)
+                setExpandedGroupId(null)
+              }}
+              onToggleCategory={() => onToggleCategory(category.key)}
+              onToggleCandidate={onToggleCandidate}
+              onToggleCandidates={onToggleCandidates}
+              onToggleGroup={(groupId) =>
+                setExpandedGroupId((current) => (current === groupId ? null : groupId))
+              }
+            />
+          ))}
+        </div>
       </div>
-      <div className="cleanup-result-accordion mt-4 [@media(max-height:760px)]:mt-3">
-        {categories.map((category) => (
-          <CleanupCategoryRow
-            key={category.key}
-            category={category}
-            candidates={candidatesByCategory[category.key]}
-            expanded={expandedCategory === category.key}
-            selected={selected}
-            cleaningIds={cleaningIds}
-            onToggleExpanded={() => setExpandedCategory(category.key)}
-            onToggleCategory={() => onToggleCategory(category.key)}
-            onToggleCandidate={onToggleCandidate}
-          />
-        ))}
-      </div>
-      <div className="cleanup-result-actions mt-4 flex items-center justify-center gap-2.5 [@media(max-height:760px)]:mt-3">
+      <div className="cleanup-result-actions">
+        <div className="cleanup-result-selection">
+          <ShieldCheck className="size-4 text-emerald-300" />
+          <span>
+            {selectedCount} selected / {formatBytes(selectedBytes)}
+          </span>
+        </div>
         <Button
           onClick={onClean}
           disabled={selectedCount === 0 || cleaning}
-          className="cleanup-primary-action h-9 min-w-[176px] rounded-lg bg-emerald-400 text-[13px] font-semibold text-emerald-950 shadow-[0_18px_38px_rgb(52_211_153_/_26%)] hover:bg-emerald-300 disabled:pointer-events-none disabled:brightness-75 disabled:saturate-50"
+          className="cleanup-primary-action h-10 min-w-[176px] rounded-lg bg-emerald-400 text-[13px] font-semibold text-emerald-950 shadow-[0_18px_38px_rgb(52_211_153_/_26%)] hover:bg-emerald-300 disabled:pointer-events-none disabled:brightness-75 disabled:saturate-50"
         >
           <Sparkles className="size-4" />
           Clean
@@ -2794,13 +2999,13 @@ function CleanupCompleteBody({
           variant="outline"
           size="lg"
           onClick={onScanAgain}
-          className="cleanup-action-button h-9 min-w-[156px] rounded-lg border-white/14 bg-white/5 text-[13px] text-white/84 hover:bg-white/10"
+          className="cleanup-action-button h-10 min-w-[156px] rounded-lg border-white/14 bg-white/5 text-[13px] text-white/84 hover:bg-white/10"
         >
           <RefreshCcw className="size-4" />
           Scan Again
         </Button>
       </div>
-    </>
+    </div>
   )
 }
 
@@ -2979,21 +3184,29 @@ function CleanupSourceRow({ item }: { item: CleanupSourceProgress }) {
 function CleanupCategoryRow({
   category,
   candidates,
+  groups,
   expanded,
+  expandedGroupId,
   selected,
   cleaningIds,
   onToggleExpanded,
   onToggleCategory,
   onToggleCandidate,
+  onToggleCandidates,
+  onToggleGroup,
 }: {
   category: CleanupCategorySummary
   candidates: CleanupCandidate[]
+  groups: CleanupCandidateGroup[]
   expanded: boolean
+  expandedGroupId: string | null
   selected: string[]
   cleaningIds: string[]
   onToggleExpanded: () => void
   onToggleCategory: () => void
   onToggleCandidate: (id: string) => void
+  onToggleCandidates: (ids: string[]) => void
+  onToggleGroup: (groupId: string) => void
 }) {
   const Icon = category.icon
   const ActionIcon =
@@ -3060,8 +3273,8 @@ function CleanupCategoryRow({
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.22, ease: 'easeOut' }}
           >
-            <div className="cleanup-session-table">
-              <div className="cleanup-session-header">
+            <div className="cleanup-group-list">
+              <div className="cleanup-group-header">
                 <button
                   type="button"
                   onClick={onToggleCategory}
@@ -3072,6 +3285,119 @@ function CleanupCategoryRow({
                 >
                   {allSelected ? <Check className="size-3.5" /> : someSelected ? '–' : null}
                 </button>
+                <span>Group</span>
+                <span>Agent</span>
+                <span>Sessions</span>
+                <span>Last opened</span>
+                <span>Size</span>
+                <span />
+              </div>
+
+              {groups.map((group) => (
+                <CleanupCandidateGroupRow
+                  key={group.id}
+                  group={group}
+                  expanded={expandedGroupId === group.id}
+                  selected={selected}
+                  cleaningIds={cleaningIds}
+                  onToggleGroup={() => onToggleGroup(group.id)}
+                  onToggleGroupSelected={() =>
+                    onToggleCandidates(group.candidates.map((candidate) => candidate.id))
+                  }
+                  onToggleCandidate={onToggleCandidate}
+                />
+              ))}
+
+              {groups.length === 0 && (
+                <div className="cleanup-session-empty">No sessions in this category.</div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+function CleanupCandidateGroupRow({
+  group,
+  expanded,
+  selected,
+  cleaningIds,
+  onToggleGroup,
+  onToggleGroupSelected,
+  onToggleCandidate,
+}: {
+  group: CleanupCandidateGroup
+  expanded: boolean
+  selected: string[]
+  cleaningIds: string[]
+  onToggleGroup: () => void
+  onToggleGroupSelected: () => void
+  onToggleCandidate: (id: string) => void
+}) {
+  const selectedInGroup = group.candidates.filter((candidate) => selected.includes(candidate.id))
+  const allSelected =
+    group.candidates.length > 0 && selectedInGroup.length === group.candidates.length
+  const someSelected = selectedInGroup.length > 0 && !allSelected
+  const visibleCandidates = group.candidates.slice(0, cleanupMaxVisibleGroupSessions)
+  const hiddenCandidateCount = Math.max(0, group.candidates.length - visibleCandidates.length)
+
+  return (
+    <div className={`cleanup-group-row ${expanded ? 'is-expanded' : ''}`}>
+      <div className="cleanup-group-trigger">
+        <button
+          type="button"
+          onClick={onToggleGroupSelected}
+          className={`cleanup-check ${allSelected ? 'is-checked' : ''} ${
+            someSelected ? 'is-mixed' : ''
+          }`}
+          aria-label={`${allSelected ? 'Deselect' : 'Select'} ${group.workspace.label}`}
+        >
+          {allSelected ? <Check className="size-3.5" /> : someSelected ? '–' : null}
+        </button>
+        <button
+          type="button"
+          onClick={onToggleGroup}
+          className="cleanup-group-main"
+          aria-expanded={expanded}
+        >
+          <span className="min-w-0">
+            <span className="block truncate text-[13px] font-semibold text-white/90">
+              {group.workspace.label}
+            </span>
+            <span className="mt-0.5 block truncate text-[11px] text-white/42">
+              {cleanupCompactPath(group.workspace.detail)}
+            </span>
+          </span>
+          <span className={`cleanup-source-pill cleanup-source-pill-${group.source}`}>
+            {agentLabel[group.source]}
+          </span>
+          <span className="text-white/58">{group.candidates.length}</span>
+          <span className="text-white/52">
+            {group.latestOpened ? formatRelative(group.latestOpened) : 'Unknown'}
+          </span>
+          <span className="text-right font-medium text-white/72">{formatBytes(group.bytes)}</span>
+          <ChevronDown
+            className={`cleanup-category-chevron size-4 justify-self-end text-white/58 ${
+              expanded ? 'rotate-180' : ''
+            }`}
+          />
+        </button>
+      </div>
+
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            className="cleanup-group-details"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+          >
+            <div className="cleanup-session-table">
+              <div className="cleanup-session-header">
+                <span />
                 <span>Session</span>
                 <span>Source</span>
                 <span>Last opened</span>
@@ -3079,8 +3405,7 @@ function CleanupCategoryRow({
                 <span>Safety</span>
                 <span />
               </div>
-
-              {candidates.map((candidate) => (
+              {visibleCandidates.map((candidate) => (
                 <CleanupResultSessionRow
                   key={candidate.id}
                   candidate={candidate}
@@ -3089,10 +3414,10 @@ function CleanupCategoryRow({
                   onToggle={() => onToggleCandidate(candidate.id)}
                 />
               ))}
-
-              {candidates.length === 0 && (
-                <div className="cleanup-session-empty">
-                  No sessions in this category.
+              {hiddenCandidateCount > 0 && (
+                <div className="cleanup-session-more">
+                  {hiddenCandidateCount} more sessions in this group. Use the group checkbox to
+                  select or clear all.
                 </div>
               )}
             </div>
@@ -4831,6 +5156,7 @@ function App() {
           <CleanupView
             cleanup={dashboard.snapshot.cleanup}
             agents={dashboard.snapshot.agents}
+            sessions={dashboard.snapshot.sessions}
             onScanCleanup={dashboard.scanCleanup}
             onMoveToTrash={dashboard.moveCleanupToTrash}
           />
@@ -4900,7 +5226,11 @@ function App() {
             }`}
           >
             <div
-              className={activeView === 'cleanup' ? 'h-full min-w-[1120px]' : 'min-w-[1120px] p-5'}
+              className={
+                activeView === 'cleanup'
+                  ? 'cleanup-app-panel h-full min-w-[1120px]'
+                  : 'min-w-[1120px] p-5'
+              }
             >
               {content}
             </div>
