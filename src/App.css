@@ -284,10 +284,15 @@ textarea,
   min-width: 214px;
 }
 
+.usage-heatmap-tooltip > span {
+  display: none !important;
+}
+
 .usage-tooltip-row {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 2px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: baseline;
 }
 
 .usage-tooltip-label {
