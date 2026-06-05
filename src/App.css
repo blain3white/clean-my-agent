@@ -124,6 +124,13 @@ textarea,
   min-width: 1120px;
 }
 
+.usage-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
 .usage-main-grid {
   display: grid;
   grid-template-columns: minmax(0, 3fr) minmax(380px, 2fr);
@@ -192,13 +199,6 @@ textarea,
 
 .usage-kpi-sparkline {
   width: 64px;
-}
-
-.usage-main-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(330px, 0.36fr);
-  gap: 16px;
-  align-items: start;
 }
 
 .usage-hero-grid {
