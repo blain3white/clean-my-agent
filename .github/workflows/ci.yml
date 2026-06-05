@@ -117,6 +117,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -131,6 +133,10 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Require tests for core changes
+        if: github.event_name == 'pull_request'
+        run: pnpm verify:pr-tests
 
       - name: Run checks
         run: pnpm check
