@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import CodexIcon from '@lobehub/icons/es/Codex'
 import ClaudeCodeIcon from '@lobehub/icons/es/ClaudeCode'
 import CursorIcon from '@lobehub/icons/es/Cursor'
@@ -14,7 +14,9 @@ import {
   CalendarDays,
   ChartNoAxesColumn,
   ChartSpline,
+  Check,
   CheckCircle2,
+  ChevronDown,
   Circle,
   Clock,
   Database,
@@ -31,6 +33,7 @@ import {
   Loader2,
   MessageSquare,
   Moon,
+  MoreHorizontal,
   Pin,
   RefreshCcw,
   Search,
@@ -1488,11 +1491,11 @@ function OverviewView({
     selectedDateKeys.has(dateKeyFromTime(new Date(session.lastUpdated).getTime())),
   )
   const storageData = snapshot.storage
-    .filter((slice) => slice.source in storageSourceColors)
+    .filter((slice) => agentSources.includes(slice.source as AgentSource))
     .map((slice) => ({
       name: slice.label,
       value: slice.sizeBytes,
-      source: slice.source as AgentSource | 'archives',
+      source: slice.source as AgentSource,
       sessions: slice.sessions ?? 0,
     }))
     .filter((slice) => slice.value > 0)
@@ -1851,6 +1854,7 @@ function SessionsView({
 
 type CleanupStage = 'idle' | 'scanning' | 'complete' | 'review'
 type CleanupScanStage = Exclude<CleanupStage, 'review'>
+type CleanupOrbPhase = 'initial' | 'scalein' | 'running' | 'scaleout' | 'finish'
 type CleanupFilter = 'all' | 'high' | 'medium' | 'low' | 'recoverable'
 type CleanupSort = 'size' | 'risk' | 'agent'
 type CleanupSourceProgress = {
@@ -1869,6 +1873,11 @@ type CleanupCategorySummary = {
   action: 'Recommended' | 'Review' | 'Safe'
   icon: typeof Activity
   accent: string
+}
+type CleanupPersistedViewState = {
+  stage: 'complete'
+  savedAt: string
+  candidateIds: string[]
 }
 
 type CleanupViewProps = {
@@ -1892,18 +1901,15 @@ const cleanupRiskRank: Record<CleanupCandidate['risk'], number> = {
   low: 1,
 }
 
-const cleanupStageTransition = {
-  type: 'spring',
-  stiffness: 260,
-  damping: 30,
-  mass: 0.86,
+const cleanupOrbMorphTransition = {
+  duration: 0.36,
+  ease: [0.22, 1, 0.36, 1],
 } as const
+const cleanupOrbMaxSize = 320
+const cleanupOrbMinSize = 248
+const cleanupScanningOrbScale = 250 / cleanupOrbMaxSize
 
-const cleanupStageVariants = {
-  initial: { opacity: 0, y: 22, scale: 0.985, filter: 'blur(8px)' },
-  animate: { opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' },
-  exit: { opacity: 0, y: -18, scale: 0.988, filter: 'blur(6px)' },
-} as const
+const cleanupViewStateStorageKey = 'clean-my-agent.cleanupViewState'
 
 const cleanupBodyTransition = {
   duration: 0.42,
@@ -1915,6 +1921,60 @@ const cleanupBodyVariants = {
   animate: { opacity: 1, y: 0, filter: 'blur(0px)' },
   exit: { opacity: 0, y: -14, filter: 'blur(4px)' },
 } as const
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function initialCleanupStageSize() {
+  if (typeof window === 'undefined') return { width: 960, height: 720 }
+  return {
+    width: Math.max(640, window.innerWidth - 232),
+    height: Math.max(520, window.innerHeight - 64),
+  }
+}
+
+function readCleanupViewState(): CleanupPersistedViewState | null {
+  try {
+    const raw = globalThis.localStorage?.getItem(cleanupViewStateStorageKey)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<CleanupPersistedViewState>
+    if (parsed.stage !== 'complete') return null
+    return {
+      stage: parsed.stage,
+      savedAt: typeof parsed.savedAt === 'string' ? parsed.savedAt : new Date().toISOString(),
+      candidateIds: Array.isArray(parsed.candidateIds)
+        ? parsed.candidateIds.filter((id): id is string => typeof id === 'string')
+        : [],
+    }
+  } catch (error) {
+    console.error(error)
+    return null
+  }
+}
+
+function writeCleanupViewState(candidates: CleanupCandidate[]) {
+  try {
+    globalThis.localStorage?.setItem(
+      cleanupViewStateStorageKey,
+      JSON.stringify({
+        stage: 'complete',
+        savedAt: new Date().toISOString(),
+        candidateIds: candidates.map((candidate) => candidate.id),
+      } satisfies CleanupPersistedViewState),
+    )
+  } catch (error) {
+    console.error(error)
+  }
+}
+
+function clearCleanupViewState() {
+  try {
+    globalThis.localStorage?.removeItem(cleanupViewStateStorageKey)
+  } catch (error) {
+    console.error(error)
+  }
+}
 
 const cleanupKindMeta: Record<
   CleanupCandidate['kind'],
@@ -1964,18 +2024,35 @@ const cleanupKindMeta: Record<
   },
 }
 
+function cleanupCategoryForCandidate(candidate: CleanupCandidate): CleanupCategoryKey {
+  return cleanupKindMeta[candidate.kind].category
+}
+
+function defaultCleanupSelection(candidates: CleanupCandidate[]): string[] {
+  return candidates
+    .filter((candidate) => candidate.recoverable)
+    .filter((candidate) => cleanupCategoryForCandidate(candidate) === 'inactive')
+    .map((candidate) => candidate.id)
+}
+
 function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupViewProps) {
-  const [stage, setStage] = useState<CleanupStage>('idle')
-  const [progress, setProgress] = useState(0)
-  const [visibleCleanup, setVisibleCleanup] = useState<CleanupCandidate[]>(cleanup)
-  const [selected, setSelected] = useState<string[]>([])
+  const [persistedState] = useState(() => readCleanupViewState())
+  const [stage, setStage] = useState<CleanupStage>(() => persistedState?.stage ?? 'idle')
+  const [orbPhase, setOrbPhase] = useState<CleanupOrbPhase>(() =>
+    persistedState ? 'finish' : 'initial',
+  )
+  const [progress, setProgress] = useState(() => (persistedState ? 100 : 0))
+  const [localCleanup, setLocalCleanup] = useState<CleanupCandidate[] | null>(null)
+  const [selected, setSelected] = useState<string[]>(() =>
+    persistedState ? defaultCleanupSelection(cleanup) : [],
+  )
   const [filter, setFilter] = useState<CleanupFilter>('all')
   const [sort, setSort] = useState<CleanupSort>('size')
   const [cleaning, setCleaning] = useState(false)
   const [cleaningIds, setCleaningIds] = useState<string[]>([])
   const [cleaned, setCleaned] = useState(false)
-  const [backgroundMode, setBackgroundMode] = useState(false)
   const scanRunRef = useRef(0)
+  const visibleCleanup = localCleanup ?? cleanup
 
   const sourceTotals = useMemo(
     () =>
@@ -2043,7 +2120,7 @@ function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupV
     }
 
     for (const candidate of visibleCleanup) {
-      const category = cleanupKindMeta[candidate.kind].category
+      const category = cleanupCategoryForCandidate(candidate)
       seed[category].bytes += candidate.sizeBytes
       seed[category].count += 1
     }
@@ -2093,14 +2170,20 @@ function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupV
     const runId = scanRunRef.current + 1
     scanRunRef.current = runId
     setStage('scanning')
+    setOrbPhase('scalein')
     setProgress(0)
-    setBackgroundMode(false)
+    setLocalCleanup(null)
     setCleaned(false)
     setCleaningIds([])
     setSelected([])
+    clearCleanupViewState()
+
+    window.setTimeout(() => {
+      if (scanRunRef.current === runId) setOrbPhase('running')
+    }, 360)
 
     const startedAt = Date.now()
-    const minimumVisualScanMs = 4200
+    const minimumVisualScanMs = 1400
     let scanResult: CleanupCandidate[] | undefined
     let scanError: unknown
     let scanSettled = false
@@ -2143,28 +2226,68 @@ function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupV
     if (scanError) {
       console.error(scanError)
       setStage('idle')
+      setOrbPhase('initial')
       setProgress(0)
+      clearCleanupViewState()
       return
     }
 
-    setVisibleCleanup(scanResult ?? [])
+    setLocalCleanup(scanResult ?? [])
+    setSelected(defaultCleanupSelection(scanResult ?? []))
     setProgress(100)
+    setOrbPhase('scaleout')
     window.setTimeout(() => {
-      if (scanRunRef.current === runId) setStage('complete')
-    }, 680)
+      if (scanRunRef.current !== runId) return
+      setStage('complete')
+      setOrbPhase('finish')
+      writeCleanupViewState(scanResult ?? [])
+    }, 360)
   }
 
   const cancelScan = () => {
     scanRunRef.current += 1
     setStage('idle')
+    setOrbPhase('initial')
     setProgress(0)
-    setBackgroundMode(false)
+    clearCleanupViewState()
+  }
+
+  const resetCleanupStart = () => {
+    scanRunRef.current += 1
+    setStage('idle')
+    setOrbPhase('initial')
+    setProgress(0)
+    setLocalCleanup(null)
+    setSelected([])
+    setCleaningIds([])
+    setCleaning(false)
+    setCleaned(false)
+    clearCleanupViewState()
+  }
+
+  const showCleanupSummary = () => {
+    setStage('complete')
+    setOrbPhase('finish')
+    writeCleanupViewState(visibleCleanup)
   }
 
   const toggleSelected = (id: string) => {
     setSelected((current) =>
       current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
     )
+  }
+
+  const toggleCategorySelected = (category: CleanupCategoryKey) => {
+    const categoryIds = visibleCleanup
+      .filter((candidate) => cleanupCategoryForCandidate(candidate) === category)
+      .map((candidate) => candidate.id)
+    if (categoryIds.length === 0) return
+
+    setSelected((current) => {
+      const selectedInCategory = categoryIds.every((id) => current.includes(id))
+      if (selectedInCategory) return current.filter((id) => !categoryIds.includes(id))
+      return Array.from(new Set([...current, ...categoryIds]))
+    })
   }
 
   const toggleVisibleSelected = () => {
@@ -2184,7 +2307,11 @@ function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupV
     try {
       await onMoveToTrash(removing)
       window.setTimeout(() => {
-        setVisibleCleanup((current) => current.filter((item) => !removing.includes(item.id)))
+        setLocalCleanup((current) => {
+          const next = (current ?? cleanup).filter((item) => !removing.includes(item.id))
+          if (stage === 'complete' || stage === 'review') writeCleanupViewState(next)
+          return next
+        })
         setSelected([])
         setCleaningIds([])
         setCleaning(false)
@@ -2199,8 +2326,8 @@ function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupV
   }
 
   const reviewPanel = (
-    <div className="cleanup-review-grid grid grid-cols-[minmax(0,1fr)_332px] gap-5 max-[1180px]:grid-cols-1">
-      <Card className="glass-panel overflow-hidden rounded-lg py-0">
+    <div className="cleanup-review-grid grid h-full min-h-0 grid-cols-[minmax(0,1fr)_332px] gap-5 max-[1180px]:grid-cols-1">
+      <Card className="glass-panel flex min-h-0 overflow-hidden rounded-lg py-0">
         <CardHeader className="flex-row items-center justify-between gap-4 px-7 pb-0 pt-6">
           <div className="min-w-0">
             <CardTitle className="text-[20px] font-semibold text-white">
@@ -2223,7 +2350,7 @@ function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupV
             <Button
               variant="outline"
               size="lg"
-              onClick={() => void beginScan()}
+              onClick={resetCleanupStart}
               className="h-9 rounded-lg border-white/12 bg-white/5 px-3 text-[13px] font-normal text-white/76 hover:bg-white/10"
             >
               <RefreshCcw className="size-4" />
@@ -2231,7 +2358,7 @@ function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupV
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="px-6 pb-6 pt-5">
+        <CardContent className="flex min-h-0 flex-1 flex-col px-6 pb-6 pt-5">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/8 bg-white/[0.035] p-3">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               {(
@@ -2271,7 +2398,7 @@ function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupV
             </label>
           </div>
 
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-auto pr-1">
             {filteredCleanup.length === 0 ? (
               <div className="grid min-h-[260px] place-items-center rounded-lg border border-white/8 bg-white/[0.03] text-center">
                 <div>
@@ -2296,7 +2423,7 @@ function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupV
             )}
           </div>
 
-          <div className="mt-5 flex items-center justify-between border-t border-white/8 px-1 pt-5">
+          <div className="mt-5 flex shrink-0 items-center justify-between border-t border-white/8 px-1 pt-5">
             <div className="flex items-start gap-3">
               <ShieldCheck className="mt-0.5 size-5 text-emerald-300" />
               <div>
@@ -2311,7 +2438,7 @@ function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupV
             <Button
               variant="outline"
               size="lg"
-              onClick={() => setStage('complete')}
+              onClick={showCleanupSummary}
               className="h-9 rounded-lg border-white/12 bg-white/5 px-4 text-[13px] font-normal text-white/72 hover:bg-white/10 hover:text-white"
             >
               Summary
@@ -2332,80 +2459,153 @@ function CleanupView({ cleanup, agents, onScanCleanup, onMoveToTrash }: CleanupV
     </div>
   )
 
-  if (stage === 'review') {
-    return (
-      <motion.div
-        key={stage}
-        variants={cleanupStageVariants}
-        initial="initial"
-        animate="animate"
-        exit="exit"
-        transition={cleanupStageTransition}
-      >
-        {reviewPanel}
-      </motion.div>
-    )
-  }
-
   return (
     <CleanupScanShell
       stage={stage}
+      orbPhase={orbPhase}
       progress={progress}
       sourceProgress={sourceProgress}
-      backgroundMode={backgroundMode}
       totalBytes={totalBytes}
       categories={categories}
+      candidates={visibleCleanup}
+      selected={selected}
+      cleaning={cleaning}
+      cleaningIds={cleaningIds}
       onStart={() => void beginScan()}
       onCancel={cancelScan}
-      onReview={() => setStage('review')}
-      onScanAgain={() => void beginScan()}
-      onRunInBackground={() => setBackgroundMode(true)}
+      onScanAgain={resetCleanupStart}
+      onClean={() => void moveSelectedToTrash()}
+      onToggleCandidate={toggleSelected}
+      onToggleCategory={toggleCategorySelected}
+      reviewPanel={reviewPanel}
     />
   )
 }
 
 function CleanupScanShell({
   stage,
+  orbPhase,
   progress,
   sourceProgress,
-  backgroundMode,
   totalBytes,
   categories,
+  candidates,
+  selected,
+  cleaning,
+  cleaningIds,
   onStart,
   onCancel,
-  onReview,
   onScanAgain,
-  onRunInBackground,
+  onClean,
+  onToggleCandidate,
+  onToggleCategory,
+  reviewPanel,
 }: {
-  stage: CleanupScanStage
+  stage: CleanupStage
+  orbPhase: CleanupOrbPhase
   progress: number
   sourceProgress: CleanupSourceProgress[]
-  backgroundMode: boolean
   totalBytes: number
   categories: CleanupCategorySummary[]
+  candidates: CleanupCandidate[]
+  selected: string[]
+  cleaning: boolean
+  cleaningIds: string[]
   onStart: () => void
   onCancel: () => void
-  onReview: () => void
   onScanAgain: () => void
-  onRunInBackground: () => void
+  onClean: () => void
+  onToggleCandidate: (id: string) => void
+  onToggleCategory: (category: CleanupCategoryKey) => void
+  reviewPanel: ReactNode
 }) {
-  const orbProps =
+  const orbMode: CleanupScanStage = stage === 'review' ? 'complete' : stage
+  const stageRef = useRef<HTMLDivElement>(null)
+  const [stageSize, setStageSize] = useState(initialCleanupStageSize)
+
+  useEffect(() => {
+    const node = stageRef.current
+    if (!node) return
+
+    const updateSize = () => {
+      const rect = node.getBoundingClientRect()
+      setStageSize({
+        width: Math.max(1, rect.width),
+        height: Math.max(1, rect.height),
+      })
+    }
+
+    updateSize()
+    const resizeObserver = new ResizeObserver(updateSize)
+    resizeObserver.observe(node)
+    return () => resizeObserver.disconnect()
+  }, [])
+
+  const orbSize = clampNumber(stageSize.height * 0.42, cleanupOrbMinSize, cleanupOrbMaxSize)
+  const idleTop = clampNumber(
+    stageSize.height * 0.5 - orbSize / 2 - 54,
+    48,
+    Math.max(48, stageSize.height - orbSize - 124),
+  )
+  const raisedTop = clampNumber(stageSize.height * 0.075, 34, 92)
+  const orbTop = stage === 'idle' ? idleTop : raisedTop
+  const orbLeft = stageSize.width / 2 - orbSize / 2
+  const visualOrbSize =
+    orbMode === 'scanning' ? orbSize * cleanupScanningOrbScale : orbSize
+  const visualOrbOffset = (orbSize - visualOrbSize) / 2
+  const contentGap =
+    stageSize.height < 680 ? 8 : stageSize.height < 760 ? 10 : stageSize.height < 920 ? 18 : 24
+  const baseContentTop =
     stage === 'idle'
+      ? idleTop + orbSize + contentGap
+      : raisedTop + visualOrbOffset + visualOrbSize + contentGap
+  const contentTop =
+    stage === 'complete' ? Math.max(360, baseContentTop - 34) : baseContentTop
+
+  const bodyContent =
+    stage === 'idle' ? (
+      <CleanupIdleBody />
+    ) : stage === 'scanning' ? (
+      <CleanupScanningBody
+        progress={progress}
+        sourceProgress={sourceProgress}
+        onCancel={onCancel}
+      />
+    ) : stage === 'review' ? (
+      reviewPanel
+    ) : (
+      <CleanupCompleteBody
+        categories={categories}
+        candidates={candidates}
+        selected={selected}
+        cleaning={cleaning}
+        cleaningIds={cleaningIds}
+        onClean={onClean}
+        onScanAgain={onScanAgain}
+        onToggleCandidate={onToggleCandidate}
+        onToggleCategory={onToggleCategory}
+      />
+    )
+  const orbProps =
+    orbMode === 'idle'
       ? {
           mode: 'idle' as const,
+          phase: orbPhase,
           progress: 0,
           icon: <Search className="size-16" />,
           title: 'Start Scan',
           onClick: onStart,
         }
-      : stage === 'scanning'
+      : orbMode === 'scanning'
         ? {
             mode: 'scanning' as const,
+            phase: orbPhase,
             progress,
             title: 'Scanning...',
           }
         : {
             mode: 'complete' as const,
+            phase: orbPhase,
             progress: 100,
             icon: <CheckCircle2 className="size-12" />,
             title: formatBytes(totalBytes),
@@ -2413,51 +2613,58 @@ function CleanupScanShell({
           }
 
   return (
-    <div className="cleanup-stage cleanup-stage-centered min-h-[calc(100vh-7.5rem)]">
-      {backgroundMode && (
-        <div className="cleanup-floating-progress">
-          <span>{Math.round(progress)}%</span>
-          <small>Scanning in background</small>
-        </div>
-      )}
-      <div className={`cleanup-orb-slot cleanup-orb-slot-${stage}`}>
-        <CleanupOrbButton {...orbProps} />
-      </div>
+    <div
+      ref={stageRef}
+      className={`cleanup-stage cleanup-stage-${stage}`}
+      style={
+        {
+          '--cleanup-content-top': `${contentTop}px`,
+        } as CSSProperties
+      }
+    >
       <motion.div
-        className="cleanup-stage-body"
-        animate={{ y: stage === 'idle' ? 0 : -72 }}
-        transition={cleanupStageTransition}
+        className={`cleanup-orb-layer cleanup-orb-layer-${stage}`}
+        initial={false}
+        animate={{
+          left: orbLeft,
+          top: orbTop,
+          width: orbSize,
+          height: orbSize,
+          opacity: stage === 'review' ? 0 : 1,
+        }}
+        transition={cleanupOrbMorphTransition}
       >
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={stage}
-            variants={cleanupBodyVariants}
-            initial="initial"
-            animate="animate"
-            exit="exit"
-            transition={cleanupBodyTransition}
-          >
-            {stage === 'idle' ? (
-              <CleanupIdleBody />
-            ) : stage === 'scanning' ? (
-              <CleanupScanningBody
-                progress={progress}
-                sourceProgress={sourceProgress}
-                onRunInBackground={onRunInBackground}
-                onCancel={onCancel}
-              />
-            ) : (
-              <CleanupCompleteBody
-                totalBytes={totalBytes}
-                categories={categories}
-                onReview={onReview}
-                onScanAgain={onScanAgain}
-                onRunInBackground={onRunInBackground}
-              />
-            )}
-          </motion.div>
-        </AnimatePresence>
+        <CleanupOrbButton {...orbProps} size={orbSize} />
       </motion.div>
+      <div className={`cleanup-view-layer cleanup-view-layer-${stage}`}>
+        <div
+          className={`cleanup-stage-body cleanup-stage-body-${stage} ${
+            stage === 'review' ? 'cleanup-stage-body-review' : ''
+          }`}
+        >
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={stage}
+              className={stage === 'review' ? 'h-full min-h-0' : undefined}
+              variants={cleanupBodyVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={cleanupBodyTransition}
+            >
+              {bodyContent}
+            </motion.div>
+          </AnimatePresence>
+        </div>
+      </div>
+      <CleanupSafetyNote
+        className="cleanup-safety-bottom"
+        text={
+          stage === 'complete' || stage === 'review'
+            ? 'All session data was analyzed locally.'
+            : 'All session data is analyzed locally.'
+        }
+      />
     </div>
   )
 }
@@ -2465,15 +2672,14 @@ function CleanupScanShell({
 function CleanupIdleBody() {
   return (
     <>
-      <div className="mt-14 text-center text-[15px] text-white/58">
+      <div className="text-center text-[14px] text-white/58">
         Scan large chats, inactive chats, and test chats.
       </div>
-      <div className="mt-7 flex flex-wrap justify-center gap-3">
+      <div className="mt-4 flex flex-wrap justify-center gap-2 [@media(max-height:760px)]:mt-3">
         <CleanupPill icon={<MessageSquare className="size-4" />} label="Large chats" />
         <CleanupPill icon={<Clock className="size-4" />} label="90 days inactive" />
         <CleanupPill icon={<FlaskConical className="size-4" />} label="Test chats" />
       </div>
-      <CleanupSafetyNote className="mt-28" text="All session data is analyzed locally." />
     </>
   )
 }
@@ -2481,130 +2687,145 @@ function CleanupIdleBody() {
 function CleanupScanningBody({
   progress,
   sourceProgress,
-  onRunInBackground,
   onCancel,
 }: {
   progress: number
   sourceProgress: CleanupSourceProgress[]
-  onRunInBackground: () => void
   onCancel: () => void
 }) {
   return (
     <>
-      <div className="mt-6 text-center text-[15px] text-white/58">
+      <div className="text-center text-[14px] text-white/58">
         Analyzing session size, inactivity, and test chats
       </div>
-      <Card className="cleanup-scan-card mt-7 w-full max-w-[760px] rounded-lg py-0">
-        <CardContent className="px-5 py-5">
-          <div className="space-y-4">
+      <Card className="cleanup-scan-card mt-3.5 w-full max-w-[600px] rounded-lg py-0 [@media(max-height:760px)]:mt-3">
+        <CardContent className="px-3.5 py-3">
+          <div className="space-y-2.5">
             {sourceProgress.map((item) => (
               <CleanupSourceRow key={item.source} item={item} />
             ))}
           </div>
         </CardContent>
       </Card>
-      <CleanupSafetyNote className="mt-8" text="All session data is analyzed locally." />
-      <div className="mt-6 flex items-center justify-center gap-3">
-        <Button
-          variant="outline"
-          size="lg"
-          onClick={onRunInBackground}
-          className="cleanup-action-button h-11 rounded-lg border-white/14 bg-white/5 px-6 text-[15px] text-white/84 hover:bg-white/10"
-        >
-          <Archive className="size-4" />
-          Run in Background
-        </Button>
+      <div className="mt-3.5 flex items-center justify-center [@media(max-height:760px)]:mt-3">
         <Button
           variant="outline"
           size="lg"
           onClick={onCancel}
-          className="cleanup-action-button h-11 rounded-lg border-white/14 bg-white/5 px-7 text-[15px] text-white/84 hover:bg-white/10"
+          className="cleanup-action-button h-9 rounded-lg border-white/14 bg-white/5 px-5 text-[13px] text-white/84 hover:bg-white/10"
         >
           Cancel
         </Button>
       </div>
-      <p className="mt-5 text-center text-xs text-white/36">
-        You can continue using the app while scanning. {Math.round(progress)}% complete.
+      <p className="mt-2.5 text-center text-xs text-white/36">
+        Scanning local sources. {Math.round(progress)}% complete.
       </p>
     </>
   )
 }
 
 function CleanupCompleteBody({
-  totalBytes,
   categories,
-  onReview,
+  candidates,
+  selected,
+  cleaning,
+  cleaningIds,
+  onClean,
   onScanAgain,
-  onRunInBackground,
+  onToggleCandidate,
+  onToggleCategory,
 }: {
-  totalBytes: number
   categories: CleanupCategorySummary[]
-  onReview: () => void
+  candidates: CleanupCandidate[]
+  selected: string[]
+  cleaning: boolean
+  cleaningIds: string[]
+  onClean: () => void
   onScanAgain: () => void
-  onRunInBackground: () => void
+  onToggleCandidate: (id: string) => void
+  onToggleCategory: (category: CleanupCategoryKey) => void
 }) {
+  const [expandedCategory, setExpandedCategory] = useState<CleanupCategoryKey>('inactive')
+  const candidatesByCategory = useMemo(() => {
+    const grouped: Record<CleanupCategoryKey, CleanupCandidate[]> = {
+      large: [],
+      inactive: [],
+      test: [],
+    }
+
+    for (const candidate of candidates) {
+      grouped[cleanupCategoryForCandidate(candidate)].push(candidate)
+    }
+
+    return grouped
+  }, [candidates])
+  const selectedCount = candidates.filter((candidate) => selected.includes(candidate.id)).length
+
   return (
     <>
-      <div className="mt-6 text-center text-[15px] text-white/58">
+      <div className="cleanup-complete-description text-center text-[14px] text-white/58">
         Large chats, inactive chats, and test chats were found locally.
       </div>
-      <Card className="cleanup-result-card mt-6 w-full max-w-[744px] overflow-hidden rounded-lg py-0">
-        <CardContent className="px-6 py-0">
-          {categories.map((category) => (
-            <CleanupCategoryRow key={category.key} category={category} />
-          ))}
-        </CardContent>
-      </Card>
-      <div className="mt-7 flex items-center justify-center gap-4">
+      <div className="cleanup-result-accordion mt-4 [@media(max-height:760px)]:mt-3">
+        {categories.map((category) => (
+          <CleanupCategoryRow
+            key={category.key}
+            category={category}
+            candidates={candidatesByCategory[category.key]}
+            expanded={expandedCategory === category.key}
+            selected={selected}
+            cleaningIds={cleaningIds}
+            onToggleExpanded={() => setExpandedCategory(category.key)}
+            onToggleCategory={() => onToggleCategory(category.key)}
+            onToggleCandidate={onToggleCandidate}
+          />
+        ))}
+      </div>
+      <div className="cleanup-result-actions mt-4 flex items-center justify-center gap-2.5 [@media(max-height:760px)]:mt-3">
         <Button
-          onClick={onReview}
-          disabled={totalBytes === 0}
-          className="cleanup-primary-action h-12 min-w-[236px] rounded-lg bg-emerald-400 text-[15px] font-semibold text-emerald-950 shadow-[0_18px_38px_rgb(52_211_153_/_26%)] hover:bg-emerald-300"
+          onClick={onClean}
+          disabled={selectedCount === 0 || cleaning}
+          className="cleanup-primary-action h-9 min-w-[176px] rounded-lg bg-emerald-400 text-[13px] font-semibold text-emerald-950 shadow-[0_18px_38px_rgb(52_211_153_/_26%)] hover:bg-emerald-300 disabled:pointer-events-none disabled:brightness-75 disabled:saturate-50"
         >
           <Sparkles className="size-4" />
-          Review Cleanup
+          Clean
         </Button>
         <Button
           variant="outline"
           size="lg"
           onClick={onScanAgain}
-          className="cleanup-action-button h-12 min-w-[212px] rounded-lg border-white/14 bg-white/5 text-[15px] text-white/84 hover:bg-white/10"
+          className="cleanup-action-button h-9 min-w-[156px] rounded-lg border-white/14 bg-white/5 text-[13px] text-white/84 hover:bg-white/10"
         >
           <RefreshCcw className="size-4" />
           Scan Again
         </Button>
       </div>
-      <button
-        type="button"
-        onClick={onRunInBackground}
-        className="mt-6 flex items-center gap-2 text-sm text-white/48 transition hover:text-white/72"
-      >
-        <Archive className="size-4" />
-        Run in Background
-      </button>
-      <CleanupSafetyNote className="mt-9" text="All session data was analyzed locally." />
     </>
   )
 }
 
 function CleanupOrbButton({
   mode,
+  phase,
   progress,
+  size,
   icon,
   title,
   detail,
   onClick,
 }: {
   mode: 'idle' | 'scanning' | 'complete'
+  phase: CleanupOrbPhase
   progress: number
+  size: number
   icon?: ReactNode
   title: string
   detail?: string
   onClick?: () => void
 }) {
-  const size = mode === 'idle' || mode === 'complete' ? 320 : 250
-  const orbY = mode === 'idle' ? 0 : mode === 'scanning' ? -86 : -92
-  const stroke = mode === 'scanning' ? 8 : 7
+  const visualScale = mode === 'scanning' ? cleanupScanningOrbScale : 1
+  const textScale = size / cleanupOrbMaxSize
+  const stroke = mode === 'scanning' ? 10 : 7
   const radius = size / 2 - stroke * 2
   const circumference = 2 * Math.PI * radius
   const dashOffset = circumference - (progress / 100) * circumference
@@ -2613,7 +2834,7 @@ function CleanupOrbButton({
   const content =
     mode === 'scanning' ? (
       <>
-        <span className="cleanup-orb-percent">{Math.round(progress)}%</span>
+        <span className="cleanup-orb-percent">{Math.round(progress)}</span>
         <span className="cleanup-orb-status">{title}</span>
       </>
     ) : mode === 'complete' ? (
@@ -2639,51 +2860,66 @@ function CleanupOrbButton({
       disabled={!onClick}
       className={`cleanup-orb cleanup-orb-${mode}`}
       aria-label={onClick ? title : undefined}
-      layout
       initial={false}
-      animate={{ width: size, height: size, y: orbY, opacity: 1, scale: 1 }}
+      animate={{
+        width: size,
+        height: size,
+        opacity: 1,
+      }}
       whileHover={onClick ? { scale: 1.012 } : undefined}
       whileTap={onClick ? { scale: 0.985 } : undefined}
-      transition={cleanupStageTransition}
+      transition={cleanupOrbMorphTransition}
+      data-phase={phase}
+      style={{ '--cleanup-orb-scale': textScale } as CSSProperties}
     >
-      <span className="cleanup-orb-particles" />
-      <svg className="cleanup-orb-ring" width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        <circle
-          className="cleanup-orb-track"
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          strokeWidth={stroke}
-        />
-        <circle
-          className="cleanup-orb-progress"
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          strokeWidth={stroke}
-          strokeDasharray={circumference}
-          strokeDashoffset={mode === 'idle' ? 0 : dashOffset}
-        />
-      </svg>
-      <AnimatePresence mode="wait">
+      <motion.span
+        className={`cleanup-orb-visual cleanup-orb-visual-${mode}`}
+        initial={false}
+        animate={{ scale: visualScale }}
+        transition={cleanupOrbMorphTransition}
+        data-phase={phase}
+      >
+        <span className="cleanup-orb-particles" />
+        <svg
+          className="cleanup-orb-ring"
+          width={size}
+          height={size}
+          viewBox={`0 0 ${size} ${size}`}
+        >
+          <circle
+            className="cleanup-orb-track"
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            strokeWidth={stroke}
+          />
+          <circle
+            className="cleanup-orb-progress"
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            strokeWidth={stroke}
+            strokeDasharray={circumference}
+            strokeDashoffset={mode === 'idle' ? 0 : dashOffset}
+          />
+        </svg>
         <motion.span
           key={mode}
           className={`cleanup-orb-content cleanup-orb-content-${mode}`}
           initial={{ opacity: 0, y: 10, scale: 0.98 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: -8, scale: 0.98 }}
           transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
         >
           {content}
         </motion.span>
-      </AnimatePresence>
+      </motion.span>
     </motion.button>
   )
 }
 
 function CleanupPill({ icon, label }: { icon: ReactNode; label: string }) {
   return (
-    <div className="flex h-12 min-w-[170px] items-center justify-center gap-3 rounded-lg border border-white/10 bg-white/[0.035] px-5 text-[14px] text-white/72 shadow-[inset_0_1px_0_rgb(255_255_255_/_6%)]">
+    <div className="flex h-9 min-w-[136px] items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.035] px-3.5 text-[12px] text-white/72 shadow-[inset_0_1px_0_rgb(255_255_255_/_6%)]">
       <span className="text-emerald-300">{icon}</span>
       {label}
     </div>
@@ -2708,10 +2944,10 @@ function CleanupSourceRow({ item }: { item: CleanupSourceProgress }) {
     item.status === 'Complete' ? CheckCircle2 : item.status === 'Scanning' ? Loader2 : Clock
 
   return (
-    <div className="grid grid-cols-[180px_minmax(0,1fr)_90px_100px] items-center gap-4 max-[980px]:grid-cols-[150px_minmax(0,1fr)_82px_96px]">
-      <div className="flex min-w-0 items-center gap-3">
+    <div className="cleanup-source-row grid grid-cols-[132px_minmax(0,1fr)_64px_80px] items-center gap-2.5 max-[980px]:grid-cols-[124px_minmax(0,1fr)_58px_76px]">
+      <div className="flex min-w-0 items-center gap-2.5">
         <AgentGlyph source={item.source} />
-        <span className="truncate text-sm font-medium text-white/82">
+        <span className="truncate text-[13px] font-medium text-white/82">
           {agentLabel[item.source]}
         </span>
       </div>
@@ -2740,47 +2976,189 @@ function CleanupSourceRow({ item }: { item: CleanupSourceProgress }) {
   )
 }
 
-function CleanupCategoryRow({ category }: { category: CleanupCategorySummary }) {
+function CleanupCategoryRow({
+  category,
+  candidates,
+  expanded,
+  selected,
+  cleaningIds,
+  onToggleExpanded,
+  onToggleCategory,
+  onToggleCandidate,
+}: {
+  category: CleanupCategorySummary
+  candidates: CleanupCandidate[]
+  expanded: boolean
+  selected: string[]
+  cleaningIds: string[]
+  onToggleExpanded: () => void
+  onToggleCategory: () => void
+  onToggleCandidate: (id: string) => void
+}) {
   const Icon = category.icon
   const ActionIcon =
     category.action === 'Recommended' ? Sparkles : category.action === 'Review' ? Eye : ShieldCheck
-  const actionClass =
+  const selectedInCategory = candidates.filter((candidate) => selected.includes(candidate.id))
+  const allSelected = candidates.length > 0 && selectedInCategory.length === candidates.length
+  const someSelected = selectedInCategory.length > 0 && !allSelected
+  const accentClass =
+    category.key === 'large'
+      ? 'cleanup-category-accent-green'
+      : category.key === 'inactive'
+        ? 'cleanup-category-accent-blue'
+        : 'cleanup-category-accent-violet'
+  const tagClass =
     category.action === 'Recommended'
-      ? 'border-emerald-300/32 bg-emerald-400/10 text-emerald-300'
+      ? 'cleanup-category-tag-green'
       : category.action === 'Review'
-        ? 'border-blue-300/28 bg-blue-400/10 text-blue-300'
-        : 'border-white/14 bg-white/5 text-white/58'
+        ? 'cleanup-category-tag-blue'
+        : 'cleanup-category-tag-neutral'
 
   return (
-    <div className="cleanup-category-row grid grid-cols-[64px_minmax(0,1fr)_142px_92px] items-center gap-3 border-b border-white/8 py-5 last:border-b-0">
-      <div className={`grid size-12 place-items-center rounded-lg ring-1 ${category.accent}`}>
-        <Icon className="size-6" />
-      </div>
-      <div className="min-w-0">
-        <div className="flex items-center gap-2 text-[15px] font-semibold text-white">
-          {category.title}
-          {category.count > 0 && (
-            <span className="rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-medium text-white/48">
-              {category.count}
-            </span>
-          )}
-        </div>
-        <p className="mt-1 text-[13px] text-white/52">{category.description}</p>
-      </div>
-      <Badge
-        variant="outline"
-        className={`h-7 justify-center rounded-full px-3 text-xs ring-1 ${actionClass}`}
+    <div className={`cleanup-category-row ${expanded ? 'is-expanded' : ''}`}>
+      <button
+        type="button"
+        onClick={onToggleExpanded}
+        className="cleanup-category-trigger"
+        aria-expanded={expanded}
       >
-        <ActionIcon className="mr-1 size-3.5" />
-        {category.action}
-      </Badge>
-      <div className="text-right text-[16px] font-semibold text-white">
-        {formatBytes(category.bytes)}
-      </div>
+        <span className={`cleanup-category-icon ${accentClass}`}>
+          <Icon className="size-5" />
+        </span>
+        <span className="min-w-0">
+          <span className="flex items-center gap-2 text-[14px] font-semibold text-white">
+            {category.title}
+            <span className="cleanup-category-count">{category.count}</span>
+          </span>
+          <span className="mt-1 block truncate text-[12px] text-white/52">
+            {category.description}
+          </span>
+        </span>
+        <Badge
+          variant="outline"
+          className={`cleanup-category-tag ${tagClass}`}
+        >
+          <ActionIcon className="size-3.5" />
+          {category.action}
+        </Badge>
+        <span className="text-right text-[14px] font-semibold text-white">
+          {formatBytes(category.bytes)}
+        </span>
+        <ChevronDown
+          className={`cleanup-category-chevron size-4 text-white/64 ${
+            expanded ? 'rotate-180' : ''
+          }`}
+        />
+      </button>
+
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            className="cleanup-category-details"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.22, ease: 'easeOut' }}
+          >
+            <div className="cleanup-session-table">
+              <div className="cleanup-session-header">
+                <button
+                  type="button"
+                  onClick={onToggleCategory}
+                  className={`cleanup-check ${allSelected ? 'is-checked' : ''} ${
+                    someSelected ? 'is-mixed' : ''
+                  }`}
+                  aria-label={`${allSelected ? 'Deselect' : 'Select'} ${category.title}`}
+                >
+                  {allSelected ? <Check className="size-3.5" /> : someSelected ? '–' : null}
+                </button>
+                <span>Session</span>
+                <span>Source</span>
+                <span>Last opened</span>
+                <span>Size</span>
+                <span>Safety</span>
+                <span />
+              </div>
+
+              {candidates.map((candidate) => (
+                <CleanupResultSessionRow
+                  key={candidate.id}
+                  candidate={candidate}
+                  checked={selected.includes(candidate.id)}
+                  cleaning={cleaningIds.includes(candidate.id)}
+                  onToggle={() => onToggleCandidate(candidate.id)}
+                />
+              ))}
+
+              {candidates.length === 0 && (
+                <div className="cleanup-session-empty">
+                  No sessions in this category.
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
 
+function CleanupResultSessionRow({
+  candidate,
+  checked,
+  cleaning,
+  onToggle,
+}: {
+  candidate: CleanupCandidate
+  checked: boolean
+  cleaning: boolean
+  onToggle: () => void
+}) {
+  const source = candidate.source ?? 'codex'
+  const sessionId = candidate.sessionIds[0] ?? candidate.id
+
+  return (
+    <div className={`cleanup-session-row ${cleaning ? 'is-cleaning' : ''}`}>
+      {cleaning && <div className="cleanup-cleaning-bar" />}
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={cleaning}
+        className={`cleanup-check ${checked ? 'is-checked' : ''}`}
+        aria-label={`${checked ? 'Deselect' : 'Select'} ${candidate.title}`}
+      >
+        {checked && <Check className="size-3.5" />}
+      </button>
+      <div className="min-w-0">
+        <div className="truncate text-[13px] font-semibold text-white/90">{candidate.title}</div>
+        <div className="mt-0.5 truncate text-[11px] text-white/42">
+          Session ID: {sessionId}
+        </div>
+      </div>
+      <span className={`cleanup-source-pill cleanup-source-pill-${source}`}>
+        {agentLabel[source]}
+      </span>
+      <span className="text-white/56">
+        {candidate.lastUpdated ? formatRelative(candidate.lastUpdated) : 'Unknown'}
+      </span>
+      <span className="font-medium text-white/70">{formatBytes(candidate.sizeBytes)}</span>
+      <Badge
+        variant="outline"
+        className="cleanup-safety-pill h-6 justify-center rounded-full px-2.5 text-[11px] ring-1"
+      >
+        <ShieldCheck className="size-3.5" />
+        Safe
+      </Badge>
+      <button
+        type="button"
+        className="cleanup-more-button"
+        aria-label={`More actions for ${candidate.title}`}
+      >
+        <MoreHorizontal className="size-4" />
+      </button>
+    </div>
+  )
+}
 function CleanupCandidateRow({
   candidate,
   checked,
@@ -4496,8 +4874,16 @@ function App() {
             onUsageExport={() => exportUsageCsv(dashboard.snapshot, usageRange)}
             onRescan={dashboard.rescan}
           />
-          <div className="content-scroll no-drag-region min-h-0 flex-1 overflow-auto">
-            <div className="min-w-[1120px] p-5">{content}</div>
+          <div
+            className={`content-scroll no-drag-region min-h-0 flex-1 ${
+              activeView === 'cleanup' ? 'overflow-hidden' : 'overflow-auto'
+            }`}
+          >
+            <div
+              className={activeView === 'cleanup' ? 'h-full min-w-[1120px]' : 'min-w-[1120px] p-5'}
+            >
+              {content}
+            </div>
           </div>
         </main>
       </div>
