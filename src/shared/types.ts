@@ -8,6 +8,8 @@ export type SessionStorageState = 'live' | 'archived'
 
 export type RiskLevel = 'low' | 'medium' | 'high'
 
+export type TokenCostSource = 'actual' | 'model-estimate' | 'mixed'
+
 export type TokenUsage = {
   input: number
   output: number
@@ -16,6 +18,8 @@ export type TokenUsage = {
   cacheRead?: number
   total: number
   costUsd?: number
+  costSource?: TokenCostSource
+  model?: string
   estimated: boolean
 }
 

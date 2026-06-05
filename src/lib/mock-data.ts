@@ -1,4 +1,5 @@
 import type { AgentSource, DashboardSnapshot, SessionRecord } from '@/shared/types'
+import { calculateUsageModelCost } from '@/shared/usage-pricing'
 
 const GB = 1024 ** 3
 const MB = 1024 ** 2
@@ -16,6 +17,7 @@ const sessionBase: Array<{
   tokens: number
   sizeMb: number
   backedUp: boolean
+  model?: string
 }> = [
   {
     id: 'demo-codex-1',
@@ -28,6 +30,7 @@ const sessionBase: Array<{
     tokens: 482_000,
     sizeMb: 412,
     backedUp: true,
+    model: 'gpt-5-codex',
   },
   {
     id: 'demo-claude-1',
@@ -40,6 +43,7 @@ const sessionBase: Array<{
     tokens: 612_000,
     sizeMb: 528,
     backedUp: true,
+    model: 'claude-sonnet-4-5-20250929',
   },
   {
     id: 'demo-cursor-1',
@@ -64,6 +68,7 @@ const sessionBase: Array<{
     tokens: 314_000,
     sizeMb: 154,
     backedUp: false,
+    model: 'gemini-2.5-pro',
   },
   {
     id: 'demo-opencode-1',
@@ -76,6 +81,7 @@ const sessionBase: Array<{
     tokens: 228_000,
     sizeMb: 132,
     backedUp: true,
+    model: 'gpt-4.1',
   },
   {
     id: 'demo-codex-2',
@@ -88,6 +94,7 @@ const sessionBase: Array<{
     tokens: 436_000,
     sizeMb: 324,
     backedUp: true,
+    model: 'gpt-5.1-codex-mini',
   },
   {
     id: 'demo-claude-2',
@@ -100,6 +107,7 @@ const sessionBase: Array<{
     tokens: 548_000,
     sizeMb: 468,
     backedUp: false,
+    model: 'claude-opus-4-5-20251101',
   },
   {
     id: 'demo-cursor-2',
@@ -115,35 +123,51 @@ const sessionBase: Array<{
   },
 ]
 
-const sessions: SessionRecord[] = sessionBase.map((session) => ({
-  id: session.id,
-  source: session.source,
-  title: session.title,
-  projectName: session.projectName,
-  projectPath: `/Users/demo/projects/${session.projectName}`,
-  branch: session.branch,
-  storagePath: `/demo/${session.source}/${session.id}.jsonl`,
-  storageKind: 'file',
-  storageState: session.id.endsWith('-2') ? 'archived' : 'live',
-  createdAt: ago(session.hoursAgo + 72),
-  lastUpdated: ago(session.hoursAgo),
-  messageCount: session.messages,
-  tokens: {
-    input: Math.round(session.tokens * 0.56),
-    output: Math.round(session.tokens * 0.28),
-    cached: Math.round(session.tokens * 0.16),
-    cacheCreation: Math.round(session.tokens * 0.07),
-    cacheRead: Math.round(session.tokens * 0.09),
-    total: session.tokens,
-    costUsd: session.tokens * 0.000006,
-    estimated: session.source === 'cursor',
-  },
-  sizeBytes: session.sizeMb * MB,
-  backupStatus: session.backedUp ? 'backed-up' : 'pending',
-  tags: [session.source, 'demo'],
-  searchText: `${session.title} ${session.projectName} ${session.branch} demo session archive cleanup token search`,
-  metadata: {},
-}))
+const sessions: SessionRecord[] = sessionBase.map((session) => {
+  const input = Math.round(session.tokens * 0.56)
+  const output = Math.round(session.tokens * 0.28)
+  const cacheCreation = Math.round(session.tokens * 0.07)
+  const cacheRead = Math.round(session.tokens * 0.09)
+  const costUsd = calculateUsageModelCost({
+    model: session.model,
+    input,
+    output,
+    cacheCreation,
+    cacheRead,
+  })
+
+  return {
+    id: session.id,
+    source: session.source,
+    title: session.title,
+    projectName: session.projectName,
+    projectPath: `/Users/demo/projects/${session.projectName}`,
+    branch: session.branch,
+    storagePath: `/demo/${session.source}/${session.id}.jsonl`,
+    storageKind: 'file',
+    storageState: session.id.endsWith('-2') ? 'archived' : 'live',
+    createdAt: ago(session.hoursAgo + 72),
+    lastUpdated: ago(session.hoursAgo),
+    messageCount: session.messages,
+    tokens: {
+      input,
+      output,
+      cached: cacheCreation + cacheRead,
+      cacheCreation,
+      cacheRead,
+      total: session.tokens,
+      ...(costUsd === undefined
+        ? {}
+        : { costUsd, costSource: 'model-estimate' as const, model: session.model }),
+      estimated: session.source === 'cursor',
+    },
+    sizeBytes: session.sizeMb * MB,
+    backupStatus: session.backedUp ? 'backed-up' : 'pending',
+    tags: [session.source, 'demo'],
+    searchText: `${session.title} ${session.projectName} ${session.branch} demo session archive cleanup token search`,
+    metadata: {},
+  }
+})
 
 const usage = Array.from({ length: 30 }, (_, index) => {
   const date = new Date(now.getTime() - (29 - index) * 24 * 60 * 60 * 1000)
@@ -172,7 +196,7 @@ export const mockSnapshot: DashboardSnapshot = {
     reclaimableBytes: 13.9 * GB,
     lastBackupAt: ago(3),
     totalTokens: 12_430_000,
-    totalCostUsd: 74.58,
+    totalCostUsd: sessions.reduce((total, session) => total + (session.tokens.costUsd ?? 0), 0),
     totalSizeBytes: 46.2 * GB,
     highRiskCleanupCount: 0,
   },

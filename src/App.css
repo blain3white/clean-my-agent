@@ -131,8 +131,39 @@ textarea,
   align-items: start;
 }
 
+.usage-bottom-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(380px, 2fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.usage-bottom-grid > .glass-panel {
+  height: 100%;
+}
+
 .usage-kpi-card {
   min-height: 112px;
+}
+
+.usage-native-select {
+  height: 28px;
+  min-width: 96px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 8px;
+  padding: 0 30px 0 12px;
+  background-color: rgb(255 255 255 / 6%);
+  color: rgb(255 255 255 / 88%);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 28px;
+  outline: none;
+}
+
+.usage-native-select:hover,
+.usage-native-select:focus-visible {
+  border-color: rgb(255 255 255 / 18%);
+  background-color: rgb(255 255 255 / 9%);
 }
 
 .usage-sparkline {
@@ -221,7 +252,9 @@ textarea,
 .usage-token-mix-bar > span {
   position: relative;
   display: flex;
-  min-width: 2px;
+  min-width: 0;
+  flex-grow: 0;
+  flex-shrink: 1;
   align-items: center;
   justify-content: center;
   overflow: hidden;
@@ -230,6 +263,11 @@ textarea,
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.usage-token-mix-bar > span[data-small='true'] {
+  flex-shrink: 0;
+  font-size: 10px;
 }
 
 .usage-token-mix-bar > span:last-child {
@@ -397,9 +435,8 @@ textarea,
 
 .usage-peak-layout {
   display: grid;
-  grid-template-columns: minmax(300px, 0.76fr) minmax(720px, 1.6fr);
+  grid-template-columns: repeat(4, minmax(132px, 1fr));
   gap: 12px;
-  align-items: stretch;
   overflow-x: auto;
   padding-bottom: 2px;
 }
@@ -434,21 +471,8 @@ textarea,
   z-index: 1;
 }
 
-.usage-peak-window-featured {
-  min-width: 320px;
-  min-height: 282px;
-  padding: 18px;
-}
-
-.usage-peak-window-list {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(168px, 1fr));
-  gap: 12px;
-  min-width: 720px;
-}
-
 .usage-peak-window-compact {
-  min-height: 135px;
+  min-height: 122px;
 }
 
 .usage-peak-rank {
@@ -456,44 +480,6 @@ textarea,
   background: color-mix(in srgb, var(--usage-peak-color) 16%, transparent);
   color: color-mix(in srgb, var(--usage-peak-color) 76%, white 22%);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%);
-}
-
-.usage-peak-rank-featured {
-  padding-inline: 10px;
-}
-
-.usage-peak-orb {
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--usage-peak-color) 28%, white 8%);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--usage-peak-color) 15%, transparent);
-  color: color-mix(in srgb, var(--usage-peak-color) 78%, white 20%);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 10%),
-    0 0 22px color-mix(in srgb, var(--usage-peak-color) 18%, transparent);
-}
-
-.usage-peak-share-track {
-  height: 7px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgb(255 255 255 / 8%);
-}
-
-.usage-peak-share-track span {
-  display: block;
-  height: 100%;
-  min-width: 4px;
-  border-radius: inherit;
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--usage-peak-color) 66%, white 4%),
-    color-mix(in srgb, var(--usage-peak-color) 58%, white 30%)
-  );
-  box-shadow: 0 0 16px color-mix(in srgb, var(--usage-peak-color) 28%, transparent);
 }
 
 .usage-mini-histogram {
@@ -516,17 +502,6 @@ textarea,
   );
   opacity: 0.88;
   box-shadow: 0 0 12px color-mix(in srgb, var(--usage-histogram-color) 22%, transparent);
-}
-
-.usage-mini-histogram-featured {
-  height: 72px;
-  gap: 6px;
-  margin-top: 18px;
-}
-
-.usage-mini-histogram-featured span {
-  width: 12px;
-  border-radius: 5px 5px 2px 2px;
 }
 
 .token-heatmap-grid {

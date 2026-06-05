@@ -44,6 +44,7 @@ async function writeSession(root: string, source: AgentSource, daysOld: number, 
       timestamp,
       payload: {
         type: 'token_count',
+        model: 'gpt-5-codex',
         last_token_usage: {
           input_tokens: 40,
           cached_input_tokens: 20,
@@ -100,11 +101,25 @@ async function main() {
   assert.equal(session.tokens.cacheCreation, 3000, 'cache creation tokens should be counted')
   assert.equal(session.tokens.cacheRead, 30, 'cache read tokens should be counted')
   assert.equal(
+    session.tokens.input,
+    150,
+    'Codex cached input should be separated from non-cached input',
+  )
+  assert.equal(
     session.tokens.total,
     3340,
     'token total should include cache creation, cache read, and Codex cached input tokens',
   )
-  assert.equal(session.tokens.costUsd, 0.75, 'Claude/Codex style costUSD should be accumulated')
+  assert.equal(
+    session.tokens.costUsd?.toFixed(6),
+    '0.750328',
+    'missing costUSD should fall back to model pricing when a priced model is known',
+  )
+  assert.equal(
+    session.tokens.costSource,
+    'mixed',
+    'cost source should distinguish actual and priced cost',
+  )
   assert.equal(
     'sample' in session.metadata,
     false,

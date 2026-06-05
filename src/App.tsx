@@ -65,13 +65,6 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -144,6 +137,7 @@ type HeatmapCell = {
 type UsageSummary = {
   totalTokens: number
   estimatedCost: number
+  costCoverage: number
   activeSessions: number
   avgTokensPerDay: number
   peakHour: {
@@ -177,8 +171,11 @@ type ProjectUsage = {
   project: string
   projectPath?: string
   tokens: number
+  cost: number
   share: number
   trend: number[]
+  costTrend: number[]
+  trendDates: string[]
 }
 type PeakWindow = {
   rank: number
@@ -195,6 +192,7 @@ type DailyUsageTrendPoint = {
   cache: number
   tools: number
   total: number
+  cost: number
 }
 type DailyUsageTooltipPayload = {
   dataKey?: string
@@ -283,7 +281,6 @@ const usageTokenColors: Record<UsageTokenType, string> = {
 }
 
 const usagePeakColors = ['#60a5fa', '#a78bfa', '#34d399', '#fb923c', '#38bdf8', '#c084fc']
-const usageCostPerToken = 0.000006
 const usageHours = Array.from({ length: 24 }, (_, hour) => hour)
 const usageDefaultMix: TokenMix = { input: 0.506, output: 0.36, cache: 0.106, tools: 0.028 }
 const heatmapTimeLabels = ['00', '04', '08', '12', '16', '20', '24']
@@ -3786,20 +3783,88 @@ function formatUsageDayLabel(date: string): string {
   })
 }
 
-function usageCostForTokens(tokens: number): number {
-  return tokens * usageCostPerToken
-}
-
 function usageTotalForPoints(usage: UsagePoint[]): number {
   return usage.reduce((total, point) => total + point.total, 0)
 }
 
 function sessionCostTotal(sessions: SessionRecord[]): number {
-  return sessions.reduce((total, session) => total + (session.tokens.costUsd ?? 0), 0)
+  return sessions.reduce(
+    (total, session) =>
+      total +
+      (typeof session.tokens.costUsd === 'number' && session.tokens.costUsd > 0
+        ? session.tokens.costUsd
+        : 0),
+    0,
+  )
+}
+
+function sessionCostTokenTotal(sessions: SessionRecord[]): number {
+  return sessions.reduce((total, session) => {
+    if (typeof session.tokens.costUsd !== 'number' || session.tokens.costUsd <= 0) return total
+    return total + session.tokens.total
+  }, 0)
+}
+
+function sessionCostTokenTotalForDates(sessions: SessionRecord[], dates: Set<string>): number {
+  return sessions.reduce((total, session) => {
+    if (typeof session.tokens.costUsd !== 'number' || session.tokens.costUsd <= 0) return total
+    return (
+      total +
+      sessionDateTokenEntries(session).reduce(
+        (sum, [date, tokens]) => sum + (dates.has(date) ? tokens : 0),
+        0,
+      )
+    )
+  }, 0)
 }
 
 function sessionTokenTotal(sessions: SessionRecord[]): number {
   return sessions.reduce((total, session) => total + session.tokens.total, 0)
+}
+
+function costForTokenShare(tokens: number, totalTokens: number, totalCost: number): number {
+  if (tokens <= 0 || totalTokens <= 0 || totalCost <= 0) return 0
+  return (tokens / totalTokens) * totalCost
+}
+
+function sessionDateTokenEntries(session: SessionRecord): Array<[string, number]> {
+  const usageByDate = session.metadata.usageByDate
+  if (usageByDate && typeof usageByDate === 'object' && !Array.isArray(usageByDate)) {
+    const entries = Object.entries(usageByDate).filter(
+      (entry): entry is [string, number] =>
+        typeof entry[1] === 'number' && Number.isFinite(entry[1]) && entry[1] > 0,
+    )
+    if (entries.length > 0) return entries
+  }
+
+  return [[dateKeyFromTime(new Date(session.lastUpdated).getTime()), session.tokens.total]]
+}
+
+function costByDateFromSessions(sessions: SessionRecord[]): Map<string, number> {
+  const costs = new Map<string, number>()
+  for (const session of sessions) {
+    if (typeof session.tokens.costUsd !== 'number' || session.tokens.costUsd <= 0) continue
+    const entries = sessionDateTokenEntries(session)
+    const total = entries.reduce((sum, [, tokens]) => sum + tokens, 0)
+    if (total <= 0) continue
+
+    for (const [date, tokens] of entries) {
+      costs.set(
+        date,
+        (costs.get(date) ?? 0) + costForTokenShare(tokens, total, session.tokens.costUsd),
+      )
+    }
+  }
+
+  return costs
+}
+
+function costForDates(costByDate: Map<string, number>, dates: Iterable<string>): number {
+  let total = 0
+  for (const date of dates) {
+    total += costByDate.get(date) ?? 0
+  }
+  return total
 }
 
 function rangeSessionsForUsage(
@@ -3880,7 +3945,15 @@ function buildDailyUsageTrend(usage: UsagePoint[], tokenMix: TokenMix): DailyUsa
     cache: point.total * (tokenMix.cache / mixTotal),
     tools: point.total * (tokenMix.tools / mixTotal),
     total: point.total,
+    cost: 0,
   }))
+}
+
+function attachDailyCosts(
+  trend: DailyUsageTrendPoint[],
+  costByDate: Map<string, number>,
+): DailyUsageTrendPoint[] {
+  return trend.map((point) => ({ ...point, cost: costByDate.get(point.date) ?? 0 }))
 }
 
 function usageHourlyWeight(hour: number): number {
@@ -3933,6 +4006,7 @@ function buildUsageHeatmapData(
   usage: UsagePoint[],
   range: UsagePageRange,
   sessions: SessionRecord[],
+  costByDate: Map<string, number>,
 ): { rows: UsageHeatmapRow[]; cells: UsageHeatmapCell[] } {
   const rows = buildUsageHeatmapRows(usage, range)
   const sessionsByDateHour = new Map<string, number>()
@@ -3949,6 +4023,7 @@ function buildUsageHeatmapData(
     usageHours.map((hour) => {
       const variation = 0.82 + (((rowIndex + 1) * (hour + 3)) % 7) * 0.05
       const tokens = (row.total * usageHourlyWeights[hour] * variation) / usageHourlyWeightTotal
+      const rowCost = costForDates(costByDate, row.dateKeys)
       const observedSessions = row.dateKeys.reduce(
         (count, date) => count + (sessionsByDateHour.get(`${date}:${hour}`) ?? 0),
         0,
@@ -3960,7 +4035,7 @@ function buildUsageHeatmapData(
         hour,
         tokens,
         sessions: sessionsEstimate,
-        cost: usageCostForTokens(tokens),
+        cost: costForTokenShare(tokens, row.total, rowCost),
       }
     }),
   )
@@ -4000,7 +4075,7 @@ function buildAgentUsageRows(
     const sessionTokens = sessionTokenTotal(sourceSessions)
     const usageTokens = usage.reduce((total, point) => total + point[agent.source], 0)
     const tokens = usageTokens || sessionTokens
-    const cost = sessionCostTotal(sourceSessions) || usageCostForTokens(tokens)
+    const cost = sessionCostTotal(sourceSessions)
     const hasTokenMetadata =
       tokens > 0 ||
       sourceSessions.some(
@@ -4028,35 +4103,51 @@ function buildProjectUsageRows(
   sessions: SessionRecord[],
   usage: UsagePoint[],
   totalTokens: number,
+  dateKeys: Set<string>,
+  includeAllDates = false,
 ): ProjectUsage[] {
   const trendDates = usage.slice(-7).map((point) => point.date)
   const trendIndex = new Map(trendDates.map((date, index) => [date, index]))
   const projects = sessions.reduce<
-    Record<string, { project: string; projectPath?: string; tokens: number; trend: number[] }>
+    Record<
+      string,
+      {
+        project: string
+        projectPath?: string
+        tokens: number
+        cost: number
+        trend: number[]
+        costTrend: number[]
+      }
+    >
   >((acc, session) => {
     const key = session.projectName || session.projectPath || 'Unknown project'
     acc[key] ??= {
       project: session.projectName || 'Unknown project',
       projectPath: session.projectPath,
       tokens: 0,
+      cost: 0,
       trend: Array.from({ length: Math.max(1, trendDates.length || 7) }, () => 0),
+      costTrend: Array.from({ length: Math.max(1, trendDates.length || 7) }, () => 0),
     }
-    acc[key].tokens += session.tokens.total
     acc[key].projectPath ??= session.projectPath
 
-    const usageByDate = session.metadata.usageByDate
-    if (usageByDate && typeof usageByDate === 'object' && !Array.isArray(usageByDate)) {
-      Object.entries(usageByDate).forEach(([date, value]) => {
-        const index = trendIndex.get(date)
-        if (index !== undefined && typeof value === 'number' && Number.isFinite(value)) {
-          acc[key].trend[index] += value
-        }
-      })
-    } else {
-      const date = dateKeyFromTime(new Date(session.lastUpdated).getTime())
+    const entries = sessionDateTokenEntries(session)
+    const sessionEntryTotal = entries.reduce((total, [, tokens]) => total + tokens, 0)
+    entries.forEach(([date, tokens]) => {
+      if (!includeAllDates && !dateKeys.has(date)) return
+      const cost =
+        typeof session.tokens.costUsd === 'number' && session.tokens.costUsd > 0
+          ? costForTokenShare(tokens, sessionEntryTotal, session.tokens.costUsd)
+          : 0
       const index = trendIndex.get(date)
-      if (index !== undefined) acc[key].trend[index] += session.tokens.total
-    }
+      acc[key].tokens += tokens
+      acc[key].cost += cost
+      if (index !== undefined) {
+        acc[key].trend[index] += tokens
+        acc[key].costTrend[index] += cost
+      }
+    })
 
     return acc
   }, {})
@@ -4066,10 +4157,13 @@ function buildProjectUsageRows(
       project: row.project,
       projectPath: row.projectPath,
       tokens: row.tokens,
+      cost: row.cost,
       share: totalTokens > 0 ? (row.tokens / totalTokens) * 100 : 0,
       trend: row.trend,
+      costTrend: row.costTrend,
+      trendDates,
     }))
-    .sort((a, b) => b.tokens - a.tokens)
+    .sort((a, b) => b.cost - a.cost || b.tokens - a.tokens)
 }
 
 function buildUsageAnalytics(snapshot: DashboardSnapshot, range: UsagePageRange) {
@@ -4086,16 +4180,29 @@ function buildUsageAnalytics(snapshot: DashboardSnapshot, range: UsagePageRange)
   const totalTokens = usageTokens || sessionTokens || sessionTokenTotal(rangeSessions)
   const priorTokens =
     range === 'all' ? 0 : priorUsageTokens || priorSessionTokens || sessionTokenTotal(priorSessions)
+  const allCostByDate = costByDateFromSessions(snapshot.sessions)
   const estimatedCost =
-    usageTokens > 0 ? usageCostForTokens(totalTokens) : sessionCostTotal(rangeSessions)
-  const priorCost =
-    priorUsageTokens > 0 ? usageCostForTokens(priorTokens) : sessionCostTotal(priorSessions)
+    range === 'all'
+      ? sessionCostTotal(rangeSessions)
+      : costForDates(allCostByDate, selectedDateKeys)
+  const priorCost = range === 'all' ? 0 : costForDates(allCostByDate, priorDateKeys)
+  const costCoverage =
+    totalTokens > 0
+      ? Math.min(
+          100,
+          ((range === 'all'
+            ? sessionCostTokenTotal(rangeSessions)
+            : sessionCostTokenTotalForDates(snapshot.sessions, selectedDateKeys)) /
+            Math.max(1, totalTokens)) *
+            100,
+        )
+      : 0
   const activeSessions = rangeSessions.length
   const avgTokensPerDay =
     totalTokens / Math.max(1, selectedUsage.length || usageDaysForPageRange(snapshot.usage, range))
   const tokenMix = usageTokenMixFromSessions(rangeSessions, totalTokens)
-  const dailyTrend = buildDailyUsageTrend(selectedUsage, tokenMix)
-  const heatmap = buildUsageHeatmapData(selectedUsage, range, rangeSessions)
+  const dailyTrend = attachDailyCosts(buildDailyUsageTrend(selectedUsage, tokenMix), allCostByDate)
+  const heatmap = buildUsageHeatmapData(selectedUsage, range, rangeSessions, allCostByDate)
   const peakWindows = buildPeakWindows(heatmap.cells, totalTokens)
   const peakHour = peakWindows[0] ?? {
     rank: 1,
@@ -4108,6 +4215,7 @@ function buildUsageAnalytics(snapshot: DashboardSnapshot, range: UsagePageRange)
   const summary: UsageSummary = {
     totalTokens,
     estimatedCost,
+    costCoverage,
     activeSessions,
     avgTokensPerDay,
     peakHour: {
@@ -4117,7 +4225,13 @@ function buildUsageAnalytics(snapshot: DashboardSnapshot, range: UsagePageRange)
     },
   }
   const agentRows = buildAgentUsageRows(snapshot, rangeSessions, selectedUsage)
-  const projectRows = buildProjectUsageRows(rangeSessions, selectedUsage, totalTokens)
+  const projectRows = buildProjectUsageRows(
+    snapshot.sessions,
+    selectedUsage,
+    totalTokens,
+    selectedDateKeys,
+    range === 'all',
+  )
 
   return {
     selectedUsage,
@@ -4168,7 +4282,8 @@ function exportUsageCsv(snapshot: DashboardSnapshot, range: UsagePageRange): voi
   downloadCsv(`clean-my-agent-usage-${range}.csv`, [
     ['Range', usagePageRangeLabel(range)],
     ['Total Tokens', String(Math.round(analytics.summary.totalTokens))],
-    ['Estimated Cost USD', analytics.summary.estimatedCost.toFixed(4)],
+    ['Known or Model-Priced Cost USD', analytics.summary.estimatedCost.toFixed(4)],
+    ['Pricing Coverage', `${analytics.summary.costCoverage.toFixed(1)}%`],
     ['Active Sessions', String(analytics.summary.activeSessions)],
     ['Avg Tokens Per Day', String(Math.round(analytics.summary.avgTokensPerDay))],
     [],
@@ -4354,21 +4469,18 @@ function UsageHeatmapCard({ rows, cells }: { rows: UsageHeatmapRow[]; cells: Usa
         title="Token Activity Heatmap"
         description="Tokens by time of day and day (local time)."
         action={
-          <Select value={metric} onValueChange={(value) => setMetric(value as UsageHeatmapMetric)}>
-            <SelectTrigger
-              size="sm"
-              className="h-7 border-white/10 bg-white/5 text-xs text-white hover:bg-white/10"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="border-white/10 bg-[#18191b] text-white">
-              {usageHeatmapMetrics.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <select
+            value={metric}
+            onChange={(event) => setMetric(event.target.value as UsageHeatmapMetric)}
+            className="usage-native-select"
+            aria-label="Heatmap metric"
+          >
+            {usageHeatmapMetrics.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
         }
       />
       <CardContent>
@@ -4516,11 +4628,11 @@ function DailyUsageTrendCard({ trend }: { trend: DailyUsageTrendPoint[] }) {
     metric === 'cost'
       ? {
           ...point,
-          input: usageCostForTokens(point.input),
-          output: usageCostForTokens(point.output),
-          cache: usageCostForTokens(point.cache),
-          tools: usageCostForTokens(point.tools),
-          total: usageCostForTokens(point.total),
+          input: costForTokenShare(point.input, point.total, point.cost),
+          output: costForTokenShare(point.output, point.total, point.cost),
+          cache: costForTokenShare(point.cache, point.total, point.cost),
+          tools: costForTokenShare(point.tools, point.total, point.cost),
+          total: point.cost,
         }
       : point,
   )
@@ -4653,29 +4765,41 @@ function TokenMixCard({ mix }: { mix: TokenMix }) {
     value: mix[key],
     share: total > 0 ? (mix[key] / total) * 100 : 0,
   }))
+  const visibleRows = rows.filter((row) => row.value > 0)
+  const visualRows = visibleRows.map((row) => ({
+    ...row,
+    visualShare: row.share > 0 && row.share < 2 && visibleRows.length > 1 ? 7 : row.share,
+  }))
+  const visualTotal = visualRows.reduce((sum, row) => sum + row.visualShare, 0)
 
   return (
     <Card className="glass-panel rounded-lg py-4">
       <UsageSectionTitle title="Token Mix" description={`Total ${formatUsageTokens(total)}`} />
       <CardContent>
         <div className="usage-token-mix-bar">
-          {rows
-            .filter((row) => row.value > 0)
+          {visualRows
+            .map((row) => ({
+              ...row,
+              displayShare: visualTotal > 0 ? (row.visualShare / visualTotal) * 100 : 0,
+            }))
             .map((row) => (
               <Tooltip key={row.key}>
                 <TooltipTrigger asChild>
                   <span
                     style={{
-                      width: `${row.share}%`,
+                      flexBasis: `${row.displayShare}%`,
                       backgroundColor: usageTokenColors[row.key],
                     }}
+                    data-small={row.share > 0 && row.share < 2 ? 'true' : undefined}
                   >
-                    {row.share >= 12 && (
+                    {row.share >= 8 ? (
                       <span>
                         {usageTokenLabels[row.key].replace(' Tokens', '')}{' '}
                         {formatUsageShare(row.share)}
                       </span>
-                    )}
+                    ) : row.share > 0 ? (
+                      <span>{formatUsageShare(row.share)}</span>
+                    ) : null}
                   </span>
                 </TooltipTrigger>
                 <TooltipContent className="chart-tooltip rounded-lg px-3 py-2 shadow-xl">
@@ -4708,18 +4832,31 @@ function TokenMixCard({ mix }: { mix: TokenMix }) {
   )
 }
 
-function TopProjectsCard({
+function PriceRankingCard({
   projects,
   onSelectProject,
 }: {
   projects: ProjectUsage[]
   onSelectProject: (project?: ProjectUsage) => void
 }) {
+  const visibleProjects = projects
+    .filter((project) => project.cost > 0 || project.tokens > 0)
+    .slice(0, 5)
+  const totalCost = projects.reduce((sum, project) => sum + project.cost, 0)
+  const topCostDay = projects
+    .flatMap((project) =>
+      project.costTrend.map((cost, index) => ({
+        cost,
+        date: project.trendDates[index],
+      })),
+    )
+    .sort((a, b) => b.cost - a.cost)[0]
+
   return (
     <Card className="glass-panel rounded-lg py-4">
       <UsageSectionTitle
-        title="Top Projects"
-        description="Highest token projects in the selected period."
+        title="Price Ranking / Top Cost Projects"
+        description="Top projects by estimated cost."
         action={
           <Button
             variant="ghost"
@@ -4732,12 +4869,12 @@ function TopProjectsCard({
         }
       />
       <CardContent className="space-y-2">
-        {projects.slice(0, 6).map((project, index) => (
+        {visibleProjects.map((project, index) => (
           <button
             key={`${project.project}-${project.projectPath ?? ''}`}
             type="button"
             onClick={() => onSelectProject(project)}
-            className="grid w-full grid-cols-[26px_minmax(0,1fr)_76px_52px_82px] items-center gap-2 rounded-md px-1.5 py-2 text-left text-xs transition hover:bg-white/[0.035]"
+            className="grid w-full grid-cols-[26px_minmax(0,1fr)_88px_82px] items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-xs transition hover:bg-white/[0.035]"
           >
             <span className="grid size-5 place-items-center rounded bg-white/8 text-[11px] font-semibold text-white/55">
               {index + 1}
@@ -4752,24 +4889,45 @@ function TopProjectsCard({
                 {project.projectPath ?? project.project}
               </TooltipContent>
             </Tooltip>
-            <span className="text-right text-white/58">{formatUsageTokens(project.tokens)}</span>
-            <span className="text-right text-white/42">{formatUsageShare(project.share)}</span>
-            <MiniSparkline data={project.trend} color="#60a5fa" className="justify-self-end" />
+            <span className="text-right text-white/66">{formatCost(project.cost)}</span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="justify-self-end">
+                  <MiniSparkline data={project.costTrend} color="#60a5fa" />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="chart-tooltip rounded-lg px-3 py-2 shadow-xl">
+                {formatUsageTokens(project.tokens)} tokens, {formatUsageShare(project.share)} share
+              </TooltipContent>
+            </Tooltip>
           </button>
         ))}
-        {projects.length === 0 && (
+        {visibleProjects.length === 0 && (
           <div className="rounded-md border border-white/8 bg-white/[0.03] p-3 text-xs text-white/42">
-            No project token metadata available
+            No project cost metadata available
           </div>
         )}
+        <div className="mt-3 grid grid-cols-2 gap-2 rounded-md border border-white/8 bg-white/[0.03] p-2.5 text-xs">
+          <div className="min-w-0">
+            <div className="text-white/42">Total Estimated Cost</div>
+            <div className="mt-1 font-semibold text-white/82">{formatCost(totalCost)}</div>
+          </div>
+          <div className="min-w-0">
+            <div className="text-white/42">Highest Cost Day</div>
+            <div className="mt-1 truncate font-semibold text-white/82">
+              {topCostDay && topCostDay.cost > 0
+                ? `${formatShortDate(topCostDay.date)} ${formatCost(topCostDay.cost)}`
+                : 'No cost data'}
+            </div>
+          </div>
+        </div>
       </CardContent>
     </Card>
   )
 }
 
 function PeakActivityWindowsCard({ windows }: { windows: PeakWindow[] }) {
-  const featured = windows[0]
-  const rest = windows.slice(1, 8)
+  const visibleWindows = windows.slice(0, 8)
 
   return (
     <Card className="glass-panel usage-peak-card rounded-lg py-4">
@@ -4778,83 +4936,38 @@ function PeakActivityWindowsCard({ windows }: { windows: PeakWindow[] }) {
         description="Highest token usage windows in the selected period."
       />
       <CardContent>
-        {featured ? (
+        {visibleWindows.length > 0 ? (
           <div className="usage-peak-layout">
-            <div
-              className="usage-peak-window usage-peak-window-featured"
-              style={
-                {
-                  '--usage-peak-color': usagePeakColors[0],
-                } as CSSProperties
-              }
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <Badge className="usage-peak-rank usage-peak-rank-featured">#1</Badge>
-                  <div className="mt-4 text-[28px] font-semibold leading-none tracking-normal text-white">
-                    {formatHourRange(featured.startHour, featured.endHour)}
+            {visibleWindows.map((window, index) => (
+              <div
+                key={window.rank}
+                className="usage-peak-window usage-peak-window-compact"
+                style={
+                  {
+                    '--usage-peak-color': usagePeakColors[index % usagePeakColors.length],
+                  } as CSSProperties
+                }
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <Badge className="usage-peak-rank">#{window.rank}</Badge>
+                    <div className="mt-2 truncate text-sm font-semibold text-white/84">
+                      {formatHourRange(window.startHour, window.endHour)}
+                    </div>
+                    <div className="mt-1 text-xs text-white/48">
+                      {formatUsageTokens(window.tokens)} tokens
+                    </div>
                   </div>
-                  <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-                    <span className="font-medium text-white/78">
-                      {formatUsageTokens(featured.tokens)} tokens
-                    </span>
-                    <span className="text-white/42">
-                      {formatUsageShare(featured.share)} of total
-                    </span>
+                  <div className="text-right text-[11px] font-medium text-white/42">
+                    {formatUsageShare(window.share)}
                   </div>
-                </div>
-                <div className="usage-peak-orb">
-                  <Activity className="size-5" />
-                </div>
-              </div>
-              <div className="mt-6">
-                <div className="usage-peak-share-track">
-                  <span style={{ width: `${Math.min(100, featured.share)}%` }} />
-                </div>
-                <div className="mt-2 flex justify-between text-[11px] text-white/36">
-                  <span>Selected range share</span>
-                  <span>{formatUsageShare(featured.share)}</span>
                 </div>
                 <MiniHistogram
-                  data={featured.histogram}
-                  color={usagePeakColors[0]}
-                  className="usage-mini-histogram-featured"
+                  data={window.histogram}
+                  color={usagePeakColors[index % usagePeakColors.length]}
                 />
               </div>
-            </div>
-
-            <div className="usage-peak-window-list">
-              {rest.map((window, index) => (
-                <div
-                  key={window.rank}
-                  className="usage-peak-window usage-peak-window-compact"
-                  style={
-                    {
-                      '--usage-peak-color': usagePeakColors[(index + 1) % usagePeakColors.length],
-                    } as CSSProperties
-                  }
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <Badge className="usage-peak-rank">#{window.rank}</Badge>
-                      <div className="mt-2 truncate text-sm font-semibold text-white/84">
-                        {formatHourRange(window.startHour, window.endHour)}
-                      </div>
-                      <div className="mt-1 text-xs text-white/48">
-                        {formatUsageTokens(window.tokens)} tokens
-                      </div>
-                    </div>
-                    <div className="text-right text-[11px] font-medium text-white/42">
-                      {formatUsageShare(window.share)}
-                    </div>
-                  </div>
-                  <MiniHistogram
-                    data={window.histogram}
-                    color={usagePeakColors[(index + 1) % usagePeakColors.length]}
-                  />
-                </div>
-              ))}
-            </div>
+            ))}
           </div>
         ) : (
           <div className="rounded-md border border-white/8 bg-white/[0.03] p-3 text-xs text-white/42">
@@ -4917,15 +5030,9 @@ function UsageLoadingView() {
               <Skeleton className="h-[220px] w-full bg-white/8" />
             </CardContent>
           </Card>
-          <Card className="glass-panel rounded-lg py-4">
-            <UsageSectionTitle title="Top Projects" />
-            <CardContent className="space-y-3">
-              <Skeleton className="h-24 w-full bg-white/8" />
-            </CardContent>
-          </Card>
         </div>
         <div className="space-y-4">
-          {Array.from({ length: 2 }, (_, index) => (
+          {Array.from({ length: 3 }, (_, index) => (
             <Card key={index} className="glass-panel rounded-lg py-4">
               <CardContent className="space-y-3">
                 <Skeleton className="h-4 w-28 bg-white/10" />
@@ -4934,6 +5041,20 @@ function UsageLoadingView() {
             </Card>
           ))}
         </div>
+      </section>
+      <section className="usage-bottom-grid">
+        <Card className="glass-panel rounded-lg py-4">
+          <CardContent className="space-y-3">
+            <Skeleton className="h-4 w-40 bg-white/10" />
+            <Skeleton className="h-36 w-full bg-white/8" />
+          </CardContent>
+        </Card>
+        <Card className="glass-panel rounded-lg py-4">
+          <CardContent className="space-y-3">
+            <Skeleton className="h-4 w-28 bg-white/10" />
+            <Skeleton className="h-24 w-full bg-white/8" />
+          </CardContent>
+        </Card>
       </section>
     </div>
   )
@@ -4957,6 +5078,7 @@ function UsageView({
   }
 
   const sparkline = usageSparklineTrend(analytics.selectedUsage)
+  const costSparkline = analytics.dailyTrend.slice(-12).map((point) => point.cost)
   const sessionsTrend = analytics.selectedUsage.map((point, index) =>
     Math.max(
       0,
@@ -4981,9 +5103,9 @@ function UsageView({
           icon={Database}
           label="Estimated Cost"
           value={formatCost(analytics.summary.estimatedCost)}
-          detail={analytics.trends.estimatedCost}
+          detail={`Pricing coverage ${analytics.summary.costCoverage.toFixed(1)}%`}
           accent="bg-teal-400/12 text-teal-300"
-          sparkline={sparkline.map((value) => usageCostForTokens(value))}
+          sparkline={costSparkline}
           sparklineColor="#2dd4bf"
           loading={false}
         />
@@ -5026,15 +5148,17 @@ function UsageView({
         <div className="space-y-4">
           <UsageHeatmapCard rows={analytics.heatmap.rows} cells={analytics.heatmap.cells} />
           <DailyUsageTrendCard trend={analytics.dailyTrend} />
-          <TopProjectsCard projects={analytics.projectRows} onSelectProject={onSelectProject} />
         </div>
         <div className="space-y-4">
           <ByAgentCard rows={analytics.agentRows} />
-          <TokenMixCard mix={analytics.tokenMix} />
+          <PriceRankingCard projects={analytics.projectRows} onSelectProject={onSelectProject} />
         </div>
       </section>
 
-      <PeakActivityWindowsCard windows={analytics.peakWindows} />
+      <section className="usage-bottom-grid">
+        <PeakActivityWindowsCard windows={analytics.peakWindows} />
+        <TokenMixCard mix={analytics.tokenMix} />
+      </section>
     </div>
   )
 }
