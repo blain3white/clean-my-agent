@@ -258,7 +258,6 @@ export function useDashboard(): DashboardState {
       },
       scanCleanup: async () => {
         if (settings.mockDataEnabled || !window.cleanMyAgent) {
-          toast.success(settings.mockDataEnabled ? 'Demo cleanup scanned' : 'Cleanup demo scanned')
           return snapshot.cleanup
         }
 
@@ -272,7 +271,6 @@ export function useDashboard(): DashboardState {
             highRiskCleanupCount: cleanup.filter((item) => item.risk === 'high').length,
           },
         }))
-        toast.success('Cleanup scan complete')
         return cleanup
       },
       moveCleanupToTrash: async (candidateIds: string[]) => {
