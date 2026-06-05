@@ -2712,52 +2712,15 @@ function CleanupScanShell({
     48,
     Math.max(48, stageSize.height - orbSize - 124),
   )
-  const raisedTop = clampNumber(stageSize.height * 0.075, 34, 92)
   const completeOrbSize = clampNumber(stageSize.height * 0.31, 224, cleanupOrbMaxSize)
   const activeOrbSize = stage === 'complete' ? completeOrbSize : orbSize
-  const orbTop = stage === 'idle' ? idleTop : stage === 'complete' ? 42 : raisedTop
+  const orbTop = stage === 'idle' ? idleTop : stage === 'complete' ? 42 : 118
   const orbLeft =
     stage === 'complete'
       ? clampNumber(stageSize.width - activeOrbSize - 64, 420, stageSize.width - activeOrbSize - 28)
-      : stageSize.width / 2 - activeOrbSize / 2
-  const visualOrbSize =
-    orbMode === 'scanning' ? activeOrbSize * cleanupScanningOrbScale : activeOrbSize
-  const visualOrbOffset = (activeOrbSize - visualOrbSize) / 2
-  const contentGap =
-    stageSize.height < 680 ? 8 : stageSize.height < 760 ? 10 : stageSize.height < 920 ? 18 : 24
-  const baseContentTop =
-    stage === 'idle'
-      ? idleTop + activeOrbSize + contentGap
-      : raisedTop + visualOrbOffset + visualOrbSize + contentGap
-  const contentTop =
-    stage === 'complete' ? Math.max(360, baseContentTop - 34) : baseContentTop
-
-  const bodyContent =
-    stage === 'idle' ? (
-      <CleanupIdleBody />
-    ) : stage === 'scanning' ? (
-      <CleanupScanningBody
-        progress={progress}
-        sourceProgress={sourceProgress}
-        onCancel={onCancel}
-      />
-    ) : stage === 'review' ? (
-      reviewPanel
-    ) : (
-      <CleanupCompleteBody
-          categories={categories}
-          candidates={candidates}
-          sessionById={sessionById}
-        selected={selected}
-        cleaning={cleaning}
-        cleaningIds={cleaningIds}
-        onClean={onClean}
-        onScanAgain={onScanAgain}
-        onToggleCandidate={onToggleCandidate}
-        onToggleCandidates={onToggleCandidates}
-        onToggleCategory={onToggleCategory}
-      />
-    )
+      : stage === 'scanning'
+        ? clampNumber(stageSize.width * 0.72 - activeOrbSize / 2, 620, stageSize.width - activeOrbSize - 64)
+        : stageSize.width / 2 - activeOrbSize / 2
   const orbProps =
     orbMode === 'idle'
       ? {
@@ -2785,21 +2748,13 @@ function CleanupScanShell({
           }
 
   return (
-    <div
-      ref={stageRef}
-      className={`cleanup-stage cleanup-stage-${stage}`}
-      style={
-        {
-          '--cleanup-content-top': `${contentTop}px`,
-        } as CSSProperties
-      }
-    >
+    <div ref={stageRef} className={`cleanup-stage cleanup-stage-${stage}`}>
       <motion.div
         className={`cleanup-orb-layer cleanup-orb-layer-${stage}`}
         initial={false}
         animate={{
-          left: orbLeft,
-          top: orbTop,
+          x: orbLeft,
+          y: orbTop,
           width: activeOrbSize,
           height: activeOrbSize,
           opacity: stage === 'review' ? 0 : 1,
@@ -2808,26 +2763,89 @@ function CleanupScanShell({
       >
         <CleanupOrbButton {...orbProps} size={activeOrbSize} />
       </motion.div>
-      <div className={`cleanup-view-layer cleanup-view-layer-${stage}`}>
-        <div
-          className={`cleanup-stage-body cleanup-stage-body-${stage} ${
-            stage === 'review' ? 'cleanup-stage-body-review' : ''
-          }`}
-        >
-          <AnimatePresence mode="wait">
+      <div className="cleanup-view-layer cleanup-idle-layer">
+        <AnimatePresence>
+          {stage === 'idle' && (
             <motion.div
-              key={stage}
-              className={stage === 'complete' || stage === 'review' ? 'h-full min-h-0' : undefined}
+              key="idle"
+              className="cleanup-stage-body cleanup-stage-body-idle"
               variants={cleanupBodyVariants}
               initial="initial"
               animate="animate"
               exit="exit"
               transition={cleanupBodyTransition}
             >
-              {bodyContent}
+              <CleanupIdleBody />
             </motion.div>
-          </AnimatePresence>
-        </div>
+          )}
+        </AnimatePresence>
+      </div>
+      <div className="cleanup-view-layer cleanup-scanning-layer">
+        <AnimatePresence>
+          {stage === 'scanning' && (
+            <motion.div
+              key="scanning"
+              className="cleanup-stage-body cleanup-stage-body-scanning"
+              variants={cleanupBodyVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={cleanupBodyTransition}
+            >
+              <CleanupScanningBody
+                progress={progress}
+                sourceProgress={sourceProgress}
+                onCancel={onCancel}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+      <div className="cleanup-view-layer cleanup-complete-layer">
+        <AnimatePresence>
+          {stage === 'complete' && (
+            <motion.div
+              key="complete"
+              className="cleanup-stage-body cleanup-stage-body-complete h-full min-h-0"
+              variants={cleanupBodyVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={cleanupBodyTransition}
+            >
+              <CleanupCompleteBody
+                categories={categories}
+                candidates={candidates}
+                sessionById={sessionById}
+                selected={selected}
+                cleaning={cleaning}
+                cleaningIds={cleaningIds}
+                onClean={onClean}
+                onScanAgain={onScanAgain}
+                onToggleCandidate={onToggleCandidate}
+                onToggleCandidates={onToggleCandidates}
+                onToggleCategory={onToggleCategory}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+      <div className="cleanup-view-layer cleanup-review-layer">
+        <AnimatePresence>
+          {stage === 'review' && (
+            <motion.div
+              key="review"
+              className="cleanup-stage-body cleanup-stage-body-review h-full min-h-0"
+              variants={cleanupBodyVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={cleanupBodyTransition}
+            >
+              {reviewPanel}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
       <CleanupSafetyNote
         className="cleanup-safety-bottom"
