@@ -46,6 +46,8 @@ Clean My Agent is a local-first Electron app for scanning, backing up, exporting
 ## Open Source Workflow
 
 - Prefer branching feature work from `develop`; keep `main` stable and release-ready.
+- Do not do day-to-day development on `main`; switch to `develop` or create a feature branch from `develop` before making changes.
+- Every pull request must pass the required `GitNexus Report` CI job; the job writes the GitNexus analysis into the PR body, and PRs without that section must not merge.
 - Run `pnpm check` before proposing or committing infrastructure, shared contract, Electron, or safety-sensitive changes.
 - Keep contributor-facing workflow details in `CONTRIBUTING.md` and maintainer policy details in `docs/maintainer-guide.md`.
 - Use Prettier for project formatting; avoid hand-formatting churn outside the files involved in a change.

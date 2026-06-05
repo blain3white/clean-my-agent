@@ -43,6 +43,8 @@ pnpm build
 
 Use `pnpm verify:functions` after touching cleanup, backup, export, scan, adapter, database, or Trash behavior. Use `pnpm build` when TypeScript contracts, Electron IPC, or bundled assets changed.
 
+Pull requests must also pass the `GitNexus Report` CI job. The job compares the PR against its base branch and writes the GitNexus summary into the PR body for review.
+
 ## Code Style
 
 - TypeScript, React, and Electron code are formatted with Prettier.
@@ -75,6 +77,7 @@ Before opening a PR:
 
 - Rebase or merge from `develop`.
 - Run the relevant checks.
+- Confirm the `GitNexus Report` CI job passed and review the GitNexus section in the PR body.
 - Keep the PR focused on one behavior or infrastructure change.
 - Include screenshots for visible UI changes.
 - Explain safety and privacy impact for scanning, backup, export, cleanup, or Trash changes.
