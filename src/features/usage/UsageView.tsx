@@ -103,37 +103,59 @@ function MiniSparkline({
   )
 }
 
+function formatPeakHourLabel(hour: number): string {
+  const normalized = ((hour % 24) + 24) % 24
+  const suffix = normalized >= 12 ? 'PM' : 'AM'
+  const hour12 = normalized % 12 || 12
+  return `${hour12}:00 ${suffix}`
+}
+
+function formatPeakHourRange(startHour: number, endHour: number): string {
+  return `${formatPeakHourLabel(startHour)} – ${formatPeakHourLabel(endHour)}`
+}
+
 function PeakActivityChart({ windows }: { windows: PeakWindow[] }) {
-  const profile = usageHours.map((hour) => {
-    const exact = windows.find((window) => window.startHour === hour)
-    if (exact) return exact.tokens
-
-    const samples = windows.flatMap((window) =>
-      window.histogram
-        .map((tokens, index) => ({
-          hour: (window.startHour + index - 3 + 24) % 24,
-          tokens,
-        }))
-        .filter((sample) => sample.hour === hour)
-        .map((sample) => sample.tokens),
-    )
-
-    return samples.length ? samples.reduce((sum, value) => sum + value, 0) / samples.length : 0
+  const featuredWindows = windows.slice(0, 5)
+  const strongest = Math.max(...featuredWindows.map((window) => window.tokens), 1)
+  const circularDistance = (hour: number, target: number) => {
+    const distance = Math.abs(hour - target)
+    return Math.min(distance, 24 - distance)
+  }
+  const activityAtHour = (hour: number) =>
+    featuredWindows.reduce((total, window, index) => {
+      const sigma = index === 0 ? 2.75 : 1.9
+      const weight = Math.max(0.4, 1 - index * 0.14)
+      const centerHour = (window.startHour + 0.58) % 24
+      const distance = circularDistance(hour, centerHour)
+      const bump = window.tokens * weight * Math.exp(-(distance ** 2) / (2 * sigma ** 2))
+      return total + bump
+    }, strongest * 0.17)
+  const samples = Array.from({ length: 97 }, (_, index) => {
+    const hour = (index / 96) * 24
+    return { hour, value: activityAtHour(hour) }
   })
-  const max = Math.max(...profile, 1)
-  const points = profile.map((value, index) => {
-    const x = 8 + (index / 23) * 304
-    const y = 142 - (value / max) * 118
-    return { x, y }
+  const max = Math.max(...samples.map((sample) => sample.value), 1)
+  const points = samples.map((sample) => {
+    const x = 18 + (sample.hour / 24) * 444
+    const y = 170 - (sample.value / max) * 138
+    return { hour: sample.hour, x, y }
   })
+  const topDotHour = topWindowToDotHour(featuredWindows[0])
+  const topPoint = {
+    x: 18 + (topDotHour / 24) * 444,
+    y: 170 - (activityAtHour(topDotHour) / max) * 138,
+  }
+  function topWindowToDotHour(window?: PeakWindow): number {
+    if (!window) return 0
+    return (window.startHour + 0.58) % 24
+  }
   const linePath = points.reduce((path, point, index) => {
     if (index === 0) return `M ${point.x.toFixed(2)} ${point.y.toFixed(2)}`
     const previous = points[index - 1]
     const controlOffset = (point.x - previous.x) / 2
     return `${path} C ${(previous.x + controlOffset).toFixed(2)} ${previous.y.toFixed(2)}, ${(point.x - controlOffset).toFixed(2)} ${point.y.toFixed(2)}, ${point.x.toFixed(2)} ${point.y.toFixed(2)}`
   }, '')
-  const areaPath = `${linePath} L 312 152 L 8 152 Z`
-  const topPoint = points[Math.max(0, profile.indexOf(max))]
+  const areaPath = `${linePath} L 462 178 L 18 178 Z`
   const axisLabels = [
     { hour: 0, label: '12 AM' },
     { hour: 4, label: '4 AM' },
@@ -146,14 +168,15 @@ function PeakActivityChart({ windows }: { windows: PeakWindow[] }) {
 
   return (
     <div className="usage-peak-chart" aria-hidden="true">
-      <svg viewBox="0 0 320 178" preserveAspectRatio="none">
+      <svg viewBox="0 0 480 206" preserveAspectRatio="none">
         <defs>
           <linearGradient id="usagePeakArea" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#4f8cff" stopOpacity="0.42" />
-            <stop offset="100%" stopColor="#4f8cff" stopOpacity="0.04" />
+            <stop offset="0%" stopColor="#4f8cff" stopOpacity="0.44" />
+            <stop offset="58%" stopColor="#3b82f6" stopOpacity="0.13" />
+            <stop offset="100%" stopColor="#2563eb" stopOpacity="0.02" />
           </linearGradient>
           <filter id="usagePeakGlow" x="-20%" y="-30%" width="140%" height="160%">
-            <feGaussianBlur stdDeviation="4" result="blur" />
+            <feGaussianBlur stdDeviation="5.5" result="blur" />
             <feMerge>
               <feMergeNode in="blur" />
               <feMergeNode in="SourceGraphic" />
@@ -161,9 +184,9 @@ function PeakActivityChart({ windows }: { windows: PeakWindow[] }) {
           </filter>
         </defs>
         {[0, 4, 8, 12, 16, 20, 24].map((hour) => {
-          const x = 8 + (hour / 24) * 304
+          const x = 18 + (hour / 24) * 444
           return (
-            <line key={hour} x1={x} x2={x} y1="18" y2="152" className="usage-peak-chart-grid" />
+            <line key={hour} x1={x} x2={x} y1="24" y2="178" className="usage-peak-chart-grid" />
           )
         })}
         <path d={areaPath} fill="url(#usagePeakArea)" />
@@ -177,10 +200,16 @@ function PeakActivityChart({ windows }: { windows: PeakWindow[] }) {
         <circle
           cx={topPoint?.x ?? 0}
           cy={topPoint?.y ?? 0}
-          r="3.2"
+          r="8.6"
+          className="usage-peak-chart-dot-halo"
+        />
+        <circle
+          cx={topPoint?.x ?? 0}
+          cy={topPoint?.y ?? 0}
+          r="4.4"
           className="usage-peak-chart-dot"
         />
-        <line x1="8" x2="312" y1="152" y2="152" className="usage-peak-chart-axis" />
+        <line x1="18" x2="462" y1="178" y2="178" className="usage-peak-chart-axis" />
       </svg>
       <div className="usage-peak-chart-labels">
         {axisLabels.map((item) => (
@@ -761,33 +790,43 @@ function PeakActivityWindowsCard({ windows }: { windows: PeakWindow[] }) {
   const topWindow = visibleWindows[0]
 
   return (
-    <Card className="glass-panel usage-peak-card rounded-lg py-4">
-      <UsageSectionTitle
-        title="Peak Activity Windows"
-        description="Highest token usage windows in the selected period."
-        action={
-          <button type="button" className="usage-peak-timezone" aria-label="Peak activity timezone">
-            <Clock className="size-3.5" />
-            <span>Local time (UTC-7)</span>
-            <ChevronDown className="size-3.5" />
-          </button>
-        }
-      />
-      <CardContent>
+    <Card className="glass-panel usage-peak-card rounded-lg py-0">
+      <CardHeader className="usage-peak-header">
+        <div className="min-w-0">
+          <div className="usage-peak-title-row">
+            <CardTitle className="usage-peak-title">Peak Activity Windows</CardTitle>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <InfoButton />
+              </TooltipTrigger>
+              <TooltipContent>Highest token usage windows in the selected period.</TooltipContent>
+            </Tooltip>
+          </div>
+          <p className="usage-peak-description">
+            Highest token usage windows in the selected period.
+          </p>
+        </div>
+        <button type="button" className="usage-peak-timezone" aria-label="Peak activity timezone">
+          <Clock className="size-3.5" />
+          <span>Local time (UTC-7)</span>
+          <ChevronDown className="size-3.5" />
+        </button>
+      </CardHeader>
+      <CardContent className="usage-peak-content">
         {topWindow ? (
           <div className="usage-peak-layout">
             <div className="usage-peak-feature">
-              <div className="text-xs font-medium text-white/42">Top window</div>
-              <div className="mt-2 flex flex-wrap items-center gap-3">
-                <div className="text-[26px] font-semibold leading-none tracking-normal text-white">
-                  {formatHourRange(topWindow.startHour, topWindow.endHour)}
+              <div className="usage-peak-eyebrow">Top window</div>
+              <div className="usage-peak-time-row">
+                <div className="usage-peak-top-time">
+                  {formatPeakHourRange(topWindow.startHour, topWindow.endHour)}
                 </div>
                 <Badge className="usage-peak-share-badge">
                   <span />
                   {formatUsageShare(topWindow.share)}
                 </Badge>
               </div>
-              <div className="mt-2 text-sm font-medium text-white/46">
+              <div className="usage-peak-token-count">
                 {formatUsageTokens(topWindow.tokens)} tokens
               </div>
               <PeakActivityChart windows={windows} />
@@ -797,26 +836,26 @@ function PeakActivityWindowsCard({ windows }: { windows: PeakWindow[] }) {
               </div>
             </div>
             <div className="usage-peak-ranking">
-              {visibleWindows.map((window, index) => (
-                <div
-                  key={window.rank}
-                  className="usage-peak-row"
-                  data-active={index === 0 ? 'true' : undefined}
-                >
-                  <span className="usage-peak-row-rank">{window.rank}</span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium text-white/84">
-                      {formatHourRange(window.startHour, window.endHour)}
+              <div className="usage-peak-ranking-list">
+                {visibleWindows.map((window, index) => (
+                  <div
+                    key={window.rank}
+                    className="usage-peak-row"
+                    data-active={index === 0 ? 'true' : undefined}
+                  >
+                    <span className="usage-peak-row-rank">{window.rank}</span>
+                    <span className="usage-peak-row-copy">
+                      <span className="usage-peak-row-time">
+                        {formatPeakHourRange(window.startHour, window.endHour)}
+                      </span>
+                      <span className="usage-peak-row-tokens">
+                        {formatUsageTokens(window.tokens)} tokens
+                      </span>
                     </span>
-                    <span className="mt-0.5 block text-xs text-white/42">
-                      {formatUsageTokens(window.tokens)} tokens
-                    </span>
-                  </span>
-                  <span className="text-right text-sm font-medium text-white/50">
-                    {formatUsageShare(window.share)}
-                  </span>
-                </div>
-              ))}
+                    <span className="usage-peak-row-share">{formatUsageShare(window.share)}</span>
+                  </div>
+                ))}
+              </div>
               <button type="button" className="usage-peak-breakdown">
                 <span>View full breakdown</span>
                 <ChevronRight className="size-4" />
