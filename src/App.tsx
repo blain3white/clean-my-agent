@@ -2817,7 +2817,7 @@ function CleanupScanShell({
           <AnimatePresence mode="wait">
             <motion.div
               key={stage}
-              className={stage === 'review' ? 'h-full min-h-0' : undefined}
+              className={stage === 'complete' || stage === 'review' ? 'h-full min-h-0' : undefined}
               variants={cleanupBodyVariants}
               initial="initial"
               animate="animate"
@@ -2921,7 +2921,7 @@ function CleanupCompleteBody({
   onToggleCandidates: (ids: string[]) => void
   onToggleCategory: (category: CleanupCategoryKey) => void
 }) {
-  const [expandedCategory, setExpandedCategory] = useState<CleanupCategoryKey>('inactive')
+  const [expandedCategory, setExpandedCategory] = useState<CleanupCategoryKey | null>('inactive')
   const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null)
   const candidatesByCategory = useMemo(() => {
     const grouped: Record<CleanupCategoryKey, CleanupCandidate[]> = {
@@ -2967,7 +2967,7 @@ function CleanupCompleteBody({
               selected={selected}
               cleaningIds={cleaningIds}
               onToggleExpanded={() => {
-                setExpandedCategory(category.key)
+                setExpandedCategory((current) => (current === category.key ? null : category.key))
                 setExpandedGroupId(null)
               }}
               onToggleCategory={() => onToggleCategory(category.key)}
@@ -4200,14 +4200,26 @@ function MiniSparkline({
   )
 }
 
-function MiniHistogram({ data, color = '#60a5fa' }: { data: number[]; color?: string }) {
+function MiniHistogram({
+  data,
+  color = '#60a5fa',
+  className = '',
+}: {
+  data: number[]
+  color?: string
+  className?: string
+}) {
   const max = Math.max(...data, 1)
   return (
-    <div className="usage-mini-histogram" aria-hidden="true">
+    <div
+      className={`usage-mini-histogram ${className}`}
+      style={{ '--usage-histogram-color': color } as CSSProperties}
+      aria-hidden="true"
+    >
       {data.map((value, index) => (
         <span
           key={index}
-          style={{ height: `${Math.max(12, (value / max) * 100)}%`, backgroundColor: color }}
+          style={{ height: `${Math.max(12, (value / max) * 100)}%` }}
         />
       ))}
     </div>
@@ -4344,8 +4356,8 @@ function UsageHeatmapCard({ rows, cells }: { rows: UsageHeatmapRow[]; cells: Usa
           <div
             className="usage-heatmap-grid"
             style={{
-              gridTemplateColumns: `84px repeat(${usageHours.length}, 22px)`,
-              gridTemplateRows: `20px repeat(${rows.length}, 18px)`,
+              gridTemplateColumns: `88px repeat(${usageHours.length}, 20px)`,
+              gridTemplateRows: `22px repeat(${rows.length}, 20px)`,
             }}
           >
             <div />
@@ -4381,26 +4393,32 @@ function UsageHeatmapCard({ rows, cells }: { rows: UsageHeatmapRow[]; cells: Usa
                       )}: ${formatUsageTokens(cell.tokens)} tokens`}
                     />
                   </TooltipTrigger>
-                  <TooltipContent className="chart-tooltip rounded-lg px-3 py-2 shadow-xl">
-                    <div className="text-xs font-medium text-white/70">
+                  <TooltipContent
+                    side="top"
+                    align="center"
+                    className="chart-tooltip usage-heatmap-tooltip rounded-lg px-3.5 py-3 shadow-xl"
+                  >
+                    <div className="text-xs font-semibold text-white/78">
                       {row?.tooltipLabel ?? cell.date}, {formatHourRange(cell.hour, cell.hour + 1)}
                     </div>
-                    <div className="mt-2 space-y-1 text-[11px]">
-                      <div className="flex justify-between gap-6">
-                        <span className="text-white/45">Tokens</span>
-                        <span className="font-mono text-blue-300">
+                    <div className="mt-2.5 space-y-2 text-[11px]">
+                      <div className="usage-tooltip-row">
+                        <span className="usage-tooltip-label">Tokens</span>
+                        <span className="usage-tooltip-value text-blue-300">
                           {formatUsageTokens(cell.tokens)}
                         </span>
                       </div>
-                      <div className="flex justify-between gap-6">
-                        <span className="text-white/45">Active sessions</span>
-                        <span className="font-mono text-white/70">
+                      <div className="usage-tooltip-row">
+                        <span className="usage-tooltip-label">Active sessions</span>
+                        <span className="usage-tooltip-value text-white/72">
                           {cell.sessions.toLocaleString()}
                         </span>
                       </div>
-                      <div className="flex justify-between gap-6">
-                        <span className="text-white/45">Cost</span>
-                        <span className="font-mono text-white/70">{formatCost(cell.cost)}</span>
+                      <div className="usage-tooltip-row">
+                        <span className="usage-tooltip-label">Cost</span>
+                        <span className="usage-tooltip-value text-white/72">
+                          {formatCost(cell.cost)}
+                        </span>
                       </div>
                     </div>
                   </TooltipContent>
@@ -4730,6 +4748,9 @@ function TopProjectsCard({
 }
 
 function PeakActivityWindowsCard({ windows }: { windows: PeakWindow[] }) {
+  const featured = windows[0]
+  const rest = windows.slice(1, 8)
+
   return (
     <Card className="glass-panel rounded-lg py-4">
       <UsageSectionTitle
@@ -4737,28 +4758,89 @@ function PeakActivityWindowsCard({ windows }: { windows: PeakWindow[] }) {
         description="Highest token usage windows in the selected period."
       />
       <CardContent>
-        <div className="overflow-x-auto pb-1">
-          <div className="flex min-w-max gap-3">
-            {windows.slice(0, 8).map((window, index) => (
-              <div key={window.rank} className="usage-peak-window">
-                <Badge className="w-fit bg-white/9 text-white/65">#{window.rank}</Badge>
-                <div className="mt-3 text-sm font-medium text-white/82">
-                  {formatHourRange(window.startHour, window.endHour)}
+        {featured ? (
+          <div className="usage-peak-layout">
+            <div
+              className="usage-peak-window usage-peak-window-featured"
+              style={
+                {
+                  '--usage-peak-color': usagePeakColors[0],
+                } as CSSProperties
+              }
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <Badge className="usage-peak-rank usage-peak-rank-featured">#1</Badge>
+                  <div className="mt-4 text-[28px] font-semibold leading-none tracking-normal text-white">
+                    {formatHourRange(featured.startHour, featured.endHour)}
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+                    <span className="font-medium text-white/78">
+                      {formatUsageTokens(featured.tokens)} tokens
+                    </span>
+                    <span className="text-white/42">
+                      {formatUsageShare(featured.share)} of total
+                    </span>
+                  </div>
                 </div>
-                <div className="mt-1 text-xs text-white/50">
-                  {formatUsageTokens(window.tokens)} tokens
+                <div className="usage-peak-orb">
+                  <Activity className="size-5" />
                 </div>
-                <div className="mt-0.5 text-[11px] text-white/38">
-                  {formatUsageShare(window.share)} of total
+              </div>
+              <div className="mt-6">
+                <div className="usage-peak-share-track">
+                  <span style={{ width: `${Math.min(100, featured.share)}%` }} />
+                </div>
+                <div className="mt-2 flex justify-between text-[11px] text-white/36">
+                  <span>Selected range share</span>
+                  <span>{formatUsageShare(featured.share)}</span>
                 </div>
                 <MiniHistogram
-                  data={window.histogram}
-                  color={usagePeakColors[index % usagePeakColors.length]}
+                  data={featured.histogram}
+                  color={usagePeakColors[0]}
+                  className="usage-mini-histogram-featured"
                 />
               </div>
-            ))}
+            </div>
+
+            <div className="usage-peak-window-list">
+              {rest.map((window, index) => (
+                <div
+                  key={window.rank}
+                  className="usage-peak-window usage-peak-window-compact"
+                  style={
+                    {
+                      '--usage-peak-color': usagePeakColors[(index + 1) % usagePeakColors.length],
+                    } as CSSProperties
+                  }
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <Badge className="usage-peak-rank">#{window.rank}</Badge>
+                      <div className="mt-2 truncate text-sm font-semibold text-white/84">
+                        {formatHourRange(window.startHour, window.endHour)}
+                      </div>
+                      <div className="mt-1 text-xs text-white/48">
+                        {formatUsageTokens(window.tokens)} tokens
+                      </div>
+                    </div>
+                    <div className="text-right text-[11px] font-medium text-white/42">
+                      {formatUsageShare(window.share)}
+                    </div>
+                  </div>
+                  <MiniHistogram
+                    data={window.histogram}
+                    color={usagePeakColors[(index + 1) % usagePeakColors.length]}
+                  />
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="rounded-md border border-white/8 bg-white/[0.03] p-3 text-xs text-white/42">
+            No peak activity windows available
+          </div>
+        )}
       </CardContent>
     </Card>
   )
@@ -4797,12 +4879,12 @@ function UsageLoadingView() {
           />
         ))}
       </section>
-      <section className="grid grid-cols-[minmax(0,1fr)_minmax(330px,0.38fr)] gap-4">
+      <section className="usage-main-grid">
         <div className="space-y-4">
           <Card className="glass-panel rounded-lg py-4">
             <UsageSectionTitle title="Token Activity Heatmap" />
             <CardContent>
-              <div className="grid grid-cols-[84px_repeat(24,22px)] gap-1.5 overflow-hidden">
+              <div className="grid grid-cols-[88px_repeat(24,20px)] gap-1.5 overflow-hidden">
                 {Array.from({ length: 7 * 24 }, (_, index) => (
                   <Skeleton key={index} className="size-4 rounded-sm bg-white/8" />
                 ))}
@@ -4815,9 +4897,15 @@ function UsageLoadingView() {
               <Skeleton className="h-[220px] w-full bg-white/8" />
             </CardContent>
           </Card>
+          <Card className="glass-panel rounded-lg py-4">
+            <UsageSectionTitle title="Top Projects" />
+            <CardContent className="space-y-3">
+              <Skeleton className="h-24 w-full bg-white/8" />
+            </CardContent>
+          </Card>
         </div>
         <div className="space-y-4">
-          {Array.from({ length: 3 }, (_, index) => (
+          {Array.from({ length: 2 }, (_, index) => (
             <Card key={index} className="glass-panel rounded-lg py-4">
               <CardContent className="space-y-3">
                 <Skeleton className="h-4 w-28 bg-white/10" />
@@ -4915,15 +5003,15 @@ function UsageView({
         />
       </section>
 
-      <section className="grid grid-cols-[minmax(0,1fr)_minmax(330px,0.38fr)] gap-4">
+      <section className="usage-main-grid">
         <div className="space-y-4">
           <UsageHeatmapCard rows={analytics.heatmap.rows} cells={analytics.heatmap.cells} />
           <DailyUsageTrendCard trend={analytics.dailyTrend} />
+          <TopProjectsCard projects={analytics.projectRows} onSelectProject={onSelectProject} />
         </div>
         <div className="space-y-4">
           <ByAgentCard rows={analytics.agentRows} />
           <TokenMixCard mix={analytics.tokenMix} />
-          <TopProjectsCard projects={analytics.projectRows} onSelectProject={onSelectProject} />
         </div>
       </section>
 
