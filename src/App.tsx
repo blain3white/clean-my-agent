@@ -2817,7 +2817,7 @@ function CleanupScanShell({
           <AnimatePresence mode="wait">
             <motion.div
               key={stage}
-              className={stage === 'review' ? 'h-full min-h-0' : undefined}
+              className={stage === 'complete' || stage === 'review' ? 'h-full min-h-0' : undefined}
               variants={cleanupBodyVariants}
               initial="initial"
               animate="animate"
@@ -2921,7 +2921,7 @@ function CleanupCompleteBody({
   onToggleCandidates: (ids: string[]) => void
   onToggleCategory: (category: CleanupCategoryKey) => void
 }) {
-  const [expandedCategory, setExpandedCategory] = useState<CleanupCategoryKey>('inactive')
+  const [expandedCategory, setExpandedCategory] = useState<CleanupCategoryKey | null>('inactive')
   const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null)
   const candidatesByCategory = useMemo(() => {
     const grouped: Record<CleanupCategoryKey, CleanupCandidate[]> = {
@@ -2967,7 +2967,7 @@ function CleanupCompleteBody({
               selected={selected}
               cleaningIds={cleaningIds}
               onToggleExpanded={() => {
-                setExpandedCategory(category.key)
+                setExpandedCategory((current) => (current === category.key ? null : category.key))
                 setExpandedGroupId(null)
               }}
               onToggleCategory={() => onToggleCategory(category.key)}

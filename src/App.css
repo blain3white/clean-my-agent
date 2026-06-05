@@ -932,11 +932,14 @@ textarea,
   min-height: 0;
   grid-template-columns: minmax(640px, 0.66fr) minmax(280px, 0.34fr);
   gap: clamp(1.4rem, 3vw, 3rem);
+  overflow: hidden;
 }
 
 .cleanup-complete-list {
   width: 100%;
+  height: 100%;
   min-height: 0;
+  max-height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 0.35rem 0.35rem 1.4rem 0.15rem;
@@ -957,6 +960,7 @@ textarea,
   position: absolute;
   right: clamp(0.2rem, 1vw, 0.8rem);
   bottom: 0.25rem;
+  z-index: 4;
   display: flex;
   width: min(100%, 352px);
   flex-wrap: wrap;
@@ -1299,6 +1303,10 @@ textarea,
     padding-bottom: 3.7rem;
   }
 
+  .cleanup-view-layer-complete {
+    padding-bottom: 1.8rem;
+  }
+
   .cleanup-safety-bottom {
     bottom: 0.55rem;
     font-size: 0.75rem;
@@ -1311,6 +1319,15 @@ textarea,
 
   .cleanup-result-actions {
     margin-top: 0.75rem;
+  }
+
+  .cleanup-stage-complete .cleanup-result-actions {
+    bottom: 0;
+    margin-top: 0;
+  }
+
+  .cleanup-stage-complete .cleanup-complete-list {
+    padding-bottom: 1rem;
   }
 
   .cleanup-category-trigger {
