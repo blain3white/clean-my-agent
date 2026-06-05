@@ -6,6 +6,16 @@ Clean My Agent is a local-first desktop app for cleaning up, backing up, exporti
 
 It scans local sessions from Codex, Claude Code, Cursor, Gemini, and OpenCode, then turns scattered logs into a clear dashboard for storage, token usage, cleanup opportunities, backups, and universal relay exports.
 
+## Download
+
+Download the latest macOS Apple Silicon DMG from GitHub Releases:
+
+[Download Clean My Agent for macOS](https://github.com/blain3white/clean-my-agent/releases/latest/download/Clean-My-Agent-mac-arm64.dmg)
+
+Open the downloaded `.dmg`, drag Clean My Agent into Applications, then launch it from Applications.
+
+The current desktop build is unsigned. If macOS Gatekeeper blocks the first launch, open System Settings → Privacy & Security and allow Clean My Agent, or right-click the app and choose Open.
+
 ## Why
 
 AI coding agents create a lot of local state: conversations, logs, project metadata, cache files, backups, and tool traces. That data is useful, but it can also become hard to inspect, move, or safely clean.
@@ -117,6 +127,12 @@ Build:
 pnpm build
 ```
 
+Build a macOS Apple Silicon DMG:
+
+```bash
+pnpm dist:mac
+```
+
 Lint:
 
 ```bash
@@ -156,7 +172,7 @@ Contributions usually branch from `develop` and open pull requests back into `de
 - Expand agent-specific storage adapters as formats evolve.
 - Add more relay converters on top of the universal JSON schema.
 - Improve cleanup policy controls for teams with different retention preferences.
-- Package signed desktop builds for easier installation.
+- Add signed and notarized desktop builds for smoother first launch.
 
 ## Status
 

@@ -12,6 +12,7 @@ dist
 dist-ssr
 out
 coverage
+release
 .codex-backups/
 external/claude-code-history-viewer/
 .env
