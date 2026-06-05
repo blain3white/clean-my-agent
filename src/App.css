@@ -132,7 +132,24 @@ textarea,
   width: 76px;
   height: 32px;
   overflow: visible;
-  filter: drop-shadow(0 0 8px currentcolor);
+}
+
+.usage-sparkline-fill {
+  opacity: 0.1;
+}
+
+.usage-sparkline-glow-wide {
+  stroke-width: 7;
+  opacity: 0.11;
+}
+
+.usage-sparkline-glow-tight {
+  stroke-width: 4;
+  opacity: 0.18;
+}
+
+.usage-sparkline-line {
+  stroke-width: 2;
 }
 
 .usage-kpi-sparkline {

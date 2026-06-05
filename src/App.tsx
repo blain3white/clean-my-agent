@@ -3849,8 +3849,28 @@ function MiniSparkline({
   const path = createSparklinePath(data)
   return (
     <svg className={`usage-sparkline ${className}`} viewBox="0 0 96 32" aria-hidden="true">
-      <path d={`${path} L 96 32 L 0 32 Z`} fill={color} opacity="0.12" />
-      <path d={path} fill="none" stroke={color} strokeLinecap="round" strokeWidth="2" />
+      <path className="usage-sparkline-fill" d={`${path} L 96 32 L 0 32 Z`} fill={color} />
+      <path
+        className="usage-sparkline-glow usage-sparkline-glow-wide"
+        d={path}
+        fill="none"
+        stroke={color}
+        strokeLinecap="round"
+      />
+      <path
+        className="usage-sparkline-glow usage-sparkline-glow-tight"
+        d={path}
+        fill="none"
+        stroke={color}
+        strokeLinecap="round"
+      />
+      <path
+        className="usage-sparkline-line"
+        d={path}
+        fill="none"
+        stroke={color}
+        strokeLinecap="round"
+      />
     </svg>
   )
 }
