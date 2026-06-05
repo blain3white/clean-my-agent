@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 out
+coverage
 .codex-backups/
 external/claude-code-history-viewer/
 .env

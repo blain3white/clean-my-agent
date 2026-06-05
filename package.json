@@ -21,6 +21,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "prepare": "git config core.hooksPath .githooks || true",
     "preview": "electron-vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

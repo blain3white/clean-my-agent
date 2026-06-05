@@ -9,8 +9,14 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
-      include: ['src/**/*.{ts,tsx}', 'electron/lib/**/*.ts'],
-      exclude: ['src/**/*.test.ts', 'electron/**/*.test.ts', 'src/components/ui/**'],
+      include: ['electron/lib/**/*.ts', 'src/lib/**/*.ts'],
+      exclude: ['src/**/*.test.ts', 'electron/**/*.test.ts', 'src/lib/mock-data.ts'],
+      thresholds: {
+        statements: 90,
+        branches: 90,
+        functions: 90,
+        lines: 90,
+      },
     },
   },
   resolve: {

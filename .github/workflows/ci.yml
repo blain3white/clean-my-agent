@@ -7,11 +7,9 @@ on:
       - develop
   pull_request:
     branches:
-      - main
       - develop
   push:
     branches:
-      - main
       - develop
 
 permissions:
@@ -136,3 +134,6 @@ jobs:
 
       - name: Run checks
         run: pnpm check
+
+      - name: Enforce unit coverage
+        run: pnpm test:coverage

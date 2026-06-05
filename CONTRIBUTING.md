@@ -21,6 +21,10 @@ pnpm install
 pnpm dev
 ```
 
+`pnpm install` also configures the repository Git hooks. The pre-commit hook runs
+`pnpm format` and refreshes the index so committed code uses the project
+Prettier style.
+
 For renderer-only UI work:
 
 ```bash
@@ -39,7 +43,9 @@ pnpm verify:functions
 pnpm build
 ```
 
-`pnpm check` runs the full local gate used by GitHub Actions.
+`pnpm check` runs the full local gate used by GitHub Actions. GitHub Actions also
+runs `pnpm test:coverage`, which enforces the 90% coverage thresholds for core
+logic.
 
 Use `pnpm verify:functions` after touching cleanup, backup, export, scan, adapter, database, or Trash behavior. Use `pnpm build` when TypeScript contracts, Electron IPC, or bundled assets changed.
 
@@ -83,6 +89,11 @@ Before opening a PR:
 - Explain safety and privacy impact for scanning, backup, export, cleanup, or Trash changes.
 
 Maintainers should squash-merge normal PRs unless the commit history carries useful context.
+
+PRs targeting `develop` must pass CI before merge. Direct pushes to `develop`
+run the same gate. The `develop` to `main` release merge does not run the CI
+gate; release readiness should already be verified before code reaches
+`develop`.
 
 ## Releases
 
