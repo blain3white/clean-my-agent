@@ -638,6 +638,10 @@ textarea,
   isolation: isolate;
 }
 
+.cleanup-app-panel {
+  overflow: hidden;
+}
+
 .cleanup-orb-layer {
   position: absolute;
   top: 0;
@@ -661,6 +665,12 @@ textarea,
   pointer-events: none;
 }
 
+.cleanup-view-layer-complete {
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 2.4rem clamp(1rem, 2.5vw, 2.2rem) 2.4rem;
+}
+
 .cleanup-view-layer-review {
   align-items: stretch;
   padding: clamp(1rem, 2.5vh, 1.5rem) clamp(1rem, 2.3vw, 1.5rem) 4.8rem;
@@ -673,14 +683,18 @@ textarea,
 }
 
 .cleanup-stage-body-complete {
-  width: min(68%, 1080px);
-  min-width: min(100%, 720px);
+  width: 100%;
+  min-width: 0;
+  height: 100%;
 }
 
 .cleanup-stage-body-idle,
-.cleanup-stage-body-scanning,
-.cleanup-stage-body-complete {
+.cleanup-stage-body-scanning {
   align-self: flex-start;
+}
+
+.cleanup-stage-body-complete {
+  align-self: stretch;
 }
 
 .cleanup-safety-bottom {
@@ -910,6 +924,25 @@ textarea,
   min-height: 1.45rem;
 }
 
+.cleanup-complete-layout {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  grid-template-columns: minmax(640px, 0.66fr) minmax(280px, 0.34fr);
+  gap: clamp(1.4rem, 3vw, 3rem);
+}
+
+.cleanup-complete-list {
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0.35rem 0.35rem 1.4rem 0.15rem;
+  scrollbar-gutter: stable;
+}
+
 .cleanup-result-accordion {
   overflow: hidden;
   border: 1px solid rgb(255 255 255 / 10%);
@@ -918,6 +951,28 @@ textarea,
     linear-gradient(180deg, rgb(255 255 255 / 5%), rgb(255 255 255 / 2%)),
     rgb(18 22 25 / 54%);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 5%);
+}
+
+.cleanup-result-actions {
+  position: absolute;
+  right: clamp(0.2rem, 1vw, 0.8rem);
+  bottom: 0.25rem;
+  display: flex;
+  width: min(100%, 352px);
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.65rem;
+}
+
+.cleanup-result-selection {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  font-size: 12px;
+  color: rgb(255 255 255 / 48%);
 }
 
 .cleanup-category-row {
@@ -1029,17 +1084,74 @@ textarea,
   overflow: hidden;
 }
 
-.cleanup-session-table {
+.cleanup-group-list {
   margin: 0 20px 14px;
   border-top: 1px solid rgb(255 255 255 / 8%);
+}
+
+.cleanup-group-header,
+.cleanup-group-trigger,
+.cleanup-session-table {
+  min-width: 0;
+}
+
+.cleanup-group-header {
+  display: grid;
+  min-height: 40px;
+  grid-template-columns: 30px minmax(220px, 1.35fr) 120px 70px 118px 82px 32px;
+  align-items: center;
+  gap: 12px;
+  color: rgb(255 255 255 / 40%);
+  font-size: 12px;
+}
+
+.cleanup-group-row {
+  border-top: 1px solid rgb(255 255 255 / 7%);
+  transition: background-color 140ms ease-out;
+}
+
+.cleanup-group-row:hover {
+  background: rgb(255 255 255 / 2.5%);
+}
+
+.cleanup-group-row.is-expanded {
+  background: rgb(255 255 255 / 3.2%);
+}
+
+.cleanup-group-trigger {
+  display: grid;
+  min-height: 58px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.cleanup-group-main {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(220px, 1.35fr) 120px 70px 118px 82px 32px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  text-align: left;
+}
+
+.cleanup-group-details {
+  overflow: hidden;
+}
+
+.cleanup-session-table {
+  margin: 0 0 10px 42px;
+  border-top: 1px solid rgb(255 255 255 / 7%);
 }
 
 .cleanup-session-header,
 .cleanup-session-row {
   display: grid;
-  grid-template-columns: 30px minmax(220px, 1.25fr) 120px 126px 80px 104px 36px;
+  grid-template-columns: 30px minmax(210px, 1.25fr) 118px 118px 76px 96px 34px;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
 }
 
 .cleanup-session-header {
@@ -1050,7 +1162,7 @@ textarea,
 
 .cleanup-session-row {
   position: relative;
-  min-height: 58px;
+  min-height: 54px;
   overflow: hidden;
   border-top: 1px solid rgb(255 255 255 / 7%);
   color: rgb(255 255 255 / 62%);
@@ -1071,6 +1183,15 @@ textarea,
   display: grid;
   min-height: 54px;
   place-items: center;
+  border-top: 1px solid rgb(255 255 255 / 7%);
+  color: rgb(255 255 255 / 38%);
+  font-size: 12px;
+}
+
+.cleanup-session-more {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
   border-top: 1px solid rgb(255 255 255 / 7%);
   color: rgb(255 255 255 / 38%);
   font-size: 12px;
@@ -1114,6 +1235,10 @@ textarea,
   background: color-mix(in srgb, currentColor 12%, transparent);
   font-size: 12px;
   line-height: 1;
+}
+
+.cleanup-group-main .cleanup-source-pill {
+  max-width: 118px;
 }
 
 .cleanup-source-pill-codex {
