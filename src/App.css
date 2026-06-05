@@ -124,6 +124,12 @@ textarea,
   min-width: 1120px;
 }
 
+.usage-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .usage-kpi-card {
   min-height: 112px;
 }
@@ -154,6 +160,35 @@ textarea,
 
 .usage-kpi-sparkline {
   width: 64px;
+}
+
+.usage-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(330px, 0.36fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.usage-hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.34fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.usage-hero-grid > [data-slot='card'] {
+  min-height: 300px;
+}
+
+.usage-main-grid-balanced {
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.34fr);
+}
+
+.usage-left-column,
+.usage-right-column {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
 }
 
 .usage-agent-meter {
@@ -215,6 +250,16 @@ textarea,
   justify-items: center;
   width: max-content;
   min-width: 100%;
+  justify-content: center;
+}
+
+.usage-heatmap-skeleton-grid {
+  display: grid;
+  grid-template-columns: 84px repeat(24, 22px);
+  gap: 6px 4px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
 }
 
 .usage-heatmap-hour {
@@ -322,14 +367,41 @@ textarea,
   background: #bae6fd;
 }
 
-.usage-peak-window {
-  width: 204px;
-  min-height: 148px;
-  border: 1px solid rgb(255 255 255 / 9%);
+.usage-peak-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 86px;
+  gap: 10px;
+  align-items: center;
+  min-height: 52px;
+  border: 1px solid rgb(255 255 255 / 7%);
   border-radius: 8px;
-  padding: 12px;
-  background: rgb(255 255 255 / 3%);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 5%);
+  padding: 8px 10px;
+  background: rgb(255 255 255 / 2.8%);
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.usage-peak-row:hover {
+  border-color: rgb(255 255 255 / 12%);
+  background: rgb(255 255 255 / 4.6%);
+}
+
+.usage-peak-row-histogram {
+  min-width: 0;
+}
+
+.usage-peak-row-histogram .usage-mini-histogram {
+  justify-content: flex-end;
+  gap: 3px;
+  height: 24px;
+  margin-top: 0;
+}
+
+.usage-peak-row-histogram .usage-mini-histogram span {
+  width: 5px;
+  min-height: 4px;
+  border-radius: 2px 2px 1px 1px;
 }
 
 .usage-mini-histogram {
@@ -1785,10 +1857,14 @@ select option {
   background: #bae6fd;
 }
 
-.theme-light .usage-peak-window {
+.theme-light .usage-peak-row {
   border-color: rgb(15 23 42 / 10%);
   background: rgb(255 255 255 / 42%);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 62%);
+}
+
+.theme-light .usage-peak-row:hover {
+  border-color: rgb(15 23 42 / 16%);
+  background: rgb(255 255 255 / 64%);
 }
 
 .theme-light .storage-layout-tile {

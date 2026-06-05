@@ -4694,12 +4694,12 @@ function TopProjectsCard({
         }
       />
       <CardContent className="space-y-2">
-        {projects.slice(0, 8).map((project, index) => (
+        {projects.slice(0, 6).map((project, index) => (
           <button
             key={`${project.project}-${project.projectPath ?? ''}`}
             type="button"
             onClick={() => onSelectProject(project)}
-            className="grid w-full grid-cols-[26px_minmax(0,1fr)_72px_52px_82px] items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-xs transition hover:bg-white/[0.035]"
+            className="grid w-full grid-cols-[26px_minmax(0,1fr)_76px_52px_82px] items-center gap-2 rounded-md px-1.5 py-2 text-left text-xs transition hover:bg-white/[0.035]"
           >
             <span className="grid size-5 place-items-center rounded bg-white/8 text-[11px] font-semibold text-white/55">
               {index + 1}
@@ -4731,34 +4731,40 @@ function TopProjectsCard({
 
 function PeakActivityWindowsCard({ windows }: { windows: PeakWindow[] }) {
   return (
-    <Card className="glass-panel rounded-lg py-4">
+    <Card className="glass-panel usage-peak-card rounded-lg py-4">
       <UsageSectionTitle
         title="Peak Activity Windows"
         description="Highest token usage windows in the selected period."
       />
-      <CardContent>
-        <div className="overflow-x-auto pb-1">
-          <div className="flex min-w-max gap-3">
-            {windows.slice(0, 8).map((window, index) => (
-              <div key={window.rank} className="usage-peak-window">
-                <Badge className="w-fit bg-white/9 text-white/65">#{window.rank}</Badge>
-                <div className="mt-3 text-sm font-medium text-white/82">
-                  {formatHourRange(window.startHour, window.endHour)}
-                </div>
-                <div className="mt-1 text-xs text-white/50">
-                  {formatUsageTokens(window.tokens)} tokens
-                </div>
-                <div className="mt-0.5 text-[11px] text-white/38">
-                  {formatUsageShare(window.share)} of total
-                </div>
-                <MiniHistogram
-                  data={window.histogram}
-                  color={usagePeakColors[index % usagePeakColors.length]}
-                />
+      <CardContent className="space-y-2">
+        {windows.slice(0, 4).map((window, index) => (
+          <div key={window.rank} className="usage-peak-row">
+            <div className="grid size-6 shrink-0 place-items-center rounded-md bg-white/8 text-[11px] font-semibold text-white/55">
+              {window.rank}
+            </div>
+            <div className="min-w-0">
+              <div className="truncate text-xs font-medium text-white/78">
+                {formatHourRange(window.startHour, window.endHour)}
               </div>
-            ))}
+              <div className="mt-0.5 flex min-w-0 items-center gap-2 text-[11px] text-white/42">
+                <span className="truncate">{formatUsageTokens(window.tokens)} tokens</span>
+                <span className="h-1 w-1 shrink-0 rounded-full bg-white/22" aria-hidden="true" />
+                <span className="shrink-0">{formatUsageShare(window.share)}</span>
+              </div>
+            </div>
+            <div className="usage-peak-row-histogram">
+              <MiniHistogram
+                data={window.histogram}
+                color={usagePeakColors[index % usagePeakColors.length]}
+              />
+            </div>
           </div>
-        </div>
+        ))}
+        {windows.length === 0 && (
+          <div className="rounded-md border border-white/8 bg-white/[0.03] p-3 text-xs text-white/42">
+            No peak windows available
+          </div>
+        )}
       </CardContent>
     </Card>
   )
@@ -4782,7 +4788,7 @@ function UsageEmptyView() {
 function UsageLoadingView() {
   return (
     <div className="usage-page space-y-4">
-      <section className="grid grid-cols-5 gap-2.5">
+      <section className="usage-kpi-grid">
         {Array.from({ length: 5 }, (_, index) => (
           <UsageKpiCard
             key={index}
@@ -4797,31 +4803,82 @@ function UsageLoadingView() {
           />
         ))}
       </section>
-      <section className="grid grid-cols-[minmax(0,1fr)_minmax(330px,0.38fr)] gap-4">
-        <div className="space-y-4">
-          <Card className="glass-panel rounded-lg py-4">
-            <UsageSectionTitle title="Token Activity Heatmap" />
-            <CardContent>
-              <div className="grid grid-cols-[84px_repeat(24,22px)] gap-1.5 overflow-hidden">
-                {Array.from({ length: 7 * 24 }, (_, index) => (
-                  <Skeleton key={index} className="size-4 rounded-sm bg-white/8" />
-                ))}
+      <section className="usage-hero-grid">
+        <Card className="glass-panel rounded-lg py-4">
+          <UsageSectionTitle title="Token Activity Heatmap" />
+          <CardContent>
+            <div className="usage-heatmap-skeleton-grid">
+              <span />
+              {usageHours.map((hour) => (
+                <span key={hour} className="usage-heatmap-hour">
+                  {hour % 2 === 0 ? formatHourLabel(hour).replace(' ', '') : ''}
+                </span>
+              ))}
+              {Array.from({ length: 7 }, (_, rowIndex) => (
+                <div key={`row-${rowIndex}`} className="contents">
+                  <span className="usage-heatmap-row-label">Loading</span>
+                  {usageHours.map((hour) => (
+                    <Skeleton
+                      key={`${rowIndex}-${hour}`}
+                      className="size-4 rounded-sm bg-white/8"
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="glass-panel usage-peak-card rounded-lg py-4">
+          <UsageSectionTitle title="Peak Activity Windows" />
+          <CardContent className="space-y-2">
+            {Array.from({ length: 4 }, (_, index) => (
+              <div
+                key={index}
+                className="grid grid-cols-[24px_minmax(0,1fr)_86px] items-center gap-2"
+              >
+                <Skeleton className="size-6 rounded-md bg-white/8" />
+                <div className="space-y-1">
+                  <Skeleton className="h-3.5 w-24 bg-white/8" />
+                  <Skeleton className="h-3 w-32 bg-white/8" />
+                </div>
+                <Skeleton className="h-6 w-full bg-white/8" />
               </div>
-            </CardContent>
-          </Card>
+            ))}
+          </CardContent>
+        </Card>
+      </section>
+      <section className="usage-main-grid usage-main-grid-balanced">
+        <div className="usage-left-column">
           <Card className="glass-panel rounded-lg py-4">
             <UsageSectionTitle title="Daily Usage Trend" />
             <CardContent className="space-y-3">
-              <Skeleton className="h-[220px] w-full bg-white/8" />
+              <Skeleton className="h-[260px] w-full bg-white/8" />
+            </CardContent>
+          </Card>
+          <Card className="glass-panel rounded-lg py-4">
+            <UsageSectionTitle title="Top Projects" />
+            <CardContent className="space-y-2">
+              {Array.from({ length: 6 }, (_, index) => (
+                <div
+                  key={index}
+                  className="grid grid-cols-[26px_minmax(0,1fr)_76px_52px_82px] items-center gap-2"
+                >
+                  <Skeleton className="size-5 rounded bg-white/8" />
+                  <Skeleton className="h-5 min-w-0 bg-white/8" />
+                  <Skeleton className="h-5 bg-white/8" />
+                  <Skeleton className="h-5 bg-white/8" />
+                  <Skeleton className="h-5 bg-white/8" />
+                </div>
+              ))}
             </CardContent>
           </Card>
         </div>
-        <div className="space-y-4">
-          {Array.from({ length: 3 }, (_, index) => (
+        <div className="usage-right-column">
+          {Array.from({ length: 2 }, (_, index) => (
             <Card key={index} className="glass-panel rounded-lg py-4">
               <CardContent className="space-y-3">
                 <Skeleton className="h-4 w-28 bg-white/10" />
-                <Skeleton className="h-20 w-full bg-white/8" />
+                <Skeleton className="h-24 w-full bg-white/8" />
               </CardContent>
             </Card>
           ))}
@@ -4859,7 +4916,7 @@ function UsageView({
 
   return (
     <div className="usage-page space-y-4">
-      <section className="grid grid-cols-5 gap-2.5">
+      <section className="usage-kpi-grid">
         <UsageKpiCard
           icon={Gauge}
           label="Total Tokens"
@@ -4915,19 +4972,21 @@ function UsageView({
         />
       </section>
 
-      <section className="grid grid-cols-[minmax(0,1fr)_minmax(330px,0.38fr)] gap-4">
-        <div className="space-y-4">
-          <UsageHeatmapCard rows={analytics.heatmap.rows} cells={analytics.heatmap.cells} />
-          <DailyUsageTrendCard trend={analytics.dailyTrend} />
-        </div>
-        <div className="space-y-4">
-          <ByAgentCard rows={analytics.agentRows} />
-          <TokenMixCard mix={analytics.tokenMix} />
-          <TopProjectsCard projects={analytics.projectRows} onSelectProject={onSelectProject} />
-        </div>
+      <section className="usage-hero-grid">
+        <UsageHeatmapCard rows={analytics.heatmap.rows} cells={analytics.heatmap.cells} />
+        <PeakActivityWindowsCard windows={analytics.peakWindows} />
       </section>
 
-      <PeakActivityWindowsCard windows={analytics.peakWindows} />
+      <section className="usage-main-grid usage-main-grid-balanced">
+        <div className="usage-left-column">
+          <DailyUsageTrendCard trend={analytics.dailyTrend} />
+          <TopProjectsCard projects={analytics.projectRows} onSelectProject={onSelectProject} />
+        </div>
+        <div className="usage-right-column">
+          <ByAgentCard rows={analytics.agentRows} />
+          <TokenMixCard mix={analytics.tokenMix} />
+        </div>
+      </section>
     </div>
   )
 }
