@@ -14,6 +14,7 @@ Recommended `main` rules:
 - Dismiss stale approvals when new commits are pushed.
 - Require status checks to pass before merging.
 - Require the `Verify` CI check.
+- Require the `GitNexus Report` CI check.
 - Require branches to be up to date before merging.
 - Block force pushes.
 - Block branch deletion.
@@ -24,6 +25,7 @@ Recommended `develop` rules:
 - Require a pull request before merging.
 - Require at least one approval.
 - Require the `Verify` CI check.
+- Require the `GitNexus Report` CI check.
 - Block force pushes.
 - Block branch deletion.
 
@@ -33,7 +35,7 @@ Normal changes:
 
 1. Branch from `develop`.
 2. Open a PR back to `develop`.
-3. Let CI run `pnpm check`.
+3. Let CI run `pnpm check` and write the GitNexus report into the PR body.
 4. Squash-merge after review.
 
 Release flow:
@@ -52,6 +54,7 @@ Urgent fixes:
 ## Required Checks
 
 The `CI` workflow runs on pull requests and pushes to `main` and `develop`.
+Pull requests also run a required `GitNexus Report` job. It builds a GitNexus index, compares the PR against its base branch, and writes the GitNexus summary into the PR body between the `gitnexus-report` markers. If GitNexus cannot analyze the PR or the summary is missing, CI must fail.
 
 The full gate is:
 

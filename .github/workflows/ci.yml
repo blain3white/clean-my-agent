@@ -1,6 +1,10 @@
 name: CI
 
 on:
+  pull_request_target:
+    branches:
+      - main
+      - develop
   pull_request:
     branches:
       - main
@@ -14,12 +18,101 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  gitnexus:
+    name: GitNexus Report
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.13.0
+
+      - name: Build GitNexus index
+        run: npm exec --yes --package gitnexus -- gitnexus analyze --index-only --name clean-my-agent
+
+      - name: Generate GitNexus PR summary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          base_ref="origin/${{ github.base_ref }}"
+          report_path="${RUNNER_TEMP}/gitnexus-summary.md"
+
+          git remote add base "https://github.com/${{ github.repository }}.git"
+          git fetch --no-tags base "${{ github.base_ref }}:refs/remotes/base/${{ github.base_ref }}"
+          base_ref="refs/remotes/base/${{ github.base_ref }}"
+
+          {
+            echo "## GitNexus Report"
+            echo
+            echo "- Base ref: ${base_ref}"
+            echo "- Head SHA: ${GITHUB_SHA}"
+            echo
+            npm exec --yes --package gitnexus -- gitnexus status
+            echo
+            npm exec --yes --package gitnexus -- gitnexus detect-changes \
+              --repo clean-my-agent \
+              --scope compare \
+              --base-ref "${base_ref}"
+          } | tee "${report_path}"
+
+          test -s "${report_path}"
+          grep -q "Risk level:" "${report_path}"
+          cat "${report_path}" >> "${GITHUB_STEP_SUMMARY}"
+          echo "GITNEXUS_REPORT_PATH=${report_path}" >> "${GITHUB_ENV}"
+
+      - name: Write GitNexus summary to PR
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs')
+
+            const markerStart = '<!-- gitnexus-report:start -->'
+            const markerEnd = '<!-- gitnexus-report:end -->'
+            const report = fs.readFileSync(process.env.GITNEXUS_REPORT_PATH, 'utf8').trim()
+            const block = `${markerStart}\n${report}\n${markerEnd}`
+
+            const { owner, repo } = context.repo
+            const pull_number = context.payload.pull_request.number
+            const { data: pullRequest } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number,
+            })
+            const body = pullRequest.body || ''
+            const pattern = new RegExp(`${markerStart}[\\s\\S]*?${markerEnd}`)
+            const nextBody = pattern.test(body)
+              ? body.replace(pattern, block)
+              : `${body.trimEnd()}\n\n${block}`
+
+            await github.rest.pulls.update({
+              owner,
+              repo,
+              pull_number,
+              body: nextBody,
+            })
+
   verify:
     name: Verify
+    if: github.event_name != 'pull_request_target'
     runs-on: macos-15
     timeout-minutes: 20
 
