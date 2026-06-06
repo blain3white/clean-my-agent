@@ -15,6 +15,7 @@ function makeSettings(scanRoot: string, source = 'codex'): AppSettings {
     autoBackup: false,
     mockDataEnabled: false,
     language: 'en',
+    launchAtLogin: false,
     defaultRelayMode: 'full-context',
     exportDirectory: '/tmp',
   }

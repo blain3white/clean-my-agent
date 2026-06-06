@@ -88,8 +88,12 @@ function App() {
           <SettingsView
             snapshot={dashboard.snapshot}
             language={dashboard.language}
+            themePreference={theme.preference}
+            launchAtLogin={dashboard.launchAtLogin}
             mockDataEnabled={dashboard.mockDataEnabled}
             onLanguageChange={dashboard.setLanguage}
+            onThemePreferenceChange={theme.setPreference}
+            onLaunchAtLoginChange={dashboard.setLaunchAtLogin}
             onMockDataChange={dashboard.setMockDataEnabled}
             onRescan={dashboard.rescan}
           />
@@ -97,7 +101,15 @@ function App() {
       default:
         return null
     }
-  }, [activeView, dashboard, overviewRange, sessionProjectQuery, usageRange])
+  }, [
+    activeView,
+    dashboard,
+    overviewRange,
+    sessionProjectQuery,
+    theme.preference,
+    theme.setPreference,
+    usageRange,
+  ])
 
   return (
     <I18nProvider language={dashboard.language}>

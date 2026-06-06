@@ -102,6 +102,7 @@ describe('init and settings', () => {
     expect(settings.autoBackup).toBe(true)
     expect(settings.mockDataEnabled).toBe(false)
     expect(settings.language).toBe('en')
+    expect(settings.launchAtLogin).toBe(false)
     expect(settings.defaultRelayMode).toBe('full-context')
     expect(settings.exportDirectory).toContain(userDataPath)
     expect(settings.scanRoots).toEqual({})

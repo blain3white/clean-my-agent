@@ -472,6 +472,7 @@ export class AppService {
       autoBackup: true,
       mockDataEnabled: false,
       language: defaultLanguage,
+      launchAtLogin: false,
       defaultRelayMode: 'full-context',
       exportDirectory: path.join(this.userDataPath, 'Exports'),
     }

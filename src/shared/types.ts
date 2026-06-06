@@ -203,6 +203,7 @@ export type AppSettings = {
   autoBackup: boolean
   mockDataEnabled: boolean
   language: AppLanguage
+  launchAtLogin: boolean
   defaultRelayMode: 'full-context' | 'fit-to-window' | 'manual-select'
   exportDirectory: string
 }
@@ -225,4 +226,6 @@ export type CleanMyAgentApi = {
   updateSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>
   openPath: (path: string) => Promise<void>
   playSystemSound: () => Promise<void>
+  getLaunchAtLogin: () => Promise<boolean>
+  setLaunchAtLogin: (enabled: boolean) => Promise<boolean>
 }

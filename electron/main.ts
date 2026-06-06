@@ -93,6 +93,11 @@ function registerIpc(): void {
   ipcMain.handle('shell:beep', () => {
     shell.beep()
   })
+  ipcMain.handle('app:getLaunchAtLogin', () => app.getLoginItemSettings().openAtLogin)
+  ipcMain.handle('app:setLaunchAtLogin', (_event, enabled: boolean) => {
+    app.setLoginItemSettings({ openAtLogin: enabled })
+    return app.getLoginItemSettings().openAtLogin
+  })
 }
 
 app.whenReady().then(async () => {

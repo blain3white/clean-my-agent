@@ -17,8 +17,10 @@ type DashboardState = {
   loading: boolean
   mockDataEnabled: boolean
   language: AppLanguage
+  launchAtLogin: boolean
   setMockDataEnabled: (enabled: boolean) => Promise<void>
   setLanguage: (language: AppLanguage) => Promise<void>
+  setLaunchAtLogin: (enabled: boolean) => Promise<void>
   rescan: () => Promise<void>
   refreshRecentSessions: () => Promise<void>
   backupSession: (sessionId: string) => Promise<void>
@@ -45,6 +47,7 @@ const defaultSettings = (): AppSettings => ({
   autoBackup: true,
   mockDataEnabled: false,
   language: defaultLanguage,
+  launchAtLogin: false,
   defaultRelayMode: 'full-context',
   exportDirectory: '',
 })
@@ -113,7 +116,8 @@ export function useDashboard(): DashboardState {
       if (!window.cleanMyAgent) return
       try {
         const next = await window.cleanMyAgent.getSettings()
-        if (!cancelled) setSettings(mergeSettings(next))
+        const launchAtLogin = await window.cleanMyAgent.getLaunchAtLogin()
+        if (!cancelled) setSettings(mergeSettings({ ...next, launchAtLogin }))
       } catch (error) {
         console.error(error)
         toast.error(t('toast.readSettingsError'))
@@ -220,6 +224,25 @@ export function useDashboard(): DashboardState {
 
         const label = languageOptions.find((option) => option.value === language)?.nativeLabel
         toast.success(translate(language, 'toast.languageUpdated', { language: label ?? language }))
+      },
+      setLaunchAtLogin: async (enabled: boolean) => {
+        const nextSettings = mergeSettings({ ...settings, launchAtLogin: enabled })
+        setSettings(nextSettings)
+
+        try {
+          const actual = window.cleanMyAgent
+            ? await window.cleanMyAgent.setLaunchAtLogin(enabled)
+            : enabled
+          const persisted = window.cleanMyAgent
+            ? await window.cleanMyAgent.updateSettings({ launchAtLogin: actual })
+            : mergeSettings({ ...nextSettings, launchAtLogin: actual })
+          setSettings(mergeSettings(persisted))
+          toast.success(t(actual ? 'toast.launchAtLoginEnabled' : 'toast.launchAtLoginDisabled'))
+        } catch (error) {
+          console.error(error)
+          toast.error(t('toast.updateLaunchAtLoginError'))
+          setSettings(settings)
+        }
       },
       rescan: async () => {
         await load(true)
@@ -332,6 +355,7 @@ export function useDashboard(): DashboardState {
     loading,
     mockDataEnabled: settings.mockDataEnabled,
     language: settings.language,
+    launchAtLogin: settings.launchAtLogin,
     ...actions,
   }
 }

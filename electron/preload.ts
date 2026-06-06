@@ -20,6 +20,8 @@ const api: CleanMyAgentApi = {
     ipcRenderer.invoke('settings:update', settings),
   openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),
   playSystemSound: () => ipcRenderer.invoke('shell:beep'),
+  getLaunchAtLogin: () => ipcRenderer.invoke('app:getLaunchAtLogin'),
+  setLaunchAtLogin: (enabled: boolean) => ipcRenderer.invoke('app:setLaunchAtLogin', enabled),
 }
 
 contextBridge.exposeInMainWorld('cleanMyAgent', api)

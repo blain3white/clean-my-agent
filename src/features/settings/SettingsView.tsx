@@ -18,9 +18,11 @@ import {
 import { AgentGlyph } from '@/components/agent-glyph'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { playCleanupSystemSound } from '@/features/cleanup/cleanup-system-sound'
 import { agentLabel, formatBytes } from '@/lib/format'
 import { languageOptions } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n-context'
+import type { ThemePreference } from '@/shared/types'
 import type { TranslationKey } from '@/lib/i18n'
 import {
   agentSources,
@@ -32,8 +34,12 @@ import {
 type SettingsViewProps = {
   snapshot: DashboardSnapshot
   language: AppLanguage
+  themePreference: ThemePreference
+  launchAtLogin: boolean
   mockDataEnabled: boolean
   onLanguageChange: (language: AppLanguage) => Promise<void>
+  onThemePreferenceChange: (preference: ThemePreference) => void
+  onLaunchAtLoginChange: (enabled: boolean) => Promise<void>
   onMockDataChange: (enabled: boolean) => Promise<void>
   onRescan: () => Promise<void>
 }
@@ -47,7 +53,6 @@ type ToggleKey =
   | 'cleanupSound'
   | 'scanSound'
   | 'errorSound'
-  | 'launchAtLogin'
   | 'checkUpdates'
 
 const initialProviderState: Record<AgentSource, boolean> = {
@@ -67,9 +72,14 @@ const initialToggles: Record<ToggleKey, boolean> = {
   cleanupSound: true,
   scanSound: false,
   errorSound: true,
-  launchAtLogin: false,
   checkUpdates: true,
 }
+
+const themeOptions: Array<{ value: ThemePreference; labelKey: TranslationKey }> = [
+  { value: 'system', labelKey: 'theme.system' },
+  { value: 'light', labelKey: 'theme.light' },
+  { value: 'dark', labelKey: 'theme.dark' },
+]
 
 function latestScanValue(snapshot: DashboardSnapshot): string | undefined {
   const latest = snapshot.agents
@@ -160,6 +170,33 @@ function ValueButton({ children }: { children: ReactNode }) {
   )
 }
 
+function NativeSelect<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value: T
+  options: Array<{ value: T; label: string }>
+  onChange: (value: T) => void
+}) {
+  return (
+    <select
+      aria-label={label}
+      className="h-8 min-w-36 appearance-auto rounded-lg border border-white/9 bg-white/[0.055] px-3 text-sm text-white/78 outline-none transition hover:bg-white/[0.085] focus:border-blue-400/70 focus:ring-2 focus:ring-blue-400/25"
+      value={value}
+      onChange={(event) => onChange(event.target.value as T)}
+    >
+      {options.map((option) => (
+        <option key={option.value} value={option.value} className="bg-[#151923]">
+          {option.label}
+        </option>
+      ))}
+    </select>
+  )
+}
+
 function ActionChevron() {
   return <ChevronRight className="size-4 text-white/42 transition group-hover:text-white/62" />
 }
@@ -186,8 +223,12 @@ function ProviderStatus({
 export function SettingsView({
   snapshot,
   language,
+  themePreference,
+  launchAtLogin,
   mockDataEnabled,
   onLanguageChange,
+  onThemePreferenceChange,
+  onLaunchAtLoginChange,
   onMockDataChange,
   onRescan,
 }: SettingsViewProps) {
@@ -221,6 +262,14 @@ export function SettingsView({
     t('settings.toggleProvider', { provider: agentLabel[source] })
 
   const toggleLabel = (key: TranslationKey) => t(key)
+  const languageSelectOptions = languageOptions.map((option) => ({
+    value: option.value,
+    label: option.nativeLabel,
+  }))
+  const themeSelectOptions = themeOptions.map((option) => ({
+    value: option.value,
+    label: t(option.labelKey),
+  }))
 
   return (
     <div className="mx-auto w-full max-w-[900px] space-y-5 pb-8">
@@ -390,20 +439,21 @@ export function SettingsView({
           <SettingsRow
             icon={Volume2}
             title={t('settings.volume')}
-            trailing={<span className="w-11 text-right text-sm text-white/58">{volume}%</span>}
-          >
-            <div className="mt-3 flex max-w-[260px] items-center gap-3">
-              <input
-                aria-label={t('settings.soundEffectsVolume')}
-                type="range"
-                min="0"
-                max="100"
-                value={volume}
-                onChange={(event) => setVolume(Number(event.target.value))}
-                className="h-1.5 w-full accent-blue-500"
-              />
-            </div>
-          </SettingsRow>
+            trailing={
+              <div className="flex w-[330px] items-center justify-end gap-4">
+                <input
+                  aria-label={t('settings.soundEffectsVolume')}
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={volume}
+                  onChange={(event) => setVolume(Number(event.target.value))}
+                  className="h-1.5 w-[250px] accent-blue-500"
+                />
+                <span className="w-11 text-right text-sm text-white/58">{volume}%</span>
+              </div>
+            }
+          />
           <SettingsRow
             title={t('settings.cleanupCompleteSound')}
             trailing={
@@ -441,6 +491,7 @@ export function SettingsView({
               <Button
                 variant="outline"
                 size="sm"
+                onClick={() => void playCleanupSystemSound(volume / 100)}
                 className="border-white/10 bg-white/[0.045] text-white/72 hover:bg-white/[0.085] hover:text-white"
               >
                 {t('settings.play')}
@@ -457,31 +508,32 @@ export function SettingsView({
             title={t('settings.language')}
             description={t('settings.languageDescription')}
             trailing={
-              <select
-                aria-label={t('settings.languageSelectLabel')}
-                className="h-8 min-w-36 appearance-auto rounded-lg border border-white/9 bg-white/[0.055] px-3 text-sm text-white/78 outline-none transition hover:bg-white/[0.085] focus:border-blue-400/70 focus:ring-2 focus:ring-blue-400/25"
+              <NativeSelect
+                label={t('settings.languageSelectLabel')}
                 value={language}
-                onChange={(event) => void onLanguageChange(event.target.value as AppLanguage)}
-              >
-                {languageOptions.map((option) => (
-                  <option key={option.value} value={option.value} className="bg-[#151923]">
-                    {option.nativeLabel}
-                  </option>
-                ))}
-              </select>
+                options={languageSelectOptions}
+                onChange={(value) => void onLanguageChange(value)}
+              />
             }
           />
           <SettingsRow
             icon={Palette}
             title={t('settings.appearance')}
-            trailing={<ValueButton>{t('settings.appearanceSystem')}</ValueButton>}
+            trailing={
+              <NativeSelect
+                label={t('settings.appearanceSelectLabel')}
+                value={themePreference}
+                options={themeSelectOptions}
+                onChange={onThemePreferenceChange}
+              />
+            }
           />
           <SettingsRow
             title={t('settings.launchAtLogin')}
             trailing={
               <SwitchControl
-                checked={toggles.launchAtLogin}
-                onCheckedChange={(checked) => setToggle('launchAtLogin', checked)}
+                checked={launchAtLogin}
+                onCheckedChange={(checked) => void onLaunchAtLoginChange(checked)}
                 label={toggleLabel('settings.toggleLaunchAtLogin')}
               />
             }
