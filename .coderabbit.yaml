@@ -1,0 +1,53 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: en-US
+
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  path_filters:
+    - '!pnpm-lock.yaml'
+    - '!out/**'
+  path_instructions:
+    - path: 'electron/lib/**/*.ts'
+      instructions: |
+        Treat this as core Electron service, adapter, filesystem, and database logic.
+        For behavior changes, require focused unit tests in electron/**/*.test.ts or functional smoke coverage in scripts/verify-functions.ts.
+        Flag missing coverage for cleanup, backup, export, scan, Trash, credential-filtering, error handling, and SQLite persistence behavior.
+    - path: 'src/lib/**/*.ts'
+      instructions: |
+        Treat this as core renderer utility logic.
+        Require focused unit tests in src/**/*.test.ts for new behavior, edge cases, and regression fixes.
+    - path: 'src/shared/**/*.ts'
+      instructions: |
+        Treat shared types as IPC and cross-process contracts.
+        Flag payload-shape changes that do not include matching tests and affected Electron/renderer updates.
+    - path: '**/*.test.ts'
+      instructions: |
+        Verify tests assert behavior, not implementation. Flag tests with no assertions.
+        Prefer deterministic fixtures over snapshots or broad smoke-only assertions.
+    - path: 'scripts/verify-pr-tests.ts'
+      instructions: |
+        This script is a hard CI gate for PR test coverage. Keep it deterministic and independent of AI review output.
+  pre_merge_checks:
+    custom_checks:
+      - name: Core behavior changes have tests
+        mode: error
+        instructions: |
+          Review the diff for production behavior changes in electron/lib/**, src/lib/**, and src/shared/**.
+          If such changes exist, verify that the PR adds or updates meaningful tests in *.test.ts, *.test.tsx, or scripts/verify-functions.ts.
+          Request changes when tests are missing, only exercise implementation details, or do not cover the changed behavior.
+      - name: Coverage gate remains enforced
+        mode: error
+        instructions: |
+          Verify that PRs targeting develop continue to run pnpm test:coverage and enforce at least 90% statements, branches, functions, and lines coverage.
+          Request changes if the workflow, package scripts, or Vitest thresholds weaken this gate.
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - develop

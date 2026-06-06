@@ -7,18 +7,16 @@ on:
       - develop
   pull_request:
     branches:
-      - main
       - develop
   push:
     branches:
-      - main
       - develop
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -50,6 +48,8 @@ jobs:
 
       - name: Generate GitNexus PR summary
         shell: bash
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
 
@@ -64,7 +64,7 @@ jobs:
             echo "## GitNexus Report"
             echo
             echo "- Base ref: ${base_ref}"
-            echo "- Head SHA: ${GITHUB_SHA}"
+            echo "- Head SHA: ${PR_HEAD_SHA}"
             echo
             npm exec --yes --package gitnexus -- gitnexus status
             echo
@@ -119,6 +119,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -134,5 +136,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Require tests for core changes
+        if: github.event_name == 'pull_request'
+        run: pnpm verify:pr-tests
+
       - name: Run checks
         run: pnpm check
+
+      - name: Enforce unit coverage
+        run: pnpm test:coverage

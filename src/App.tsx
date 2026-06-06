@@ -2180,7 +2180,13 @@ function buildCleanupCandidateGroups(
   })
 }
 
-function CleanupView({ cleanup, agents, sessions, onScanCleanup, onMoveToTrash }: CleanupViewProps) {
+function CleanupView({
+  cleanup,
+  agents,
+  sessions,
+  onScanCleanup,
+  onMoveToTrash,
+}: CleanupViewProps) {
   const [persistedState] = useState(() => readCleanupViewState())
   const [stage, setStage] = useState<CleanupStage>(() => persistedState?.stage ?? 'idle')
   const [orbPhase, setOrbPhase] = useState<CleanupOrbPhase>(() =>
@@ -2712,52 +2718,19 @@ function CleanupScanShell({
     48,
     Math.max(48, stageSize.height - orbSize - 124),
   )
-  const raisedTop = clampNumber(stageSize.height * 0.075, 34, 92)
   const completeOrbSize = clampNumber(stageSize.height * 0.31, 224, cleanupOrbMaxSize)
   const activeOrbSize = stage === 'complete' ? completeOrbSize : orbSize
-  const orbTop = stage === 'idle' ? idleTop : stage === 'complete' ? 42 : raisedTop
+  const orbTop = stage === 'idle' ? idleTop : stage === 'complete' ? 42 : 118
   const orbLeft =
     stage === 'complete'
       ? clampNumber(stageSize.width - activeOrbSize - 64, 420, stageSize.width - activeOrbSize - 28)
-      : stageSize.width / 2 - activeOrbSize / 2
-  const visualOrbSize =
-    orbMode === 'scanning' ? activeOrbSize * cleanupScanningOrbScale : activeOrbSize
-  const visualOrbOffset = (activeOrbSize - visualOrbSize) / 2
-  const contentGap =
-    stageSize.height < 680 ? 8 : stageSize.height < 760 ? 10 : stageSize.height < 920 ? 18 : 24
-  const baseContentTop =
-    stage === 'idle'
-      ? idleTop + activeOrbSize + contentGap
-      : raisedTop + visualOrbOffset + visualOrbSize + contentGap
-  const contentTop =
-    stage === 'complete' ? Math.max(360, baseContentTop - 34) : baseContentTop
-
-  const bodyContent =
-    stage === 'idle' ? (
-      <CleanupIdleBody />
-    ) : stage === 'scanning' ? (
-      <CleanupScanningBody
-        progress={progress}
-        sourceProgress={sourceProgress}
-        onCancel={onCancel}
-      />
-    ) : stage === 'review' ? (
-      reviewPanel
-    ) : (
-      <CleanupCompleteBody
-          categories={categories}
-          candidates={candidates}
-          sessionById={sessionById}
-        selected={selected}
-        cleaning={cleaning}
-        cleaningIds={cleaningIds}
-        onClean={onClean}
-        onScanAgain={onScanAgain}
-        onToggleCandidate={onToggleCandidate}
-        onToggleCandidates={onToggleCandidates}
-        onToggleCategory={onToggleCategory}
-      />
-    )
+      : stage === 'scanning'
+        ? clampNumber(
+            stageSize.width * 0.72 - activeOrbSize / 2,
+            620,
+            stageSize.width - activeOrbSize - 64,
+          )
+        : stageSize.width / 2 - activeOrbSize / 2
   const orbProps =
     orbMode === 'idle'
       ? {
@@ -2785,21 +2758,13 @@ function CleanupScanShell({
           }
 
   return (
-    <div
-      ref={stageRef}
-      className={`cleanup-stage cleanup-stage-${stage}`}
-      style={
-        {
-          '--cleanup-content-top': `${contentTop}px`,
-        } as CSSProperties
-      }
-    >
+    <div ref={stageRef} className={`cleanup-stage cleanup-stage-${stage}`}>
       <motion.div
         className={`cleanup-orb-layer cleanup-orb-layer-${stage}`}
         initial={false}
         animate={{
-          left: orbLeft,
-          top: orbTop,
+          x: orbLeft,
+          y: orbTop,
           width: activeOrbSize,
           height: activeOrbSize,
           opacity: stage === 'review' ? 0 : 1,
@@ -2808,26 +2773,89 @@ function CleanupScanShell({
       >
         <CleanupOrbButton {...orbProps} size={activeOrbSize} />
       </motion.div>
-      <div className={`cleanup-view-layer cleanup-view-layer-${stage}`}>
-        <div
-          className={`cleanup-stage-body cleanup-stage-body-${stage} ${
-            stage === 'review' ? 'cleanup-stage-body-review' : ''
-          }`}
-        >
-          <AnimatePresence mode="wait">
+      <div className="cleanup-view-layer cleanup-idle-layer">
+        <AnimatePresence>
+          {stage === 'idle' && (
             <motion.div
-              key={stage}
-              className={stage === 'complete' || stage === 'review' ? 'h-full min-h-0' : undefined}
+              key="idle"
+              className="cleanup-stage-body cleanup-stage-body-idle"
               variants={cleanupBodyVariants}
               initial="initial"
               animate="animate"
               exit="exit"
               transition={cleanupBodyTransition}
             >
-              {bodyContent}
+              <CleanupIdleBody />
             </motion.div>
-          </AnimatePresence>
-        </div>
+          )}
+        </AnimatePresence>
+      </div>
+      <div className="cleanup-view-layer cleanup-scanning-layer">
+        <AnimatePresence>
+          {stage === 'scanning' && (
+            <motion.div
+              key="scanning"
+              className="cleanup-stage-body cleanup-stage-body-scanning"
+              variants={cleanupBodyVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={cleanupBodyTransition}
+            >
+              <CleanupScanningBody
+                progress={progress}
+                sourceProgress={sourceProgress}
+                onCancel={onCancel}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+      <div className="cleanup-view-layer cleanup-complete-layer">
+        <AnimatePresence>
+          {stage === 'complete' && (
+            <motion.div
+              key="complete"
+              className="cleanup-stage-body cleanup-stage-body-complete h-full min-h-0"
+              variants={cleanupBodyVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={cleanupBodyTransition}
+            >
+              <CleanupCompleteBody
+                categories={categories}
+                candidates={candidates}
+                sessionById={sessionById}
+                selected={selected}
+                cleaning={cleaning}
+                cleaningIds={cleaningIds}
+                onClean={onClean}
+                onScanAgain={onScanAgain}
+                onToggleCandidate={onToggleCandidate}
+                onToggleCandidates={onToggleCandidates}
+                onToggleCategory={onToggleCategory}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+      <div className="cleanup-view-layer cleanup-review-layer">
+        <AnimatePresence>
+          {stage === 'review' && (
+            <motion.div
+              key="review"
+              className="cleanup-stage-body cleanup-stage-body-review h-full min-h-0"
+              variants={cleanupBodyVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={cleanupBodyTransition}
+            >
+              {reviewPanel}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
       <CleanupSafetyNote
         className="cleanup-safety-bottom"
@@ -3247,10 +3275,7 @@ function CleanupCategoryRow({
             {category.description}
           </span>
         </span>
-        <Badge
-          variant="outline"
-          className={`cleanup-category-tag ${tagClass}`}
-        >
+        <Badge variant="outline" className={`cleanup-category-tag ${tagClass}`}>
           <ActionIcon className="size-3.5" />
           {category.action}
         </Badge>
@@ -3456,9 +3481,7 @@ function CleanupResultSessionRow({
       </button>
       <div className="min-w-0">
         <div className="truncate text-[13px] font-semibold text-white/90">{candidate.title}</div>
-        <div className="mt-0.5 truncate text-[11px] text-white/42">
-          Session ID: {sessionId}
-        </div>
+        <div className="mt-0.5 truncate text-[11px] text-white/42">Session ID: {sessionId}</div>
       </div>
       <span className={`cleanup-source-pill cleanup-source-pill-${source}`}>
         {agentLabel[source]}
@@ -4217,10 +4240,7 @@ function MiniHistogram({
       aria-hidden="true"
     >
       {data.map((value, index) => (
-        <span
-          key={index}
-          style={{ height: `${Math.max(12, (value / max) * 100)}%` }}
-        />
+        <span key={index} style={{ height: `${Math.max(12, (value / max) * 100)}%` }} />
       ))}
     </div>
   )
@@ -4712,12 +4732,12 @@ function TopProjectsCard({
         }
       />
       <CardContent className="space-y-2">
-        {projects.slice(0, 8).map((project, index) => (
+        {projects.slice(0, 6).map((project, index) => (
           <button
             key={`${project.project}-${project.projectPath ?? ''}`}
             type="button"
             onClick={() => onSelectProject(project)}
-            className="grid w-full grid-cols-[26px_minmax(0,1fr)_72px_52px_82px] items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-xs transition hover:bg-white/[0.035]"
+            className="grid w-full grid-cols-[26px_minmax(0,1fr)_76px_52px_82px] items-center gap-2 rounded-md px-1.5 py-2 text-left text-xs transition hover:bg-white/[0.035]"
           >
             <span className="grid size-5 place-items-center rounded bg-white/8 text-[11px] font-semibold text-white/55">
               {index + 1}
@@ -4752,7 +4772,7 @@ function PeakActivityWindowsCard({ windows }: { windows: PeakWindow[] }) {
   const rest = windows.slice(1, 8)
 
   return (
-    <Card className="glass-panel rounded-lg py-4">
+    <Card className="glass-panel usage-peak-card rounded-lg py-4">
       <UsageSectionTitle
         title="Peak Activity Windows"
         description="Highest token usage windows in the selected period."
@@ -4864,7 +4884,7 @@ function UsageEmptyView() {
 function UsageLoadingView() {
   return (
     <div className="usage-page space-y-4">
-      <section className="grid grid-cols-5 gap-2.5">
+      <section className="usage-kpi-grid">
         {Array.from({ length: 5 }, (_, index) => (
           <UsageKpiCard
             key={index}
@@ -4918,7 +4938,6 @@ function UsageLoadingView() {
     </div>
   )
 }
-
 function UsageView({
   snapshot,
   range,
@@ -4947,7 +4966,7 @@ function UsageView({
 
   return (
     <div className="usage-page space-y-4">
-      <section className="grid grid-cols-5 gap-2.5">
+      <section className="usage-kpi-grid">
         <UsageKpiCard
           icon={Gauge}
           label="Total Tokens"

@@ -12,6 +12,11 @@ GitNexus Report CI will update this section.
 
 <!-- gitnexus-report:end -->
 
+## Test Coverage
+
+- [ ] Core behavior changes include focused unit tests or functional smoke coverage.
+- [ ] Coverage remains at or above 90% for statements, branches, functions, and lines.
+
 ## Safety Checklist
 
 - [ ] I did not add scans or copies for credential-like files.

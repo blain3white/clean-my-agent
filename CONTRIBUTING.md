@@ -21,6 +21,10 @@ pnpm install
 pnpm dev
 ```
 
+`pnpm install` also configures the repository Git hooks. The pre-commit hook runs
+`pnpm format` and refreshes the index so committed code uses the project
+Prettier style.
+
 For renderer-only UI work:
 
 ```bash
@@ -39,7 +43,14 @@ pnpm verify:functions
 pnpm build
 ```
 
-`pnpm check` runs the full local gate used by GitHub Actions.
+`pnpm check` runs the full local gate used by GitHub Actions. GitHub Actions also
+runs `pnpm test:coverage`, which enforces the 90% coverage thresholds for core
+logic.
+
+Pull requests into `develop` also run `pnpm verify:pr-tests`. This deterministic
+gate fails when core production files in `electron/lib/`, `src/lib/`, or
+`src/shared/` change without a unit test or functional smoke test change in the
+same PR.
 
 Use `pnpm verify:functions` after touching cleanup, backup, export, scan, adapter, database, or Trash behavior. Use `pnpm build` when TypeScript contracts, Electron IPC, or bundled assets changed.
 
@@ -70,6 +81,8 @@ Clean My Agent must remain safe by default:
 - Functional smoke coverage lives in `scripts/verify-functions.ts`.
 - Add focused unit tests for pure parsing, formatting, policy, and adapter logic.
 - Add or update the functional smoke test when a user-facing workflow changes.
+- Core behavior changes must keep statements, branches, functions, and lines at or above 90% coverage.
+- CodeRabbit reviews PRs targeting `develop` and should request changes when feature work lacks meaningful tests, but CI remains the hard source of truth for coverage numbers.
 
 ## Pull Requests
 
@@ -81,8 +94,16 @@ Before opening a PR:
 - Keep the PR focused on one behavior or infrastructure change.
 - Include screenshots for visible UI changes.
 - Explain safety and privacy impact for scanning, backup, export, cleanup, or Trash changes.
+- List the tests you added or updated for feature and core behavior changes.
 
 Maintainers should squash-merge normal PRs unless the commit history carries useful context.
+
+PRs targeting `develop` must pass CI before merge. Direct pushes to `develop`
+run the same gate. The required `Verify` check includes formatting, linting,
+unit tests, functional smoke verification, build verification, the PR test-change
+gate, and the 90% coverage gate. The `develop` to `main` release merge does not
+run this CI gate; release readiness should already be verified before code
+reaches `develop`.
 
 ## Releases
 

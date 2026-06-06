@@ -482,7 +482,6 @@ export class AppService {
 
   private shouldRescanCachedSessions(): boolean {
     if (this.db.getArchives().length > 0) return false
-    if (this.db.getSessions().length === 0) return true
     return (this.db.getSetting<number>('scanSchemaVersion') ?? 0) !== scanSchemaVersion
   }
 
