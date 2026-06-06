@@ -12,6 +12,7 @@ import type {
   SessionRecord,
   StorageSlice,
   TrashRecord,
+  UpdateCheckResult,
   UsagePoint,
 } from '../../src/shared/types'
 import { agentSources, appLanguages, defaultLanguage, exportFormats } from '../../src/shared/types'
@@ -36,6 +37,7 @@ import {
 const oneDayMs = 24 * 60 * 60 * 1000
 const usageHistoryDays = 365
 const scanSchemaVersion = 3
+const currentAppVersion = process.env.npm_package_version ?? '0.1.1'
 const maxPathLength = 4096
 const maxRetentionDays = 36_500
 const relayModes: AppSettings['defaultRelayMode'][] = [
@@ -740,6 +742,33 @@ export class AppService {
     this.settings = next
     this.db.setSetting('settings', next)
     return next
+  }
+
+  async checkForUpdates(): Promise<UpdateCheckResult> {
+    const checkedAt = new Date().toISOString()
+    const fallback = { currentVersion: currentAppVersion, updateAvailable: false, checkedAt }
+
+    try {
+      const response = await fetch(
+        'https://api.github.com/repos/blain3white/clean-my-agent/releases/latest',
+        { headers: { Accept: 'application/vnd.github+json' } },
+      )
+      if (!response.ok) return fallback
+      const json = (await response.json()) as {
+        tag_name?: string
+        html_url?: string
+      }
+      const latestVersion = json.tag_name?.replace(/^v/i, '')
+      return {
+        currentVersion: currentAppVersion,
+        latestVersion,
+        updateAvailable: Boolean(latestVersion && latestVersion !== currentAppVersion),
+        releaseUrl: json.html_url,
+        checkedAt,
+      }
+    } catch {
+      return fallback
+    }
   }
 
   async openPath(targetPath: string): Promise<void> {

@@ -233,6 +233,14 @@ export type AppSettings = {
   exportDirectory: string
 }
 
+export type UpdateCheckResult = {
+  currentVersion: string
+  latestVersion?: string
+  updateAvailable: boolean
+  releaseUrl?: string
+  checkedAt: string
+}
+
 export type ThemePreference = 'system' | 'light' | 'dark'
 
 export type UpdateReleaseAsset = {
@@ -276,6 +284,6 @@ export type CleanMyAgentApi = {
   playSystemSound: () => Promise<void>
   getLaunchAtLogin: () => Promise<boolean>
   setLaunchAtLogin: (enabled: boolean) => Promise<boolean>
-  checkForUpdates: () => Promise<UpdateReleaseCheckResult>
+  checkForUpdates: () => Promise<UpdateCheckResult>
   downloadLatestUpdate: () => Promise<UpdateDownloadResult>
 }
