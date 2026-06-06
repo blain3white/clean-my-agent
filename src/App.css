@@ -1422,17 +1422,17 @@ textarea,
     var(--cleanup-result-side-space, 386px),
     calc(100% - (var(--cleanup-result-gutter, 0.8rem) + var(--cleanup-result-gutter, 0.8rem)))
   );
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   justify-content: flex-end;
-  gap: 0.65rem;
+  gap: 0.55rem;
 }
 
 .cleanup-result-selection {
   display: flex;
   width: 100%;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 0.45rem;
   font-size: 12px;
   white-space: nowrap;
@@ -1440,13 +1440,13 @@ textarea,
 }
 
 .cleanup-primary-action {
-  flex: 1 1 166px;
-  min-width: min(176px, 100%);
+  width: 100%;
+  min-width: 0;
 }
 
 .cleanup-secondary-action {
-  flex: 1 1 146px;
-  min-width: min(150px, 100%);
+  width: 100%;
+  min-width: 0;
 }
 
 .cleanup-category-row {
@@ -1961,7 +1961,7 @@ textarea,
 
   .cleanup-primary-action,
   .cleanup-secondary-action {
-    flex-basis: 0;
+    flex-basis: auto;
   }
 
   .cleanup-group-list {

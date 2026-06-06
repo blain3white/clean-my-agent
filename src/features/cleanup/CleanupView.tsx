@@ -909,10 +909,11 @@ function CleanupScanShell({
     cleanupCompleteOrbMinSize,
     cleanupOrbMaxSize,
   )
-  const isCompactStage = stageSize.width < 820
-  const scanningOrbSize = isCompactStage
-    ? clampNumber(Math.min(stageSize.height * 0.34, stageSize.width * 0.48), 220, cleanupOrbMaxSize)
-    : orbSize
+  const scanningOrbSize = clampNumber(
+    Math.min(stageSize.height * 0.36, stageSize.width * 0.34),
+    220,
+    300,
+  )
   const activeOrbSize =
     stage === 'complete' ? completeOrbSize : stage === 'scanning' ? scanningOrbSize : orbSize
   const completeGutter = clampNumber(stageSize.width * 0.028, 18, 64)
@@ -921,38 +922,21 @@ function CleanupScanShell({
     360,
     Math.min(560, stageSize.width * 0.42),
   )
-  const scanBodyWidth = isCompactStage
-    ? clampNumber(stageSize.width - 36, 320, 620)
-    : clampNumber(stageSize.width * 0.42, 480, 620)
-  const scanGap = clampNumber(stageSize.width * 0.035, 24, 56)
-  const scanGroupWidth = isCompactStage ? scanBodyWidth : scanBodyWidth + scanGap + scanningOrbSize
-  const scanGroupLeft = clampNumber(
-    (stageSize.width - scanGroupWidth) / 2,
-    18,
-    Math.max(18, stageSize.width - scanGroupWidth - 18),
+  const scanBodyWidth = Math.min(
+    Math.max(320, stageSize.width - 36),
+    clampNumber(stageSize.width * 0.62, 480, 620),
   )
-  const scanOrbTop = isCompactStage
-    ? clampNumber(
-        stageSize.height * 0.08,
-        42,
-        Math.max(42, stageSize.height - scanningOrbSize - 300),
-      )
-    : clampNumber(
-        stageSize.height * 0.22,
-        96,
-        Math.max(96, stageSize.height - scanningOrbSize - 180),
-      )
-  const scanOrbLeft = isCompactStage
-    ? stageSize.width / 2 - scanningOrbSize / 2
-    : scanGroupLeft + scanBodyWidth + scanGap
-  const scanContentTop = isCompactStage
-    ? clampNumber(scanOrbTop + scanningOrbSize + 12, 0, Math.max(0, stageSize.height - 292))
-    : clampNumber(
-        scanOrbTop + (scanningOrbSize - 292) / 2,
-        78,
-        Math.max(78, stageSize.height - 330),
-      )
-  const scanContentLeft = isCompactStage ? stageSize.width / 2 - scanBodyWidth / 2 : scanGroupLeft
+  const scanStackGap = clampNumber(stageSize.height * 0.026, 14, 24)
+  const estimatedScanBodyHeight = stageSize.height < 640 ? 230 : stageSize.height < 720 ? 270 : 300
+  const scanStackHeight = scanningOrbSize + scanStackGap + estimatedScanBodyHeight
+  const scanOrbTop = clampNumber(
+    (stageSize.height - scanStackHeight) / 2,
+    24,
+    Math.max(24, stageSize.height - scanStackHeight - 20),
+  )
+  const scanOrbLeft = stageSize.width / 2 - scanningOrbSize / 2
+  const scanContentTop = scanOrbTop + scanningOrbSize + scanStackGap
+  const scanContentLeft = stageSize.width / 2 - scanBodyWidth / 2
   const idleContentTop = clampNumber(
     idleTop + orbSize + clampNumber(stageSize.height * 0.026, 22, 38),
     0,
@@ -966,7 +950,13 @@ function CleanupScanShell({
         : scanOrbTop
   const orbLeft =
     stage === 'complete'
-      ? Math.max(completeGutter, stageSize.width - activeOrbSize - completeGutter)
+      ? Math.max(
+          completeGutter,
+          stageSize.width -
+            completeGutter -
+            completeSideSpace +
+            (completeSideSpace - activeOrbSize) / 2,
+        )
       : stage === 'scanning'
         ? scanOrbLeft
         : stageSize.width / 2 - activeOrbSize / 2
@@ -1051,11 +1041,7 @@ function CleanupScanShell({
               exit="exit"
               transition={cleanupBodyTransition}
             >
-              <CleanupScanningBody
-                progress={progress}
-                sourceProgress={sourceProgress}
-                onCancel={onCancel}
-              />
+              <CleanupScanningBody sourceProgress={sourceProgress} onCancel={onCancel} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -1134,11 +1120,9 @@ function CleanupIdleBody() {
 }
 
 function CleanupScanningBody({
-  progress,
   sourceProgress,
   onCancel,
 }: {
-  progress: number
   sourceProgress: CleanupSourceProgress[]
   onCancel: () => void
 }) {
@@ -1147,7 +1131,7 @@ function CleanupScanningBody({
       <div className="text-center text-[14px] text-white/58">
         Analyzing session size, inactivity, and test chats
       </div>
-      <Card className="cleanup-scan-card mt-3.5 w-full max-w-[600px] rounded-lg py-0 [@media(max-height:760px)]:mt-3">
+      <Card className="cleanup-scan-card mx-auto mt-3.5 w-full max-w-[600px] rounded-lg py-0 [@media(max-height:760px)]:mt-3">
         <CardContent className="px-3.5 py-3">
           <div className="space-y-2.5">
             {sourceProgress.map((item) => (
@@ -1166,9 +1150,6 @@ function CleanupScanningBody({
           Cancel
         </Button>
       </div>
-      <p className="cleanup-scan-progress mt-2.5 text-center text-xs text-white/36">
-        Scanning local sources. {Math.round(progress)}% complete.
-      </p>
     </>
   )
 }
