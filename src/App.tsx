@@ -25,7 +25,6 @@ function App() {
   const [sessionProjectQuery, setSessionProjectQuery] = useState('')
   const dashboard = useDashboard()
   const theme = useTheme()
-  const settingsActive = activeView === 'settings'
 
   const content = useMemo(() => {
     switch (activeView) {
@@ -108,30 +107,23 @@ function App() {
             activeView={activeView}
             setActiveView={setActiveView}
             snapshot={dashboard.snapshot}
-            onBackToApp={() => setActiveView('overview')}
           />
-          <main
-            className={`main-surface flex min-w-0 flex-1 flex-col ${
-              settingsActive ? '' : 'soft-grid'
-            }`}
-          >
-            {!settingsActive && (
-              <Topbar
-                activeView={activeView}
-                loading={dashboard.loading}
-                mockDataEnabled={dashboard.mockDataEnabled}
-                overviewRange={overviewRange}
-                usageRange={usageRange}
-                resolvedTheme={theme.resolvedTheme}
-                onThemeToggle={() =>
-                  theme.setPreference(theme.resolvedTheme === 'dark' ? 'light' : 'dark')
-                }
-                onOverviewRangeChange={setOverviewRange}
-                onUsageRangeChange={setUsageRange}
-                onUsageExport={() => exportUsageCsv(dashboard.snapshot, usageRange)}
-                onRescan={dashboard.rescan}
-              />
-            )}
+          <main className="main-surface soft-grid flex min-w-0 flex-1 flex-col">
+            <Topbar
+              activeView={activeView}
+              loading={dashboard.loading}
+              mockDataEnabled={dashboard.mockDataEnabled}
+              overviewRange={overviewRange}
+              usageRange={usageRange}
+              resolvedTheme={theme.resolvedTheme}
+              onThemeToggle={() =>
+                theme.setPreference(theme.resolvedTheme === 'dark' ? 'light' : 'dark')
+              }
+              onOverviewRangeChange={setOverviewRange}
+              onUsageRangeChange={setUsageRange}
+              onUsageExport={() => exportUsageCsv(dashboard.snapshot, usageRange)}
+              onRescan={dashboard.rescan}
+            />
             <div
               className={`content-scroll no-drag-region min-h-0 min-w-0 flex-1 ${
                 activeView === 'cleanup' ? 'overflow-hidden' : 'overflow-auto'
@@ -141,9 +133,7 @@ function App() {
                 className={
                   activeView === 'cleanup'
                     ? 'cleanup-app-panel h-full min-w-0'
-                    : settingsActive
-                      ? 'min-w-[980px]'
-                      : 'min-w-[1120px] p-5'
+                    : 'min-w-[1120px] p-5'
                 }
               >
                 {content}
