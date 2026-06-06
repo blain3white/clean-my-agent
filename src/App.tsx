@@ -121,15 +121,13 @@ function App() {
             onRescan={dashboard.rescan}
           />
           <div
-            className={`content-scroll no-drag-region min-h-0 flex-1 ${
+            className={`content-scroll no-drag-region min-h-0 min-w-0 flex-1 ${
               activeView === 'cleanup' ? 'overflow-hidden' : 'overflow-auto'
             }`}
           >
             <div
               className={
-                activeView === 'cleanup'
-                  ? 'cleanup-app-panel h-full min-w-[1120px]'
-                  : 'min-w-[1120px] p-5'
+                activeView === 'cleanup' ? 'cleanup-app-panel h-full min-w-0' : 'min-w-[1120px] p-5'
               }
             >
               {content}

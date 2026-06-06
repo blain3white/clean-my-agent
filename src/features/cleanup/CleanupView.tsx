@@ -105,6 +105,8 @@ const cleanupOrbMorphTransition = {
 } as const
 const cleanupOrbMaxSize = 320
 const cleanupOrbMinSize = 248
+const cleanupCompleteOrbMinSize = 184
+const cleanupCompleteOrbVisualBleed = 72
 const cleanupScanningOrbScale = 250 / cleanupOrbMaxSize
 const cleanupMaxVisibleGroupSessions = 80
 
@@ -902,19 +904,82 @@ function CleanupScanShell({
     48,
     Math.max(48, stageSize.height - orbSize - 124),
   )
-  const completeOrbSize = clampNumber(stageSize.height * 0.31, 224, cleanupOrbMaxSize)
-  const activeOrbSize = stage === 'complete' ? completeOrbSize : orbSize
-  const orbTop = stage === 'idle' ? idleTop : stage === 'complete' ? 42 : 118
+  const completeOrbSize = clampNumber(
+    Math.min(stageSize.height * 0.31, stageSize.width * 0.23),
+    cleanupCompleteOrbMinSize,
+    cleanupOrbMaxSize,
+  )
+  const isCompactStage = stageSize.width < 820
+  const scanningOrbSize = isCompactStage
+    ? clampNumber(Math.min(stageSize.height * 0.34, stageSize.width * 0.48), 220, cleanupOrbMaxSize)
+    : orbSize
+  const activeOrbSize =
+    stage === 'complete' ? completeOrbSize : stage === 'scanning' ? scanningOrbSize : orbSize
+  const completeGutter = clampNumber(stageSize.width * 0.028, 18, 64)
+  const completeSideSpace = clampNumber(
+    completeOrbSize + completeGutter + cleanupCompleteOrbVisualBleed + 24,
+    360,
+    Math.min(560, stageSize.width * 0.42),
+  )
+  const scanBodyWidth = isCompactStage
+    ? clampNumber(stageSize.width - 36, 320, 620)
+    : clampNumber(stageSize.width * 0.42, 480, 620)
+  const scanGap = clampNumber(stageSize.width * 0.035, 24, 56)
+  const scanGroupWidth = isCompactStage ? scanBodyWidth : scanBodyWidth + scanGap + scanningOrbSize
+  const scanGroupLeft = clampNumber(
+    (stageSize.width - scanGroupWidth) / 2,
+    18,
+    Math.max(18, stageSize.width - scanGroupWidth - 18),
+  )
+  const scanOrbTop = isCompactStage
+    ? clampNumber(
+        stageSize.height * 0.08,
+        42,
+        Math.max(42, stageSize.height - scanningOrbSize - 300),
+      )
+    : clampNumber(
+        stageSize.height * 0.22,
+        96,
+        Math.max(96, stageSize.height - scanningOrbSize - 180),
+      )
+  const scanOrbLeft = isCompactStage
+    ? stageSize.width / 2 - scanningOrbSize / 2
+    : scanGroupLeft + scanBodyWidth + scanGap
+  const scanContentTop = isCompactStage
+    ? clampNumber(scanOrbTop + scanningOrbSize + 12, 0, Math.max(0, stageSize.height - 292))
+    : clampNumber(
+        scanOrbTop + (scanningOrbSize - 292) / 2,
+        78,
+        Math.max(78, stageSize.height - 330),
+      )
+  const scanContentLeft = isCompactStage ? stageSize.width / 2 - scanBodyWidth / 2 : scanGroupLeft
+  const idleContentTop = clampNumber(
+    idleTop + orbSize + clampNumber(stageSize.height * 0.026, 22, 38),
+    0,
+    Math.max(0, stageSize.height - 188),
+  )
+  const orbTop =
+    stage === 'idle'
+      ? idleTop
+      : stage === 'complete'
+        ? clampNumber(stageSize.height * 0.074, 54, 112)
+        : scanOrbTop
   const orbLeft =
     stage === 'complete'
-      ? clampNumber(stageSize.width - activeOrbSize - 64, 420, stageSize.width - activeOrbSize - 28)
+      ? Math.max(completeGutter, stageSize.width - activeOrbSize - completeGutter)
       : stage === 'scanning'
-        ? clampNumber(
-            stageSize.width * 0.72 - activeOrbSize / 2,
-            620,
-            stageSize.width - activeOrbSize - 64,
-          )
+        ? scanOrbLeft
         : stageSize.width / 2 - activeOrbSize / 2
+  const stageStyle = {
+    '--cleanup-idle-content-top': `${idleContentTop}px`,
+    '--cleanup-result-gutter': `${completeGutter}px`,
+    '--cleanup-result-orb-size': `${activeOrbSize}px`,
+    '--cleanup-result-orb-top': `${orbTop}px`,
+    '--cleanup-result-side-space': `${completeSideSpace}px`,
+    '--cleanup-scan-content-left': `${scanContentLeft}px`,
+    '--cleanup-scan-content-top': `${scanContentTop}px`,
+    '--cleanup-scan-content-width': `${scanBodyWidth}px`,
+  } as CSSProperties
   const orbProps =
     orbMode === 'idle'
       ? {
@@ -942,7 +1007,7 @@ function CleanupScanShell({
           }
 
   return (
-    <div ref={stageRef} className={`cleanup-stage cleanup-stage-${stage}`}>
+    <div ref={stageRef} className={`cleanup-stage cleanup-stage-${stage}`} style={stageStyle}>
       <motion.div
         className={`cleanup-orb-layer cleanup-orb-layer-${stage}`}
         initial={false}
@@ -1056,7 +1121,7 @@ function CleanupScanShell({
 function CleanupIdleBody() {
   return (
     <>
-      <div className="text-center text-[14px] text-white/58">
+      <div className="cleanup-scan-title text-center text-[14px] text-white/58">
         Scan large chats, inactive chats, and test chats.
       </div>
       <div className="mt-4 flex flex-wrap justify-center gap-2 [@media(max-height:760px)]:mt-3">
@@ -1091,7 +1156,7 @@ function CleanupScanningBody({
           </div>
         </CardContent>
       </Card>
-      <div className="mt-3.5 flex items-center justify-center [@media(max-height:760px)]:mt-3">
+      <div className="cleanup-scan-actions mt-3.5 flex items-center justify-center [@media(max-height:760px)]:mt-3">
         <Button
           variant="outline"
           size="lg"
@@ -1101,7 +1166,7 @@ function CleanupScanningBody({
           Cancel
         </Button>
       </div>
-      <p className="mt-2.5 text-center text-xs text-white/36">
+      <p className="cleanup-scan-progress mt-2.5 text-center text-xs text-white/36">
         Scanning local sources. {Math.round(progress)}% complete.
       </p>
     </>
@@ -1202,7 +1267,7 @@ function CleanupCompleteBody({
         <Button
           onClick={onClean}
           disabled={selectedCount === 0 || cleaning}
-          className="cleanup-primary-action h-10 min-w-[176px] rounded-lg bg-emerald-400 text-[13px] font-semibold text-emerald-950 shadow-[0_18px_38px_rgb(52_211_153_/_26%)] hover:bg-emerald-300 disabled:pointer-events-none disabled:brightness-75 disabled:saturate-50"
+          className="cleanup-primary-action h-10 rounded-lg bg-emerald-400 text-[13px] font-semibold text-emerald-950 shadow-[0_18px_38px_rgb(52_211_153_/_26%)] hover:bg-emerald-300 disabled:pointer-events-none disabled:brightness-75 disabled:saturate-50"
         >
           <Sparkles className="size-4" />
           Clean
@@ -1211,7 +1276,7 @@ function CleanupCompleteBody({
           variant="outline"
           size="lg"
           onClick={onScanAgain}
-          className="cleanup-action-button h-10 min-w-[156px] rounded-lg border-white/14 bg-white/5 text-[13px] text-white/84 hover:bg-white/10"
+          className="cleanup-action-button cleanup-secondary-action h-10 rounded-lg border-white/14 bg-white/5 text-[13px] text-white/84 hover:bg-white/10"
         >
           <RefreshCcw className="size-4" />
           Scan Again
