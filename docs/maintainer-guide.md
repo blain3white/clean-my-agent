@@ -81,6 +81,10 @@ analyze the PR or the summary is missing, CI must fail.
 show the other job as skipped; the PR is healthy only when both required status
 checks have separate successful results.
 
+Only the `GitNexus Report` job should update the PR body. CodeRabbit should
+review through comments or review output, not by rewriting the PR body, because
+the GitNexus report section is a required merge artifact.
+
 The full local gate is:
 
 ```bash
@@ -108,7 +112,8 @@ Keep `pnpm verify:functions` required for cleanup, backup, export, scan, adapter
 ## CodeRabbit
 
 CodeRabbit is configured by `.coderabbit.yaml` to auto-review PRs targeting
-`develop`.
+`develop`. Its high-level PR body summary is disabled so it does not overwrite
+the required GitNexus report section.
 
 Use it as a semantic reviewer for test quality:
 

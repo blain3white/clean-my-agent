@@ -91,26 +91,48 @@ jobs:
             const markerEnd = '<!-- gitnexus-report:end -->'
             const report = fs.readFileSync(process.env.GITNEXUS_REPORT_PATH, 'utf8').trim()
             const block = `${markerStart}\n${report}\n${markerEnd}`
+            const markerPattern = new RegExp(`${markerStart}[\\s\\S]*?${markerEnd}`)
+            const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
             const { owner, repo } = context.repo
             const pull_number = context.payload.pull_request.number
-            const { data: pullRequest } = await github.rest.pulls.get({
-              owner,
-              repo,
-              pull_number,
-            })
-            const body = pullRequest.body || ''
-            const pattern = new RegExp(`${markerStart}[\\s\\S]*?${markerEnd}`)
-            const nextBody = pattern.test(body)
-              ? body.replace(pattern, block)
-              : `${body.trimEnd()}\n\n${block}`
 
-            await github.rest.pulls.update({
-              owner,
-              repo,
-              pull_number,
-              body: nextBody,
-            })
+            for (let attempt = 1; attempt <= 3; attempt += 1) {
+              const { data: pullRequest } = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number,
+              })
+              const body = pullRequest.body || ''
+              const nextBody = markerPattern.test(body)
+                ? body.replace(markerPattern, block)
+                : `${body.trimEnd()}\n\n${block}`
+
+              await github.rest.pulls.update({
+                owner,
+                repo,
+                pull_number,
+                body: nextBody,
+              })
+
+              await sleep(5000)
+
+              const { data: verifiedPullRequest } = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number,
+              })
+              const verifiedBody = verifiedPullRequest.body || ''
+              if (
+                markerPattern.test(verifiedBody) &&
+                verifiedBody.includes('## GitNexus Report') &&
+                verifiedBody.includes('Risk level:')
+              ) {
+                return
+              }
+            }
+
+            throw new Error('GitNexus report was not persisted in the PR body.')
 
   verify:
     name: Verify
