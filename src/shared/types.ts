@@ -2,6 +2,12 @@ export const agentSources = ['codex', 'claude', 'cursor', 'gemini', 'opencode'] 
 
 export type AgentSource = (typeof agentSources)[number]
 
+export const appLanguages = ['en', 'zh-CN', 'ja', 'fr'] as const
+
+export type AppLanguage = (typeof appLanguages)[number]
+
+export const defaultLanguage: AppLanguage = 'en'
+
 export type BackupStatus = 'backed-up' | 'pending' | 'unknown'
 
 export type SessionStorageState = 'live' | 'archived'
@@ -196,6 +202,7 @@ export type AppSettings = {
   trashRetentionDays: number
   autoBackup: boolean
   mockDataEnabled: boolean
+  language: AppLanguage
   defaultRelayMode: 'full-context' | 'fit-to-window' | 'manual-select'
   exportDirectory: string
 }

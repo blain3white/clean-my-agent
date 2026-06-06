@@ -101,6 +101,7 @@ describe('init and settings', () => {
     expect(settings.trashRetentionDays).toBe(14)
     expect(settings.autoBackup).toBe(true)
     expect(settings.mockDataEnabled).toBe(false)
+    expect(settings.language).toBe('en')
     expect(settings.defaultRelayMode).toBe('full-context')
     expect(settings.exportDirectory).toContain(userDataPath)
     expect(settings.scanRoots).toEqual({})

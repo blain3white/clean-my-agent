@@ -15,6 +15,7 @@ import { exportUsageCsv } from '@/features/usage/usage-analytics'
 import type { UsagePageRange, UsageRange } from '@/features/usage/ranges'
 import { useDashboard } from '@/hooks/use-dashboard'
 import { useTheme } from '@/hooks/use-theme'
+import { I18nProvider } from '@/lib/i18n-provider'
 import './App.css'
 
 function App() {
@@ -98,59 +99,61 @@ function App() {
   }, [activeView, dashboard, overviewRange, sessionProjectQuery, usageRange])
 
   return (
-    <TooltipProvider>
-      <div
-        className={`mac-window theme-${theme.resolvedTheme} flex h-screen overflow-hidden text-white`}
-      >
-        <Sidebar
-          activeView={activeView}
-          setActiveView={setActiveView}
-          snapshot={dashboard.snapshot}
-          onBackToApp={() => setActiveView('overview')}
-        />
-        <main
-          className={`main-surface flex min-w-0 flex-1 flex-col ${
-            settingsActive ? '' : 'soft-grid'
-          }`}
+    <I18nProvider language={dashboard.language}>
+      <TooltipProvider>
+        <div
+          className={`mac-window theme-${theme.resolvedTheme} flex h-screen overflow-hidden text-white`}
         >
-          {!settingsActive && (
-            <Topbar
-              activeView={activeView}
-              loading={dashboard.loading}
-              mockDataEnabled={dashboard.mockDataEnabled}
-              overviewRange={overviewRange}
-              usageRange={usageRange}
-              resolvedTheme={theme.resolvedTheme}
-              onThemeToggle={() =>
-                theme.setPreference(theme.resolvedTheme === 'dark' ? 'light' : 'dark')
-              }
-              onOverviewRangeChange={setOverviewRange}
-              onUsageRangeChange={setUsageRange}
-              onUsageExport={() => exportUsageCsv(dashboard.snapshot, usageRange)}
-              onRescan={dashboard.rescan}
-            />
-          )}
-          <div
-            className={`content-scroll no-drag-region min-h-0 min-w-0 flex-1 ${
-              activeView === 'cleanup' ? 'overflow-hidden' : 'overflow-auto'
+          <Sidebar
+            activeView={activeView}
+            setActiveView={setActiveView}
+            snapshot={dashboard.snapshot}
+            onBackToApp={() => setActiveView('overview')}
+          />
+          <main
+            className={`main-surface flex min-w-0 flex-1 flex-col ${
+              settingsActive ? '' : 'soft-grid'
             }`}
           >
+            {!settingsActive && (
+              <Topbar
+                activeView={activeView}
+                loading={dashboard.loading}
+                mockDataEnabled={dashboard.mockDataEnabled}
+                overviewRange={overviewRange}
+                usageRange={usageRange}
+                resolvedTheme={theme.resolvedTheme}
+                onThemeToggle={() =>
+                  theme.setPreference(theme.resolvedTheme === 'dark' ? 'light' : 'dark')
+                }
+                onOverviewRangeChange={setOverviewRange}
+                onUsageRangeChange={setUsageRange}
+                onUsageExport={() => exportUsageCsv(dashboard.snapshot, usageRange)}
+                onRescan={dashboard.rescan}
+              />
+            )}
             <div
-              className={
-                activeView === 'cleanup'
-                  ? 'cleanup-app-panel h-full min-w-0'
-                  : settingsActive
-                    ? 'min-w-[980px]'
-                    : 'min-w-[1120px] p-5'
-              }
+              className={`content-scroll no-drag-region min-h-0 min-w-0 flex-1 ${
+                activeView === 'cleanup' ? 'overflow-hidden' : 'overflow-auto'
+              }`}
             >
-              {content}
+              <div
+                className={
+                  activeView === 'cleanup'
+                    ? 'cleanup-app-panel h-full min-w-0'
+                    : settingsActive
+                      ? 'min-w-[980px]'
+                      : 'min-w-[1120px] p-5'
+                }
+              >
+                {content}
+              </div>
             </div>
-          </div>
-        </main>
-      </div>
-      <Toaster theme={theme.resolvedTheme} position="top-right" />
-    </TooltipProvider>
+          </main>
+        </div>
+        <Toaster theme={theme.resolvedTheme} position="top-right" />
+      </TooltipProvider>
+    </I18nProvider>
   )
 }
 

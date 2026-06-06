@@ -1,5 +1,7 @@
 # Clean My Agent
 
+[English](README.md) | [中文](README.zh-CN.md) | [日本語](README.ja.md) | [Français](README.fr.md)
+
 ![Clean My Agent hero](docs/assets/clean-my-agent-hero.png)
 
 Clean My Agent is a local-first desktop app for cleaning up, backing up, exporting, and understanding AI coding-agent session data.
@@ -40,6 +42,7 @@ Clean My Agent gives developers one place to answer:
 - Move cleanup candidates to app-managed Trash instead of permanent deletion.
 - Restore items from Trash.
 - Keep credential-like files out of scans by default.
+- Switch the app interface between English, Chinese, Japanese, and French.
 - Support light and dark themes for the dashboard.
 
 ## Safety Model
