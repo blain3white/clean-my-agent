@@ -76,6 +76,7 @@ type CleanupPersistedViewState = {
   savedAt: string
   candidateIds: string[]
 }
+type CleanupAudioKind = 'press' | 'complete'
 
 type CleanupViewProps = {
   cleanup: CleanupCandidate[]
@@ -111,6 +112,8 @@ const cleanupScanningOrbScale = 250 / cleanupOrbMaxSize
 const cleanupMaxVisibleGroupSessions = 80
 
 const cleanupViewStateStorageKey = 'clean-my-agent.cleanupViewState'
+let cleanupAudioContext: AudioContext | null = null
+const cleanupFallbackToneUrls: Partial<Record<CleanupAudioKind, string>> = {}
 
 const cleanupBodyTransition = {
   duration: 0.42,
@@ -125,6 +128,144 @@ const cleanupBodyVariants = {
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
+}
+
+function getCleanupAudioContext(): AudioContext | null {
+  if (typeof window === 'undefined') return null
+  const audioWindow = window as Window &
+    typeof globalThis & {
+      webkitAudioContext?: typeof AudioContext
+    }
+  const AudioContextConstructor = audioWindow.AudioContext ?? audioWindow.webkitAudioContext
+  if (!AudioContextConstructor) return null
+  cleanupAudioContext ??= new AudioContextConstructor()
+  return cleanupAudioContext
+}
+
+function writeWaveString(view: DataView, offset: number, value: string) {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(offset + index, value.charCodeAt(index))
+  }
+}
+
+function cleanupToneSample(kind: CleanupAudioKind, time: number): number {
+  if (kind === 'press') {
+    const duration = 0.2
+    const envelope = Math.max(0, 1 - time / duration) ** 2
+    const sweepFrequency = 520 - 260 * Math.min(1, time / duration)
+    const click = Math.sin(2 * Math.PI * sweepFrequency * time)
+    const shimmer = Math.sin(2 * Math.PI * (820 - 140 * Math.min(1, time / duration)) * time)
+    return (click * 0.44 + shimmer * 0.2) * envelope
+  }
+
+  const tone = (frequency: number, start: number, duration: number) => {
+    const localTime = time - start
+    if (localTime < 0 || localTime > duration) return 0
+    const attack = Math.min(1, localTime / 0.025)
+    const release = Math.max(0, 1 - localTime / duration)
+    return Math.sin(2 * Math.PI * frequency * localTime) * attack * release
+  }
+
+  return (
+    tone(523.25, 0, 0.22) * 0.28 + tone(783.99, 0.1, 0.24) * 0.24 + tone(1318.51, 0.22, 0.25) * 0.18
+  )
+}
+
+function getCleanupFallbackToneUrl(kind: CleanupAudioKind): string {
+  if (cleanupFallbackToneUrls[kind]) return cleanupFallbackToneUrls[kind]
+
+  const sampleRate = 44100
+  const duration = kind === 'press' ? 0.22 : 0.52
+  const sampleCount = Math.floor(sampleRate * duration)
+  const buffer = new ArrayBuffer(44 + sampleCount * 2)
+  const view = new DataView(buffer)
+
+  writeWaveString(view, 0, 'RIFF')
+  view.setUint32(4, 36 + sampleCount * 2, true)
+  writeWaveString(view, 8, 'WAVE')
+  writeWaveString(view, 12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, 1, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * 2, true)
+  view.setUint16(32, 2, true)
+  view.setUint16(34, 16, true)
+  writeWaveString(view, 36, 'data')
+  view.setUint32(40, sampleCount * 2, true)
+
+  for (let index = 0; index < sampleCount; index += 1) {
+    const time = index / sampleRate
+    const sample = Math.max(-1, Math.min(1, cleanupToneSample(kind, time)))
+    view.setInt16(44 + index * 2, sample * 0x7fff, true)
+  }
+
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  const url = `data:audio/wav;base64,${btoa(binary)}`
+  cleanupFallbackToneUrls[kind] = url
+  return url
+}
+
+function playCleanupFallbackTone(kind: CleanupAudioKind) {
+  if (typeof Audio === 'undefined') return
+  const audio = new Audio(getCleanupFallbackToneUrl(kind))
+  audio.volume = kind === 'press' ? 0.22 : 0.26
+  void audio.play().catch(() => undefined)
+}
+
+function playCleanupTone(kind: CleanupAudioKind) {
+  const context = getCleanupAudioContext()
+  if (!context) {
+    playCleanupFallbackTone(kind)
+    return
+  }
+
+  void context
+    .resume()
+    .then(() => {
+      const start = context.currentTime + 0.012
+      const master = context.createGain()
+      master.gain.setValueAtTime(0.0001, start)
+      master.gain.exponentialRampToValueAtTime(kind === 'press' ? 0.06 : 0.075, start + 0.018)
+      master.gain.exponentialRampToValueAtTime(0.0001, start + (kind === 'press' ? 0.18 : 0.46))
+      master.connect(context.destination)
+
+      const playTone = (
+        frequency: number,
+        offset: number,
+        duration: number,
+        type: OscillatorType,
+        endFrequency = frequency,
+      ) => {
+        const oscillator = context.createOscillator()
+        const gain = context.createGain()
+        oscillator.type = type
+        oscillator.frequency.setValueAtTime(frequency, start + offset)
+        oscillator.frequency.exponentialRampToValueAtTime(endFrequency, start + offset + duration)
+        gain.gain.setValueAtTime(0.0001, start + offset)
+        gain.gain.exponentialRampToValueAtTime(0.6, start + offset + 0.014)
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + duration)
+        oscillator.connect(gain)
+        gain.connect(master)
+        oscillator.start(start + offset)
+        oscillator.stop(start + offset + duration + 0.025)
+      }
+
+      if (kind === 'press') {
+        playTone(520, 0, 0.12, 'triangle', 260)
+        playTone(820, 0.035, 0.11, 'sine', 680)
+        return
+      }
+
+      playTone(523.25, 0, 0.18, 'sine', 587.33)
+      playTone(783.99, 0.11, 0.19, 'triangle', 987.77)
+      playTone(1318.51, 0.23, 0.2, 'sine', 1174.66)
+    })
+    .catch(() => {
+      playCleanupFallbackTone(kind)
+    })
 }
 
 function initialCleanupStageSize() {
@@ -651,6 +792,7 @@ export function CleanupView({
 
   const moveSelectedToTrash = async () => {
     if (selected.length === 0 || cleaning) return
+    playCleanupTone('press')
     setCleaning(true)
     setCleaned(false)
     setCleaningIds(selected)
@@ -667,6 +809,7 @@ export function CleanupView({
         setCleaningIds([])
         setCleaning(false)
         setCleaned(true)
+        playCleanupTone('complete')
         window.setTimeout(() => setCleaned(false), 1500)
       }, 520)
     } catch (error) {
@@ -1337,16 +1480,19 @@ function CleanupOrbButton({
   const circumference = 2 * Math.PI * radius
   const dashOffset = circumference - (progress / 100) * circumference
   const displayParts = title.split(' ')
+  const roundedProgress = Math.round(progress)
 
   const content =
     mode === 'scanning' ? (
       <>
-        <span className="cleanup-orb-percent">{Math.round(progress)}</span>
+        <span className="cleanup-orb-percent">{roundedProgress}</span>
         <span className="cleanup-orb-status">{title}</span>
       </>
     ) : mode === 'complete' ? (
       <>
-        <span className="cleanup-orb-check">{icon}</span>
+        <span className="cleanup-orb-check">
+          <Check className="size-8" />
+        </span>
         <span className="cleanup-orb-size">
           <span>{displayParts[0]}</span>
           <small>{displayParts.slice(1).join(' ')}</small>

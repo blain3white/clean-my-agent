@@ -1327,6 +1327,7 @@ textarea,
 }
 
 .cleanup-orb-check {
+  position: relative;
   display: grid;
   width: calc(3rem * var(--cleanup-orb-scale, 1));
   height: calc(3rem * var(--cleanup-orb-scale, 1));
@@ -1334,7 +1335,17 @@ textarea,
   border-radius: 999px;
   color: rgb(6 35 27 / 92%);
   background: #58e4a9;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 36%),
+    0 9px 18px rgb(0 0 0 / 22%),
+    0 0 22px rgb(88 228 169 / 28%);
   animation: cleanup-success-pop 560ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.cleanup-orb-check svg {
+  width: calc(1.65rem * var(--cleanup-orb-scale, 1));
+  height: calc(1.65rem * var(--cleanup-orb-scale, 1));
+  stroke-width: 3.2;
 }
 
 .cleanup-orb-size {
