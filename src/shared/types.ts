@@ -2,11 +2,19 @@ export const agentSources = ['codex', 'claude', 'cursor', 'gemini', 'opencode'] 
 
 export type AgentSource = (typeof agentSources)[number]
 
+export const appLanguages = ['en', 'zh-CN', 'ja', 'fr'] as const
+
+export type AppLanguage = (typeof appLanguages)[number]
+
+export const defaultLanguage: AppLanguage = 'en'
+
 export type BackupStatus = 'backed-up' | 'pending' | 'unknown'
 
 export type SessionStorageState = 'live' | 'archived'
 
 export type RiskLevel = 'low' | 'medium' | 'high'
+
+export type TokenCostSource = 'actual' | 'model-estimate' | 'mixed'
 
 export type TokenUsage = {
   input: number
@@ -16,6 +24,8 @@ export type TokenUsage = {
   cacheRead?: number
   total: number
   costUsd?: number
+  costSource?: TokenCostSource
+  model?: string
   estimated: boolean
 }
 
@@ -192,6 +202,8 @@ export type AppSettings = {
   trashRetentionDays: number
   autoBackup: boolean
   mockDataEnabled: boolean
+  language: AppLanguage
+  launchAtLogin: boolean
   defaultRelayMode: 'full-context' | 'fit-to-window' | 'manual-select'
   exportDirectory: string
 }
@@ -213,4 +225,7 @@ export type CleanMyAgentApi = {
   getSettings: () => Promise<AppSettings>
   updateSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>
   openPath: (path: string) => Promise<void>
+  playSystemSound: () => Promise<void>
+  getLaunchAtLogin: () => Promise<boolean>
+  setLaunchAtLogin: (enabled: boolean) => Promise<boolean>
 }

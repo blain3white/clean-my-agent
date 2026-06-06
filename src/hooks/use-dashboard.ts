@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { defaultLanguage, languageOptions, normalizeLanguage, translate } from '@/lib/i18n'
 import { mockSnapshot } from '@/lib/mock-data'
 import {
   agentSources,
+  type AppLanguage,
   type AgentSource,
   type AppSettings,
   type CleanupCandidate,
@@ -14,7 +16,11 @@ type DashboardState = {
   snapshot: DashboardSnapshot
   loading: boolean
   mockDataEnabled: boolean
+  language: AppLanguage
+  launchAtLogin: boolean
   setMockDataEnabled: (enabled: boolean) => Promise<void>
+  setLanguage: (language: AppLanguage) => Promise<void>
+  setLaunchAtLogin: (enabled: boolean) => Promise<void>
   rescan: () => Promise<void>
   refreshRecentSessions: () => Promise<void>
   backupSession: (sessionId: string) => Promise<void>
@@ -40,6 +46,8 @@ const defaultSettings = (): AppSettings => ({
   trashRetentionDays: 14,
   autoBackup: true,
   mockDataEnabled: false,
+  language: defaultLanguage,
+  launchAtLogin: false,
   defaultRelayMode: 'full-context',
   exportDirectory: '',
 })
@@ -47,6 +55,7 @@ const defaultSettings = (): AppSettings => ({
 const mergeSettings = (settings?: Partial<AppSettings>): AppSettings => ({
   ...defaultSettings(),
   ...settings,
+  language: normalizeLanguage(settings?.language ?? defaultLanguage),
   scanRoots: {
     ...defaultSettings().scanRoots,
     ...settings?.scanRoots,
@@ -87,9 +96,19 @@ export function useDashboard(): DashboardState {
   const [settings, setSettings] = useState<AppSettings>(() => {
     const mockDataEnabled =
       globalThis.localStorage?.getItem('clean-my-agent.mockDataEnabled') === 'true'
-    return mergeSettings({ mockDataEnabled })
+    const language = normalizeLanguage(
+      globalThis.localStorage?.getItem('clean-my-agent.language') ??
+        globalThis.navigator?.language ??
+        defaultLanguage,
+    )
+    return mergeSettings({ mockDataEnabled, language })
   })
   const [loading, setLoading] = useState(true)
+  const t = useCallback(
+    (key: Parameters<typeof translate>[1], values?: Parameters<typeof translate>[2]) =>
+      translate(settings.language, key, values),
+    [settings.language],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -97,17 +116,18 @@ export function useDashboard(): DashboardState {
       if (!window.cleanMyAgent) return
       try {
         const next = await window.cleanMyAgent.getSettings()
-        if (!cancelled) setSettings(mergeSettings(next))
+        const launchAtLogin = await window.cleanMyAgent.getLaunchAtLogin()
+        if (!cancelled) setSettings(mergeSettings({ ...next, launchAtLogin }))
       } catch (error) {
         console.error(error)
-        toast.error('Could not read app settings.')
+        toast.error(t('toast.readSettingsError'))
       }
     }
     void hydrateSettings()
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [t])
 
   const load = useCallback(
     async (force = false) => {
@@ -131,13 +151,13 @@ export function useDashboard(): DashboardState {
         setSnapshot(next)
       } catch (error) {
         console.error(error)
-        toast.error('Could not read local agent data.')
+        toast.error(t('toast.readLocalDataError'))
         setSnapshot(emptySnapshot())
       } finally {
         setLoading(false)
       }
     },
-    [settings.mockDataEnabled],
+    [settings.mockDataEnabled, t],
   )
 
   useEffect(() => {
@@ -158,7 +178,7 @@ export function useDashboard(): DashboardState {
             setSettings(mergeSettings(persisted))
           } catch (error) {
             console.error(error)
-            toast.error('Could not update demo data setting.')
+            toast.error(t('toast.updateDemoError'))
             setSettings(settings)
             return
           }
@@ -167,9 +187,9 @@ export function useDashboard(): DashboardState {
         if (enabled) {
           setSnapshot(mockSnapshot)
           setLoading(false)
-          toast.success('Demo data enabled')
+          toast.success(t('toast.demoEnabled'))
         } else {
-          toast.success('Live local data enabled')
+          toast.success(t('toast.liveEnabled'))
           setLoading(true)
           try {
             const next = window.cleanMyAgent
@@ -178,26 +198,65 @@ export function useDashboard(): DashboardState {
             setSnapshot(next)
           } catch (error) {
             console.error(error)
-            toast.error('Could not read local agent data.')
+            toast.error(t('toast.readLocalDataError'))
             setSnapshot(emptySnapshot())
           } finally {
             setLoading(false)
           }
         }
       },
+      setLanguage: async (language: AppLanguage) => {
+        const nextSettings = mergeSettings({ ...settings, language })
+        setSettings(nextSettings)
+        globalThis.localStorage?.setItem('clean-my-agent.language', language)
+
+        if (window.cleanMyAgent) {
+          try {
+            const persisted = await window.cleanMyAgent.updateSettings({ language })
+            setSettings(mergeSettings(persisted))
+          } catch (error) {
+            console.error(error)
+            toast.error(t('toast.updateLanguageError'))
+            setSettings(settings)
+            return
+          }
+        }
+
+        const label = languageOptions.find((option) => option.value === language)?.nativeLabel
+        toast.success(translate(language, 'toast.languageUpdated', { language: label ?? language }))
+      },
+      setLaunchAtLogin: async (enabled: boolean) => {
+        const nextSettings = mergeSettings({ ...settings, launchAtLogin: enabled })
+        setSettings(nextSettings)
+
+        try {
+          const actual = window.cleanMyAgent
+            ? await window.cleanMyAgent.setLaunchAtLogin(enabled)
+            : enabled
+          const persisted = window.cleanMyAgent
+            ? await window.cleanMyAgent.updateSettings({ launchAtLogin: actual })
+            : mergeSettings({ ...nextSettings, launchAtLogin: actual })
+          setSettings(mergeSettings(persisted))
+          toast.success(t(actual ? 'toast.launchAtLoginEnabled' : 'toast.launchAtLoginDisabled'))
+        } catch (error) {
+          console.error(error)
+          toast.error(t('toast.updateLaunchAtLoginError'))
+          setSettings(settings)
+        }
+      },
       rescan: async () => {
         await load(true)
-        toast.success(settings.mockDataEnabled ? 'Demo data refreshed' : 'Agent data scanned')
+        toast.success(settings.mockDataEnabled ? t('toast.demoRefreshed') : t('toast.agentScanned'))
       },
       refreshRecentSessions: async () => {
         if (settings.mockDataEnabled) {
           setSnapshot(mockSnapshot)
-          toast.success('Demo data refreshed')
+          toast.success(t('toast.demoRefreshed'))
           return
         }
 
         if (!window.cleanMyAgent) {
-          toast.info('Recent refresh is available in the desktop app')
+          toast.info(t('toast.recentDesktopOnly'))
           return
         }
 
@@ -205,56 +264,56 @@ export function useDashboard(): DashboardState {
         try {
           const next = await window.cleanMyAgent.refreshRecentSessions()
           setSnapshot(next)
-          toast.success('Recent sessions refreshed')
+          toast.success(t('toast.recentRefreshed'))
         } catch (error) {
           console.error(error)
-          toast.error('Could not refresh recent sessions.')
+          toast.error(t('toast.refreshRecentError'))
         } finally {
           setLoading(false)
         }
       },
       backupSession: async (sessionId: string) => {
         if (!window.cleanMyAgent) {
-          toast.info('Backup is available in the desktop app')
+          toast.info(t('toast.backupDesktopOnly'))
           return
         }
         const record = await window.cleanMyAgent.backupSession(sessionId)
-        toast.success(`Backup created: ${record.title}`)
+        toast.success(t('toast.backupCreated', { title: record.title }))
         await load(false)
       },
       archiveSession: async (sessionId: string) => {
         if (!window.cleanMyAgent) {
-          toast.info('Vault archive is available in the desktop app')
+          toast.info(t('toast.archiveDesktopOnly'))
           return
         }
         const record = await window.cleanMyAgent.archiveSession(sessionId)
-        toast.success(`Archived to Vault: ${record.title}`)
+        toast.success(t('toast.archived', { title: record.title }))
         await load(false)
       },
       restoreArchive: async (archiveId: string) => {
         if (!window.cleanMyAgent) {
-          toast.info('Archive restore is available in the desktop app')
+          toast.info(t('toast.restoreDesktopOnly'))
           return
         }
         await window.cleanMyAgent.restoreArchive(archiveId)
-        toast.success('Session restored from Vault')
+        toast.success(t('toast.restored'))
         await load(true)
       },
       exportSession: async (sessionId: string, format: ExportFormat) => {
         if (!window.cleanMyAgent) {
-          toast.info('Export is available in the desktop app')
+          toast.info(t('toast.exportDesktopOnly'))
           return
         }
         const exportPath = await window.cleanMyAgent.exportSession(sessionId, format)
-        toast.success(`Exported to ${exportPath}`)
+        toast.success(t('toast.exported', { path: exportPath }))
       },
       exportUniversalRelay: async (sessionId: string) => {
         if (!window.cleanMyAgent) {
-          toast.info('Universal relay export is available in the desktop app')
+          toast.info(t('toast.relayDesktopOnly'))
           return
         }
         const exportPath = await window.cleanMyAgent.exportUniversalRelay(sessionId)
-        toast.success(`Universal JSON exported to ${exportPath}`)
+        toast.success(t('toast.relayExported', { path: exportPath }))
       },
       scanCleanup: async () => {
         if (settings.mockDataEnabled || !window.cleanMyAgent) {
@@ -275,23 +334,28 @@ export function useDashboard(): DashboardState {
       },
       moveCleanupToTrash: async (candidateIds: string[]) => {
         if (!window.cleanMyAgent) {
-          toast.info('Trash cleanup is available in the desktop app')
+          toast.info(t('toast.trashDesktopOnly'))
           return
         }
         const records = await window.cleanMyAgent.moveCleanupToTrash(candidateIds)
         toast.success(
-          `${records.length} cleanup item${records.length === 1 ? '' : 's'} moved to Trash`,
+          t('toast.cleanupMoved', {
+            count: records.length,
+            plural: records.length === 1 ? '' : 's',
+          }),
         )
         await load(true)
       },
     }),
-    [load, settings, snapshot.cleanup],
+    [load, settings, snapshot.cleanup, t],
   )
 
   return {
     snapshot,
     loading,
     mockDataEnabled: settings.mockDataEnabled,
+    language: settings.language,
+    launchAtLogin: settings.launchAtLogin,
     ...actions,
   }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { estimatedCost, formatBytes, formatCost, formatRelative, formatTokens } from './format'
+import { formatBytes, formatCost, formatRelative, formatTokens } from './format'
 
 describe('formatBytes', () => {
   it('formats zero, invalid, and common byte units', () => {
@@ -36,9 +36,7 @@ describe('formatRelative', () => {
 })
 
 describe('cost formatting', () => {
-  it('formats estimated and exact token costs', () => {
-    expect(estimatedCost(1_000)).toBe('<$0.01')
-    expect(estimatedCost(1_000_000)).toBe('$6.00')
+  it('formats exact dollar costs', () => {
     expect(formatCost(0)).toBe('$0.00')
     expect(formatCost(0.001)).toBe('<$0.01')
     expect(formatCost(1.234)).toBe('$1.23')

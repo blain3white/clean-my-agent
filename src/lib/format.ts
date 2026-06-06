@@ -51,12 +51,6 @@ export function formatRelative(value?: string): string {
   return date.toLocaleDateString()
 }
 
-export function estimatedCost(tokens: number): string {
-  const dollars = (tokens / 1_000_000) * 6
-  if (dollars < 0.01) return '<$0.01'
-  return `$${dollars.toFixed(2)}`
-}
-
 export function formatCost(dollars: number): string {
   if (!Number.isFinite(dollars) || dollars <= 0) return '$0.00'
   if (dollars < 0.01) return '<$0.01'

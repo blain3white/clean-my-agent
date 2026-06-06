@@ -1,0 +1,568 @@
+import { useMemo, useState, type ReactNode } from 'react'
+import {
+  Bell,
+  ChevronDown,
+  ChevronRight,
+  Clock3,
+  Folder,
+  Languages,
+  Palette,
+  Play,
+  Plus,
+  RefreshCcw,
+  ShieldCheck,
+  Trash2,
+  Volume2,
+  type LucideIcon,
+} from 'lucide-react'
+import { AgentGlyph } from '@/components/agent-glyph'
+import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
+import { playCleanupSystemSound } from '@/features/cleanup/cleanup-system-sound'
+import { agentLabel, formatBytes } from '@/lib/format'
+import { languageOptions } from '@/lib/i18n'
+import { useI18n } from '@/lib/i18n-context'
+import type { ThemePreference } from '@/shared/types'
+import type { TranslationKey } from '@/lib/i18n'
+import {
+  agentSources,
+  type AgentSource,
+  type AppLanguage,
+  type DashboardSnapshot,
+} from '@/shared/types'
+
+type SettingsViewProps = {
+  snapshot: DashboardSnapshot
+  language: AppLanguage
+  themePreference: ThemePreference
+  launchAtLogin: boolean
+  mockDataEnabled: boolean
+  onLanguageChange: (language: AppLanguage) => Promise<void>
+  onThemePreferenceChange: (preference: ThemePreference) => void
+  onLaunchAtLoginChange: (enabled: boolean) => Promise<void>
+  onMockDataChange: (enabled: boolean) => Promise<void>
+  onRescan: () => Promise<void>
+}
+
+type ToggleKey =
+  | 'scanOnLaunch'
+  | 'backgroundScan'
+  | 'moveToTrash'
+  | 'confirmCleanup'
+  | 'soundEffects'
+  | 'cleanupSound'
+  | 'scanSound'
+  | 'errorSound'
+  | 'checkUpdates'
+
+const initialProviderState: Record<AgentSource, boolean> = {
+  codex: true,
+  claude: true,
+  cursor: true,
+  gemini: true,
+  opencode: true,
+}
+
+const initialToggles: Record<ToggleKey, boolean> = {
+  scanOnLaunch: true,
+  backgroundScan: true,
+  moveToTrash: true,
+  confirmCleanup: true,
+  soundEffects: true,
+  cleanupSound: true,
+  scanSound: false,
+  errorSound: true,
+  checkUpdates: true,
+}
+
+const themeOptions: Array<{ value: ThemePreference; labelKey: TranslationKey }> = [
+  { value: 'system', labelKey: 'theme.system' },
+  { value: 'light', labelKey: 'theme.light' },
+  { value: 'dark', labelKey: 'theme.dark' },
+]
+
+function latestScanValue(snapshot: DashboardSnapshot): string | undefined {
+  const latest = snapshot.agents
+    .map((agent) => agent.lastScannedAt)
+    .filter((value): value is string => Boolean(value))
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0]
+
+  return latest
+}
+
+function SettingsSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="space-y-2.5">
+      <h2 className="settings-section-title px-0.5 text-sm font-medium">{title}</h2>
+      {children}
+    </section>
+  )
+}
+
+function SettingsPanel({ children }: { children: ReactNode }) {
+  return <div className="settings-panel overflow-hidden rounded-xl border">{children}</div>
+}
+
+function SettingsRow({
+  icon: Icon,
+  title,
+  description,
+  trailing,
+  children,
+}: {
+  icon?: LucideIcon
+  title: string
+  description?: string
+  trailing?: ReactNode
+  children?: ReactNode
+}) {
+  return (
+    <div className="settings-row group flex min-h-[64px] items-center gap-4 border-b px-5 py-3 last:border-b-0">
+      {Icon ? (
+        <div className="settings-row-icon grid size-6 shrink-0 place-items-center">
+          <Icon className="size-[19px]" />
+        </div>
+      ) : (
+        <div className="size-6 shrink-0" />
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="settings-row-title truncate text-[15px] font-medium">{title}</div>
+        {description && (
+          <div className="settings-row-description mt-1 truncate text-sm">{description}</div>
+        )}
+        {children}
+      </div>
+      {trailing && <div className="flex shrink-0 items-center justify-end gap-3">{trailing}</div>}
+    </div>
+  )
+}
+
+function SwitchControl({
+  checked,
+  onCheckedChange,
+  label,
+}: {
+  checked: boolean
+  onCheckedChange: (checked: boolean) => void
+  label: string
+}) {
+  return (
+    <Switch
+      checked={checked}
+      onCheckedChange={onCheckedChange}
+      className="settings-switch data-checked:bg-blue-500"
+      aria-label={label}
+    />
+  )
+}
+
+function ValueButton({ children }: { children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      className="settings-value-button inline-flex h-8 min-w-28 items-center justify-between gap-3 rounded-lg border px-3 text-sm transition"
+    >
+      <span>{children}</span>
+      <ChevronDown className="settings-muted-icon size-4" />
+    </button>
+  )
+}
+
+function NativeSelect<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value: T
+  options: Array<{ value: T; label: string }>
+  onChange: (value: T) => void
+}) {
+  return (
+    <select
+      aria-label={label}
+      className="settings-native-select h-8 min-w-36 appearance-auto rounded-lg border px-3 text-sm outline-none transition focus:border-blue-400/70 focus:ring-2 focus:ring-blue-400/25"
+      value={value}
+      onChange={(event) => onChange(event.target.value as T)}
+    >
+      {options.map((option) => (
+        <option key={option.value} value={option.value} className="settings-native-option">
+          {option.label}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+function ActionChevron() {
+  return <ChevronRight className="settings-chevron size-4 transition" />
+}
+
+function ProviderStatus({
+  detected,
+  enabled,
+  label,
+}: {
+  detected: boolean
+  enabled: boolean
+  label: string
+}) {
+  const color = !enabled
+    ? 'settings-provider-dot-disabled'
+    : detected
+      ? 'settings-provider-dot-detected'
+      : 'settings-provider-dot-warning'
+
+  return (
+    <span className="settings-provider-status flex min-w-28 items-center gap-2 text-sm">
+      <span className={`size-1.5 rounded-full ${color}`} />
+      {label}
+    </span>
+  )
+}
+
+export function SettingsView({
+  snapshot,
+  language,
+  themePreference,
+  launchAtLogin,
+  mockDataEnabled,
+  onLanguageChange,
+  onThemePreferenceChange,
+  onLaunchAtLoginChange,
+  onMockDataChange,
+  onRescan,
+}: SettingsViewProps) {
+  const { formatRelative, t } = useI18n()
+  const [providers, setProviders] = useState(initialProviderState)
+  const [toggles, setToggles] = useState(initialToggles)
+  const [volume, setVolume] = useState(35)
+  const scanLabel = useMemo(
+    () => formatRelative(latestScanValue(snapshot)),
+    [formatRelative, snapshot],
+  )
+  const agentBySource = useMemo(
+    () => new Map(snapshot.agents.map((agent) => [agent.source, agent])),
+    [snapshot.agents],
+  )
+
+  const setProvider = (source: AgentSource, enabled: boolean) => {
+    setProviders((current) => ({ ...current, [source]: enabled }))
+  }
+
+  const setToggle = (key: ToggleKey, enabled: boolean) => {
+    setToggles((current) => ({ ...current, [key]: enabled }))
+  }
+
+  const providerStatusLabel = (detected: boolean, enabled: boolean) => {
+    if (!enabled) return t('settings.providerDisabled')
+    return detected ? t('settings.providerDetected') : t('settings.providerNotFound')
+  }
+
+  const providerToggleLabel = (source: AgentSource) =>
+    t('settings.toggleProvider', { provider: agentLabel[source] })
+
+  const toggleLabel = (key: TranslationKey) => t(key)
+  const languageSelectOptions = languageOptions.map((option) => ({
+    value: option.value,
+    label: option.nativeLabel,
+  }))
+  const themeSelectOptions = themeOptions.map((option) => ({
+    value: option.value,
+    label: t(option.labelKey),
+  }))
+
+  return (
+    <div className="mx-auto w-full max-w-[900px] space-y-5 pb-8">
+      <SettingsSection title={t('settings.app')}>
+        <SettingsPanel>
+          <SettingsRow
+            icon={Languages}
+            title={t('settings.language')}
+            description={t('settings.languageDescription')}
+            trailing={
+              <NativeSelect
+                label={t('settings.languageSelectLabel')}
+                value={language}
+                options={languageSelectOptions}
+                onChange={(value) => void onLanguageChange(value)}
+              />
+            }
+          />
+          <SettingsRow
+            icon={Palette}
+            title={t('settings.appearance')}
+            trailing={
+              <NativeSelect
+                label={t('settings.appearanceSelectLabel')}
+                value={themePreference}
+                options={themeSelectOptions}
+                onChange={onThemePreferenceChange}
+              />
+            }
+          />
+          <SettingsRow
+            title={t('settings.launchAtLogin')}
+            trailing={
+              <SwitchControl
+                checked={launchAtLogin}
+                onCheckedChange={(checked) => void onLaunchAtLoginChange(checked)}
+                label={toggleLabel('settings.toggleLaunchAtLogin')}
+              />
+            }
+          />
+          <SettingsRow
+            title={t('settings.checkForUpdates')}
+            trailing={
+              <SwitchControl
+                checked={toggles.checkUpdates}
+                onCheckedChange={(checked) => setToggle('checkUpdates', checked)}
+                label={toggleLabel('settings.toggleUpdateChecks')}
+              />
+            }
+          />
+          <SettingsRow
+            title={t('settings.showDemoData')}
+            description={t('settings.showDemoDataDescription')}
+            trailing={
+              <SwitchControl
+                checked={mockDataEnabled}
+                onCheckedChange={(checked) => void onMockDataChange(checked)}
+                label={t('settings.toggleDemoData')}
+              />
+            }
+          />
+        </SettingsPanel>
+      </SettingsSection>
+
+      <SettingsSection title={t('settings.providers')}>
+        <SettingsPanel>
+          {agentSources.map((source) => {
+            const agent = agentBySource.get(source)
+            const enabled = providers[source]
+            const detected = enabled && Boolean(agent?.readable)
+
+            return (
+              <div
+                key={source}
+                className="settings-row flex min-h-[72px] items-center gap-4 border-b px-5 py-3 last:border-b-0"
+              >
+                <AgentGlyph source={source} />
+                <div className="min-w-0 flex-1">
+                  <div className="settings-row-title truncate text-[15px] font-semibold">
+                    {agentLabel[source]}
+                  </div>
+                  <div className="settings-row-description mt-1 flex flex-wrap items-center gap-2 text-sm">
+                    <span>
+                      {t('settings.providerSessionCount', {
+                        count: agent?.sessionCount ?? 0,
+                      })}
+                    </span>
+                    <span className="settings-row-separator">•</span>
+                    <span>{formatBytes(agent?.sizeBytes ?? 0)}</span>
+                  </div>
+                </div>
+                <ProviderStatus
+                  detected={detected}
+                  enabled={enabled}
+                  label={providerStatusLabel(detected, enabled)}
+                />
+                <SwitchControl
+                  checked={enabled}
+                  onCheckedChange={(checked) => setProvider(source, checked)}
+                  label={providerToggleLabel(source)}
+                />
+              </div>
+            )
+          })}
+          <SettingsRow
+            icon={Plus}
+            title={t('settings.addCustomProvider')}
+            trailing={<ActionChevron />}
+          />
+          <SettingsRow
+            icon={RefreshCcw}
+            title={t('settings.rescanProviders')}
+            description={t('settings.rescanProvidersDescription')}
+            trailing={
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void onRescan()}
+                className="settings-ghost-button"
+              >
+                {t('settings.scan')}
+              </Button>
+            }
+          />
+        </SettingsPanel>
+      </SettingsSection>
+
+      <SettingsSection title={t('settings.scanSection')}>
+        <SettingsPanel>
+          <SettingsRow
+            icon={Play}
+            title={t('settings.scanOnLaunch')}
+            description={t('settings.scanOnLaunchDescription')}
+            trailing={
+              <SwitchControl
+                checked={toggles.scanOnLaunch}
+                onCheckedChange={(checked) => setToggle('scanOnLaunch', checked)}
+                label={toggleLabel('settings.toggleScanOnLaunch')}
+              />
+            }
+          />
+          <SettingsRow
+            icon={RefreshCcw}
+            title={t('settings.backgroundScan')}
+            description={t('settings.backgroundScanDescription')}
+            trailing={
+              <SwitchControl
+                checked={toggles.backgroundScan}
+                onCheckedChange={(checked) => setToggle('backgroundScan', checked)}
+                label={toggleLabel('settings.toggleBackgroundScan')}
+              />
+            }
+          />
+          <SettingsRow
+            icon={Clock3}
+            title={t('settings.lastScanned')}
+            trailing={
+              <div className="flex items-center gap-3">
+                <span className="settings-trailing-value text-sm">{scanLabel}</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void onRescan()}
+                  className="settings-outline-button"
+                >
+                  {t('settings.scanNow')}
+                </Button>
+              </div>
+            }
+          />
+        </SettingsPanel>
+      </SettingsSection>
+
+      <SettingsSection title={t('settings.cleanupSafety')}>
+        <SettingsPanel>
+          <SettingsRow
+            icon={Trash2}
+            title={t('settings.moveCleanedToTrash')}
+            description={t('settings.moveCleanedToTrashDescription')}
+            trailing={
+              <SwitchControl
+                checked={toggles.moveToTrash}
+                onCheckedChange={(checked) => setToggle('moveToTrash', checked)}
+                label={toggleLabel('settings.toggleMoveToTrash')}
+              />
+            }
+          />
+          <SettingsRow
+            icon={ShieldCheck}
+            title={t('settings.confirmBeforeCleanup')}
+            description={t('settings.confirmBeforeCleanupDescription')}
+            trailing={
+              <SwitchControl
+                checked={toggles.confirmCleanup}
+                onCheckedChange={(checked) => setToggle('confirmCleanup', checked)}
+                label={toggleLabel('settings.toggleCleanupConfirmation')}
+              />
+            }
+          />
+          <SettingsRow
+            icon={Clock3}
+            title={t('settings.protectRecentSessions')}
+            description={t('settings.protectRecentSessionsDescription')}
+            trailing={<ValueButton>{t('settings.sevenDays')}</ValueButton>}
+          />
+          <SettingsRow
+            icon={Folder}
+            title={t('settings.excludedFolders')}
+            description={t('settings.excludedFoldersDescription')}
+            trailing={<ActionChevron />}
+          />
+        </SettingsPanel>
+      </SettingsSection>
+
+      <SettingsSection title={t('settings.sounds')}>
+        <SettingsPanel>
+          <SettingsRow
+            icon={Volume2}
+            title={t('settings.soundEffects')}
+            trailing={
+              <SwitchControl
+                checked={toggles.soundEffects}
+                onCheckedChange={(checked) => setToggle('soundEffects', checked)}
+                label={toggleLabel('settings.toggleSoundEffects')}
+              />
+            }
+          />
+          <SettingsRow
+            icon={Volume2}
+            title={t('settings.volume')}
+            trailing={
+              <div className="flex w-[330px] items-center justify-end gap-4">
+                <input
+                  aria-label={t('settings.soundEffectsVolume')}
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={volume}
+                  onChange={(event) => setVolume(Number(event.target.value))}
+                  className="h-1.5 w-[250px] accent-blue-500"
+                />
+                <span className="settings-trailing-value w-11 text-right text-sm">{volume}%</span>
+              </div>
+            }
+          />
+          <SettingsRow
+            title={t('settings.cleanupCompleteSound')}
+            trailing={
+              <SwitchControl
+                checked={toggles.cleanupSound}
+                onCheckedChange={(checked) => setToggle('cleanupSound', checked)}
+                label={toggleLabel('settings.toggleCleanupCompleteSound')}
+              />
+            }
+          />
+          <SettingsRow
+            title={t('settings.scanCompleteSound')}
+            trailing={
+              <SwitchControl
+                checked={toggles.scanSound}
+                onCheckedChange={(checked) => setToggle('scanSound', checked)}
+                label={toggleLabel('settings.toggleScanCompleteSound')}
+              />
+            }
+          />
+          <SettingsRow
+            title={t('settings.errorWarningSound')}
+            trailing={
+              <SwitchControl
+                checked={toggles.errorSound}
+                onCheckedChange={(checked) => setToggle('errorSound', checked)}
+                label={toggleLabel('settings.toggleErrorWarningSound')}
+              />
+            }
+          />
+          <SettingsRow
+            icon={Bell}
+            title={t('settings.previewSound')}
+            trailing={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void playCleanupSystemSound(volume / 100)}
+                className="settings-outline-button"
+              >
+                {t('settings.play')}
+              </Button>
+            }
+          />
+        </SettingsPanel>
+      </SettingsSection>
+    </div>
+  )
+}

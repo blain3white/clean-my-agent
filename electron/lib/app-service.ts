@@ -1,6 +1,7 @@
 import path from 'node:path'
 import type {
   AgentSource,
+  AppLanguage,
   ArchiveRecord,
   AppSettings,
   BackupRecord,
@@ -12,6 +13,7 @@ import type {
   TrashRecord,
   UsagePoint,
 } from '../../src/shared/types'
+import { appLanguages, defaultLanguage } from '../../src/shared/types'
 import { adapters, adapterFor } from './adapters'
 import { LocalDatabase } from './database'
 import {
@@ -32,7 +34,6 @@ import {
 const oneDayMs = 24 * 60 * 60 * 1000
 const usageHistoryDays = 365
 const scanSchemaVersion = 3
-
 const agentLabels: Record<AgentSource, string> = {
   codex: 'Codex',
   claude: 'Claude Code',
@@ -128,7 +129,7 @@ export class AppService {
 
   async init(): Promise<void> {
     await this.db.open()
-    this.settings = this.db.getSetting<AppSettings>('settings') ?? this.defaultSettings()
+    this.settings = this.mergeSettings(this.db.getSetting<Partial<AppSettings>>('settings'))
     this.db.setSetting('settings', this.settings)
   }
 
@@ -446,14 +447,14 @@ export class AppService {
 
   updateSettings(patch: Partial<AppSettings>): AppSettings {
     const current = this.requireSettings()
-    const next: AppSettings = {
+    const next = this.mergeSettings({
       ...current,
       ...patch,
       scanRoots: {
         ...current.scanRoots,
         ...patch.scanRoots,
       },
-    }
+    })
     this.settings = next
     this.db.setSetting('settings', next)
     return next
@@ -470,8 +471,26 @@ export class AppService {
       trashRetentionDays: 14,
       autoBackup: true,
       mockDataEnabled: false,
+      language: defaultLanguage,
+      launchAtLogin: false,
       defaultRelayMode: 'full-context',
       exportDirectory: path.join(this.userDataPath, 'Exports'),
+    }
+  }
+
+  private mergeSettings(settings?: Partial<AppSettings>): AppSettings {
+    const defaults = this.defaultSettings()
+    return {
+      ...defaults,
+      ...settings,
+      language: appLanguages.includes(settings?.language as AppLanguage)
+        ? (settings?.language as AppLanguage)
+        : defaults.language,
+      scanRoots: {
+        ...defaults.scanRoots,
+        ...settings?.scanRoots,
+      },
+      exportDirectory: settings?.exportDirectory || defaults.exportDirectory,
     }
   }
 

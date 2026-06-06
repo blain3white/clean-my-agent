@@ -7,10 +7,12 @@ import type {
   AgentSource,
   AppSettings,
   SessionRecord,
+  TokenCostSource,
   TokenUsage,
   UniversalRelayDocument,
   UniversalRelayMessage,
 } from '../../src/shared/types'
+import { calculateUsageModelCost } from '../../src/shared/usage-pricing'
 import {
   asString,
   isClaudeJsonlRecord,
@@ -184,6 +186,92 @@ function numberFromRecord(record: JsonRecord, keys: string[]): number {
   return 0
 }
 
+function optionalNumberFromRecord(
+  record: JsonRecord | undefined,
+  keys: string[],
+): number | undefined {
+  if (!record) return undefined
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value)
+      if (Number.isFinite(parsed) && parsed > 0) return parsed
+    }
+  }
+
+  return undefined
+}
+
+function usageModel(
+  record: JsonRecord,
+  parent?: JsonRecord,
+  fallbackModel?: string,
+): string | undefined {
+  const payload = toRecord(parent?.payload)
+  const message = toRecord(parent?.message)
+  const parentResponse = toRecord(parent?.response)
+  const payloadMessage = toRecord(payload?.message)
+  const payloadInfo = toRecord(payload?.info)
+  const candidates: unknown[] = [
+    record.model,
+    record.modelName,
+    record.model_name,
+    record.modelID,
+    record.modelId,
+    record.model_id,
+    parent?.model,
+    parent?.modelName,
+    parent?.model_name,
+    parent?.modelID,
+    parent?.modelId,
+    parent?.model_id,
+    message?.model,
+    message?.modelName,
+    message?.model_name,
+    payload?.model,
+    payload?.modelName,
+    payload?.model_name,
+    payload?.modelID,
+    payload?.modelId,
+    payload?.model_id,
+    payloadMessage?.model,
+    payloadMessage?.modelName,
+    payloadMessage?.model_name,
+    payloadInfo?.model,
+    payloadInfo?.modelName,
+    payloadInfo?.model_name,
+    parentResponse?.model,
+    parentResponse?.modelName,
+    parentResponse?.model_name,
+  ]
+
+  for (const candidate of candidates) {
+    const value = asString(candidate)
+    if (value) return value
+  }
+
+  return fallbackModel
+}
+
+function modelHintFromRecord(record: JsonRecord): string | undefined {
+  return usageModel(record)
+}
+
+function mergeCostSource(
+  left: TokenCostSource | undefined,
+  right: TokenCostSource | undefined,
+): TokenCostSource | undefined {
+  if (!left) return right
+  if (!right || left === right) return left
+  return 'mixed'
+}
+
+function setUsageCost(tokens: TokenUsage, costUsd: number, source: TokenCostSource): void {
+  tokens.costUsd = (tokens.costUsd ?? 0) + costUsd
+  tokens.costSource = mergeCostSource(tokens.costSource, source)
+}
+
 function usageIdentity(record: JsonRecord): string | undefined {
   const message = toRecord(record.message)
   const payload = toRecord(record.payload)
@@ -205,11 +293,18 @@ function addTokens(target: TokenUsage, usage: TokenUsage): void {
   target.cacheCreation = (target.cacheCreation ?? 0) + (usage.cacheCreation ?? 0)
   target.cacheRead = (target.cacheRead ?? 0) + (usage.cacheRead ?? 0)
   target.total += usage.total
-  target.costUsd = (target.costUsd ?? 0) + (usage.costUsd ?? 0)
+  if (typeof usage.costUsd === 'number') {
+    setUsageCost(target, usage.costUsd, usage.costSource ?? 'actual')
+  }
+  target.model ??= usage.model
   target.estimated = target.estimated && usage.estimated
 }
 
-function extractUsage(value: unknown, seenUsageIds = new Set<string>()): TokenUsage {
+function extractUsage(
+  value: unknown,
+  seenUsageIds = new Set<string>(),
+  fallbackModel?: string,
+): TokenUsage {
   const tokens = emptyTokens()
   const seenUsageObjects = new WeakSet<JsonRecord>()
 
@@ -222,7 +317,7 @@ function extractUsage(value: unknown, seenUsageIds = new Set<string>()): TokenUs
     const identity = parent ? usageIdentity(parent) : undefined
     if (identity && seenUsageIds.has(identity)) return
 
-    const input = numberFromRecord(record, [
+    const rawInput = numberFromRecord(record, [
       'input_tokens',
       'prompt_tokens',
       'promptTokens',
@@ -247,13 +342,28 @@ function extractUsage(value: unknown, seenUsageIds = new Set<string>()): TokenUs
       'cacheTokens',
     ])
     const cached = cacheCreation + cacheRead + legacyCached
+    const model = usageModel(record, parent, fallbackModel)
+    const input =
+      model?.toLowerCase().includes('gpt') || model?.toLowerCase().includes('codex')
+        ? Math.max(0, rawInput - cacheRead - legacyCached)
+        : rawInput
     const total =
-      numberFromRecord(record, ['total_tokens', 'totalTokens']) || input + output + cached
-    const costUsd =
-      numberFromRecord(record, ['costUSD', 'costUsd', 'cost_usd']) ||
-      (parent ? numberFromRecord(parent, ['costUSD', 'costUsd', 'cost_usd']) : 0)
+      numberFromRecord(record, ['total_tokens', 'totalTokens']) || rawInput + output + cached
+    const actualCostUsd =
+      optionalNumberFromRecord(record, ['costUSD', 'costUsd', 'cost_usd', 'cost']) ??
+      optionalNumberFromRecord(parent, ['costUSD', 'costUsd', 'cost_usd', 'cost'])
+    const estimatedCostUsd =
+      actualCostUsd === undefined
+        ? calculateUsageModelCost({
+            model,
+            input,
+            output,
+            cacheCreation,
+            cacheRead: cacheRead + legacyCached,
+          })
+        : undefined
 
-    if (input || output || cached || total || costUsd) {
+    if (input || output || cached || total || actualCostUsd || estimatedCostUsd) {
       if (identity) seenUsageIds.add(identity)
       tokens.input += input
       tokens.output += output
@@ -261,7 +371,12 @@ function extractUsage(value: unknown, seenUsageIds = new Set<string>()): TokenUs
       tokens.cacheCreation = (tokens.cacheCreation ?? 0) + cacheCreation
       tokens.cacheRead = (tokens.cacheRead ?? 0) + cacheRead + legacyCached
       tokens.total += total
-      tokens.costUsd = (tokens.costUsd ?? 0) + costUsd
+      tokens.model ??= model
+      if (typeof actualCostUsd === 'number') {
+        setUsageCost(tokens, actualCostUsd, 'actual')
+      } else if (typeof estimatedCostUsd === 'number') {
+        setUsageCost(tokens, estimatedCostUsd, 'model-estimate')
+      }
       tokens.estimated = false
     }
   }
@@ -393,6 +508,7 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
   const usageByDate: Record<string, number> = {}
   let sampleForHints: unknown
   let tokens = emptyTokens()
+  let currentModel: string | undefined
 
   if (filePath.endsWith('.jsonl')) {
     const seenUsageIds = new Set<string>()
@@ -415,9 +531,10 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
           const message = extractMessage(json, `${index}`)
           if (message) messages.push(message)
         }
-        const usage = extractUsage(json, seenUsageIds)
-        addTokens(tokens, usage)
         const record = toRecord(json)
+        currentModel = record ? (modelHintFromRecord(record) ?? currentModel) : currentModel
+        const usage = extractUsage(json, seenUsageIds, currentModel)
+        addTokens(tokens, usage)
         const dateKey = record ? dateKeyFromRecord(record) : undefined
         if (dateKey && usage.total > 0)
           usageByDate[dateKey] = (usageByDate[dateKey] ?? 0) + usage.total
@@ -441,6 +558,7 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
       if (isOpenCodeStorageRecord(json)) metadata.sourceFormat = 'opencode-storage-json'
       if (isCursorWorkspaceRecord(json)) metadata.sourceFormat = 'cursor-workspace-json'
       const record = toRecord(json)
+      currentModel = record ? modelHintFromRecord(record) : undefined
       const array =
         (Array.isArray(json) && json) ||
         (Array.isArray(record?.messages) && record?.messages) ||
@@ -451,7 +569,7 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
         const message = extractMessage(item, `${index}`)
         if (message) messages.push(message)
       })
-      tokens = extractUsage(json)
+      tokens = extractUsage(json, new Set<string>(), currentModel)
     } catch {
       messages.push({ id: 'raw', role: 'unknown', text: text.slice(0, 4000) })
     }
@@ -482,6 +600,8 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
     metadata: {
       ...metadata,
       usageByDate,
+      costSource: tokens.costSource,
+      model: tokens.model,
     },
   }
 }
