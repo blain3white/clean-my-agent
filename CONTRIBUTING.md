@@ -107,4 +107,6 @@ reaches `develop`.
 
 ## Releases
 
-Release candidates should merge from `develop` into `main` after CI passes. Tag releases from `main` with semantic version tags such as `v0.1.0`.
+Release candidates should merge from `develop` into `main` after CI passes. Tag
+releases from `main` with semantic version tags such as `v0.1.0`; the tag version
+must match `package.json` so GitHub Actions can build and publish the release.
