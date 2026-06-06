@@ -19,6 +19,7 @@ const api: CleanMyAgentApi = {
   updateSettings: (settings: Partial<AppSettings>) =>
     ipcRenderer.invoke('settings:update', settings),
   openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),
+  playSystemSound: () => ipcRenderer.invoke('shell:beep'),
 }
 
 contextBridge.exposeInMainWorld('cleanMyAgent', api)

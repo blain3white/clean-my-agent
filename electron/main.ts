@@ -90,6 +90,9 @@ function registerIpc(): void {
     service.updateSettings(settings),
   )
   ipcMain.handle('shell:openPath', (_event, targetPath: string) => service.openPath(targetPath))
+  ipcMain.handle('shell:beep', () => {
+    shell.beep()
+  })
 }
 
 app.whenReady().then(async () => {

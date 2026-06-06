@@ -1,9 +1,6 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import {
-  Activity,
-  Archive,
-  CalendarDays,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -27,6 +24,31 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+  buildCleanupCandidateGroups,
+  buildCleanupCategorySummaries,
+  cleanupCategoryForCandidate,
+  cleanupCompactPath,
+  cleanupKindMeta,
+  cleanupRiskRank,
+  cleanupSourceWeights,
+  defaultCleanupSelection,
+  type CleanupCandidateGroup,
+  type CleanupCategoryKey,
+  type CleanupCategorySummary,
+  type CleanupFilter,
+  type CleanupOrbPhase,
+  type CleanupScanStage,
+  type CleanupSort,
+  type CleanupSourceProgress,
+  type CleanupStage,
+} from '@/features/cleanup/cleanup-model'
+import {
+  clearCleanupViewState,
+  readCleanupViewState,
+  writeCleanupViewState,
+} from '@/features/cleanup/cleanup-persistence'
+import { playCleanupSystemSound } from '@/features/cleanup/cleanup-system-sound'
 import { agentLabel, formatBytes, formatRelative, riskAccent } from '@/lib/format'
 import {
   agentSources,
@@ -36,68 +58,12 @@ import {
   type SessionRecord,
 } from '@/shared/types'
 
-type CleanupStage = 'idle' | 'scanning' | 'complete' | 'review'
-type CleanupScanStage = Exclude<CleanupStage, 'review'>
-type CleanupOrbPhase = 'initial' | 'scalein' | 'running' | 'scaleout' | 'finish'
-type CleanupFilter = 'all' | 'high' | 'medium' | 'low' | 'recoverable'
-type CleanupSort = 'size' | 'risk' | 'agent'
-type CleanupSourceProgress = {
-  source: AgentSource
-  scanned: number
-  total: number
-  status: 'Waiting' | 'Scanning' | 'Complete'
-}
-type CleanupCategoryKey = 'large' | 'inactive' | 'test'
-type CleanupCategorySummary = {
-  key: CleanupCategoryKey
-  title: string
-  description: string
-  bytes: number
-  count: number
-  action: 'Recommended' | 'Review' | 'Safe'
-  icon: typeof Activity
-  accent: string
-}
-type CleanupWorkspaceHint = {
-  key: string
-  label: string
-  detail: string
-}
-type CleanupCandidateGroup = {
-  id: string
-  source: AgentSource
-  workspace: CleanupWorkspaceHint
-  candidates: CleanupCandidate[]
-  bytes: number
-  latestOpened?: string
-}
-type CleanupPersistedViewState = {
-  stage: 'complete'
-  savedAt: string
-  candidateIds: string[]
-}
-type CleanupAudioKind = 'press' | 'complete'
-
 type CleanupViewProps = {
   cleanup: CleanupCandidate[]
   agents: DashboardSnapshot['agents']
   sessions: SessionRecord[]
   onScanCleanup: () => Promise<CleanupCandidate[]>
   onMoveToTrash: (candidateIds: string[]) => Promise<void>
-}
-
-const cleanupSourceWeights: Record<AgentSource, { start: number; end: number }> = {
-  codex: { start: 0, end: 24 },
-  claude: { start: 12, end: 48 },
-  cursor: { start: 34, end: 72 },
-  gemini: { start: 52, end: 88 },
-  opencode: { start: 72, end: 100 },
-}
-
-const cleanupRiskRank: Record<CleanupCandidate['risk'], number> = {
-  high: 3,
-  medium: 2,
-  low: 1,
 }
 
 const cleanupOrbMorphTransition = {
@@ -110,10 +76,6 @@ const cleanupCompleteOrbMinSize = 184
 const cleanupCompleteOrbVisualBleed = 72
 const cleanupScanningOrbScale = 250 / cleanupOrbMaxSize
 const cleanupMaxVisibleGroupSessions = 80
-
-const cleanupViewStateStorageKey = 'clean-my-agent.cleanupViewState'
-let cleanupAudioContext: AudioContext | null = null
-const cleanupFallbackToneUrls: Partial<Record<CleanupAudioKind, string>> = {}
 
 const cleanupBodyTransition = {
   duration: 0.42,
@@ -130,381 +92,12 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
-function getCleanupAudioContext(): AudioContext | null {
-  if (typeof window === 'undefined') return null
-  const audioWindow = window as Window &
-    typeof globalThis & {
-      webkitAudioContext?: typeof AudioContext
-    }
-  const AudioContextConstructor = audioWindow.AudioContext ?? audioWindow.webkitAudioContext
-  if (!AudioContextConstructor) return null
-  cleanupAudioContext ??= new AudioContextConstructor()
-  return cleanupAudioContext
-}
-
-function writeWaveString(view: DataView, offset: number, value: string) {
-  for (let index = 0; index < value.length; index += 1) {
-    view.setUint8(offset + index, value.charCodeAt(index))
-  }
-}
-
-function cleanupToneSample(kind: CleanupAudioKind, time: number): number {
-  if (kind === 'press') {
-    const duration = 0.2
-    const envelope = Math.max(0, 1 - time / duration) ** 2
-    const sweepFrequency = 520 - 260 * Math.min(1, time / duration)
-    const click = Math.sin(2 * Math.PI * sweepFrequency * time)
-    const shimmer = Math.sin(2 * Math.PI * (820 - 140 * Math.min(1, time / duration)) * time)
-    return (click * 0.44 + shimmer * 0.2) * envelope
-  }
-
-  const tone = (frequency: number, start: number, duration: number) => {
-    const localTime = time - start
-    if (localTime < 0 || localTime > duration) return 0
-    const attack = Math.min(1, localTime / 0.025)
-    const release = Math.max(0, 1 - localTime / duration)
-    return Math.sin(2 * Math.PI * frequency * localTime) * attack * release
-  }
-
-  return (
-    tone(523.25, 0, 0.22) * 0.28 + tone(783.99, 0.1, 0.24) * 0.24 + tone(1318.51, 0.22, 0.25) * 0.18
-  )
-}
-
-function getCleanupFallbackToneUrl(kind: CleanupAudioKind): string {
-  if (cleanupFallbackToneUrls[kind]) return cleanupFallbackToneUrls[kind]
-
-  const sampleRate = 44100
-  const duration = kind === 'press' ? 0.22 : 0.52
-  const sampleCount = Math.floor(sampleRate * duration)
-  const buffer = new ArrayBuffer(44 + sampleCount * 2)
-  const view = new DataView(buffer)
-
-  writeWaveString(view, 0, 'RIFF')
-  view.setUint32(4, 36 + sampleCount * 2, true)
-  writeWaveString(view, 8, 'WAVE')
-  writeWaveString(view, 12, 'fmt ')
-  view.setUint32(16, 16, true)
-  view.setUint16(20, 1, true)
-  view.setUint16(22, 1, true)
-  view.setUint32(24, sampleRate, true)
-  view.setUint32(28, sampleRate * 2, true)
-  view.setUint16(32, 2, true)
-  view.setUint16(34, 16, true)
-  writeWaveString(view, 36, 'data')
-  view.setUint32(40, sampleCount * 2, true)
-
-  for (let index = 0; index < sampleCount; index += 1) {
-    const time = index / sampleRate
-    const sample = Math.max(-1, Math.min(1, cleanupToneSample(kind, time)))
-    view.setInt16(44 + index * 2, sample * 0x7fff, true)
-  }
-
-  const bytes = new Uint8Array(buffer)
-  let binary = ''
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  const url = `data:audio/wav;base64,${btoa(binary)}`
-  cleanupFallbackToneUrls[kind] = url
-  return url
-}
-
-function playCleanupFallbackTone(kind: CleanupAudioKind) {
-  if (typeof Audio === 'undefined') return
-  const audio = new Audio(getCleanupFallbackToneUrl(kind))
-  audio.volume = kind === 'press' ? 0.22 : 0.26
-  void audio.play().catch(() => undefined)
-}
-
-function playCleanupTone(kind: CleanupAudioKind) {
-  const context = getCleanupAudioContext()
-  if (!context) {
-    playCleanupFallbackTone(kind)
-    return
-  }
-
-  void context
-    .resume()
-    .then(() => {
-      const start = context.currentTime + 0.012
-      const master = context.createGain()
-      master.gain.setValueAtTime(0.0001, start)
-      master.gain.exponentialRampToValueAtTime(kind === 'press' ? 0.06 : 0.075, start + 0.018)
-      master.gain.exponentialRampToValueAtTime(0.0001, start + (kind === 'press' ? 0.18 : 0.46))
-      master.connect(context.destination)
-
-      const playTone = (
-        frequency: number,
-        offset: number,
-        duration: number,
-        type: OscillatorType,
-        endFrequency = frequency,
-      ) => {
-        const oscillator = context.createOscillator()
-        const gain = context.createGain()
-        oscillator.type = type
-        oscillator.frequency.setValueAtTime(frequency, start + offset)
-        oscillator.frequency.exponentialRampToValueAtTime(endFrequency, start + offset + duration)
-        gain.gain.setValueAtTime(0.0001, start + offset)
-        gain.gain.exponentialRampToValueAtTime(0.6, start + offset + 0.014)
-        gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + duration)
-        oscillator.connect(gain)
-        gain.connect(master)
-        oscillator.start(start + offset)
-        oscillator.stop(start + offset + duration + 0.025)
-      }
-
-      if (kind === 'press') {
-        playTone(520, 0, 0.12, 'triangle', 260)
-        playTone(820, 0.035, 0.11, 'sine', 680)
-        return
-      }
-
-      playTone(523.25, 0, 0.18, 'sine', 587.33)
-      playTone(783.99, 0.11, 0.19, 'triangle', 987.77)
-      playTone(1318.51, 0.23, 0.2, 'sine', 1174.66)
-    })
-    .catch(() => {
-      playCleanupFallbackTone(kind)
-    })
-}
-
 function initialCleanupStageSize() {
   if (typeof window === 'undefined') return { width: 960, height: 720 }
   return {
     width: Math.max(640, window.innerWidth - 232),
     height: Math.max(520, window.innerHeight - 64),
   }
-}
-
-function readCleanupViewState(): CleanupPersistedViewState | null {
-  try {
-    const raw = globalThis.localStorage?.getItem(cleanupViewStateStorageKey)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as Partial<CleanupPersistedViewState>
-    if (parsed.stage !== 'complete') return null
-    return {
-      stage: parsed.stage,
-      savedAt: typeof parsed.savedAt === 'string' ? parsed.savedAt : new Date().toISOString(),
-      candidateIds: Array.isArray(parsed.candidateIds)
-        ? parsed.candidateIds.filter((id): id is string => typeof id === 'string')
-        : [],
-    }
-  } catch (error) {
-    console.error(error)
-    return null
-  }
-}
-
-function writeCleanupViewState(candidates: CleanupCandidate[]) {
-  try {
-    globalThis.localStorage?.setItem(
-      cleanupViewStateStorageKey,
-      JSON.stringify({
-        stage: 'complete',
-        savedAt: new Date().toISOString(),
-        candidateIds: candidates.map((candidate) => candidate.id),
-      } satisfies CleanupPersistedViewState),
-    )
-  } catch (error) {
-    console.error(error)
-  }
-}
-
-function clearCleanupViewState() {
-  try {
-    globalThis.localStorage?.removeItem(cleanupViewStateStorageKey)
-  } catch (error) {
-    console.error(error)
-  }
-}
-
-const cleanupKindMeta: Record<
-  CleanupCandidate['kind'],
-  { category: CleanupCategoryKey; label: string; icon: typeof Activity; accent: string }
-> = {
-  'old-session': {
-    category: 'inactive',
-    label: 'old session',
-    icon: CalendarDays,
-    accent: 'text-sky-300 bg-sky-400/12 ring-sky-400/22',
-  },
-  'backed-up-session': {
-    category: 'inactive',
-    label: 'old session',
-    icon: CalendarDays,
-    accent: 'text-emerald-300 bg-emerald-400/12 ring-emerald-400/22',
-  },
-  'large-log': {
-    category: 'large',
-    label: 'large chat',
-    icon: MessageSquare,
-    accent: 'text-emerald-300 bg-emerald-400/13 ring-emerald-400/24',
-  },
-  'duplicate-backup': {
-    category: 'test',
-    label: 'recoverable',
-    icon: Archive,
-    accent: 'text-blue-300 bg-blue-400/12 ring-blue-400/24',
-  },
-  'temp-file': {
-    category: 'test',
-    label: 'test chat',
-    icon: FlaskConical,
-    accent: 'text-violet-300 bg-violet-400/13 ring-violet-400/24',
-  },
-  'orphan-session': {
-    category: 'inactive',
-    label: 'old session',
-    icon: Clock,
-    accent: 'text-amber-300 bg-amber-400/13 ring-amber-400/24',
-  },
-  'invalid-cache': {
-    category: 'test',
-    label: 'test chat',
-    icon: FlaskConical,
-    accent: 'text-red-300 bg-red-400/12 ring-red-400/24',
-  },
-}
-
-function cleanupCategoryForCandidate(candidate: CleanupCandidate): CleanupCategoryKey {
-  return cleanupKindMeta[candidate.kind].category
-}
-
-function defaultCleanupSelection(candidates: CleanupCandidate[]): string[] {
-  return candidates
-    .filter((candidate) => {
-      const category = cleanupCategoryForCandidate(candidate)
-      return category === 'inactive' || category === 'test'
-    })
-    .map((candidate) => candidate.id)
-}
-
-function cleanupTimestamp(value: string | undefined): number {
-  if (!value) return 0
-  const timestamp = new Date(value).getTime()
-  return Number.isFinite(timestamp) ? timestamp : 0
-}
-
-function cleanupSessionForCandidate(
-  candidate: CleanupCandidate,
-  sessionById: Map<string, SessionRecord>,
-): SessionRecord | undefined {
-  for (const sessionId of candidate.sessionIds) {
-    const session = sessionById.get(sessionId)
-    if (session) return session
-  }
-  return undefined
-}
-
-function cleanupDirectoryFromPath(pathValue: string): string {
-  const normalized = pathValue.replaceAll('\\', '/').replace(/\/+/g, '/')
-  const parts = normalized.split('/').filter(Boolean)
-  if (parts.length === 0) return normalized || 'Unknown path'
-
-  const lastPart = parts.at(-1) ?? ''
-  const looksLikeFile = /\.[a-z0-9]{1,12}$/i.test(lastPart)
-  const directoryParts = looksLikeFile ? parts.slice(0, -1) : parts
-  if (directoryParts.length === 0) return normalized
-
-  const prefix = normalized.startsWith('/') ? '/' : ''
-  return `${prefix}${directoryParts.join('/')}`
-}
-
-function cleanupCompactPath(pathValue: string, maxLength = 72): string {
-  if (pathValue.length <= maxLength) return pathValue
-  const headLength = Math.max(18, Math.floor(maxLength * 0.38))
-  const tailLength = Math.max(24, maxLength - headLength - 3)
-  return `${pathValue.slice(0, headLength)}...${pathValue.slice(-tailLength)}`
-}
-
-function cleanupPathLabel(pathValue: string): string {
-  const normalized = pathValue.replaceAll('\\', '/')
-  const parts = normalized.split('/').filter(Boolean)
-  if (parts.length === 0) return 'Unknown workspace'
-  return parts.slice(-2).join('/')
-}
-
-function cleanupWorkspaceForCandidate(
-  candidate: CleanupCandidate,
-  session: SessionRecord | undefined,
-): CleanupWorkspaceHint {
-  if (session?.projectPath) {
-    return {
-      key: session.projectPath,
-      label: session.projectName || cleanupPathLabel(session.projectPath),
-      detail: session.projectPath,
-    }
-  }
-
-  if (session?.projectName) {
-    return {
-      key: `project:${session.projectName}`,
-      label: session.projectName,
-      detail: 'Project name only',
-    }
-  }
-
-  const primaryPath = candidate.paths[0]
-  if (!primaryPath) {
-    return {
-      key: 'unknown',
-      label: 'Unknown workspace',
-      detail: 'No local path available',
-    }
-  }
-
-  const directory = cleanupDirectoryFromPath(primaryPath)
-  return {
-    key: directory,
-    label: cleanupPathLabel(directory),
-    detail: directory,
-  }
-}
-
-function cleanupCandidateSource(
-  candidate: CleanupCandidate,
-  session: SessionRecord | undefined,
-): AgentSource {
-  return candidate.source ?? session?.source ?? 'codex'
-}
-
-function buildCleanupCandidateGroups(
-  candidates: CleanupCandidate[],
-  sessionById: Map<string, SessionRecord>,
-): CleanupCandidateGroup[] {
-  const groups = new Map<string, CleanupCandidateGroup>()
-
-  for (const candidate of candidates) {
-    const session = cleanupSessionForCandidate(candidate, sessionById)
-    const source = cleanupCandidateSource(candidate, session)
-    const workspace = cleanupWorkspaceForCandidate(candidate, session)
-    const id = `${source}:${workspace.key}`
-    const existing =
-      groups.get(id) ??
-      ({
-        id,
-        source,
-        workspace,
-        candidates: [],
-        bytes: 0,
-      } satisfies CleanupCandidateGroup)
-
-    existing.candidates.push(candidate)
-    existing.bytes += candidate.sizeBytes
-
-    const currentLatest = cleanupTimestamp(existing.latestOpened)
-    const candidateLatest = cleanupTimestamp(candidate.lastUpdated)
-    if (candidateLatest > currentLatest) existing.latestOpened = candidate.lastUpdated
-
-    groups.set(id, existing)
-  }
-
-  return Array.from(groups.values()).sort((a, b) => {
-    const sourceDelta = agentSources.indexOf(a.source) - agentSources.indexOf(b.source)
-    if (sourceDelta !== 0) return sourceDelta
-    if (b.bytes !== a.bytes) return b.bytes - a.bytes
-    return a.workspace.label.localeCompare(b.workspace.label)
-  })
 }
 
 export function CleanupView({
@@ -567,48 +160,10 @@ export function CleanupView({
     [progress, sourceTotals],
   )
 
-  const categories = useMemo<CleanupCategorySummary[]>(() => {
-    const seed: Record<CleanupCategoryKey, CleanupCategorySummary> = {
-      large: {
-        key: 'large',
-        title: 'Large chats',
-        description: 'Sessions with unusually large context or logs',
-        bytes: 0,
-        count: 0,
-        action: 'Recommended',
-        icon: MessageSquare,
-        accent: 'text-emerald-300 bg-emerald-400/13 ring-emerald-400/24',
-      },
-      inactive: {
-        key: 'inactive',
-        title: '90 days inactive',
-        description: 'Sessions not opened in over 90 days',
-        bytes: 0,
-        count: 0,
-        action: 'Review',
-        icon: CalendarDays,
-        accent: 'text-blue-300 bg-blue-400/13 ring-blue-400/24',
-      },
-      test: {
-        key: 'test',
-        title: 'Test chats',
-        description: 'Short 1-2 message sessions and throwaway prompts',
-        bytes: 0,
-        count: 0,
-        action: 'Safe',
-        icon: FlaskConical,
-        accent: 'text-violet-300 bg-violet-400/13 ring-violet-400/24',
-      },
-    }
-
-    for (const candidate of visibleCleanup) {
-      const category = cleanupCategoryForCandidate(candidate)
-      seed[category].bytes += candidate.sizeBytes
-      seed[category].count += 1
-    }
-
-    return [seed.large, seed.inactive, seed.test]
-  }, [visibleCleanup])
+  const categories = useMemo<CleanupCategorySummary[]>(
+    () => buildCleanupCategorySummaries(visibleCleanup),
+    [visibleCleanup],
+  )
 
   const totalBytes = useMemo(
     () => visibleCleanup.reduce((total, item) => total + item.sizeBytes, 0),
@@ -792,7 +347,7 @@ export function CleanupView({
 
   const moveSelectedToTrash = async () => {
     if (selected.length === 0 || cleaning) return
-    playCleanupTone('press')
+    playCleanupSystemSound()
     setCleaning(true)
     setCleaned(false)
     setCleaningIds(selected)
@@ -809,7 +364,7 @@ export function CleanupView({
         setCleaningIds([])
         setCleaning(false)
         setCleaned(true)
-        playCleanupTone('complete')
+        playCleanupSystemSound()
         window.setTimeout(() => setCleaned(false), 1500)
       }, 520)
     } catch (error) {

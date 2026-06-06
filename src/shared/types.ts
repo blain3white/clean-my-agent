@@ -217,4 +217,5 @@ export type CleanMyAgentApi = {
   getSettings: () => Promise<AppSettings>
   updateSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>
   openPath: (path: string) => Promise<void>
+  playSystemSound: () => Promise<void>
 }
