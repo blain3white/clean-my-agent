@@ -822,6 +822,7 @@ export function CleanupView({
       sessionById={sessionById}
       selected={selected}
       cleaning={cleaning}
+      cleaned={cleaned}
       cleaningIds={cleaningIds}
       onStart={() => void beginScan()}
       onCancel={cancelScan}
@@ -846,6 +847,7 @@ function CleanupScanShell({
   sessionById,
   selected,
   cleaning,
+  cleaned,
   cleaningIds,
   onStart,
   onCancel,
@@ -866,6 +868,7 @@ function CleanupScanShell({
   sessionById: Map<string, SessionRecord>
   selected: string[]
   cleaning: boolean
+  cleaned: boolean
   cleaningIds: string[]
   onStart: () => void
   onCancel: () => void
@@ -1064,6 +1067,7 @@ function CleanupScanShell({
                 sessionById={sessionById}
                 selected={selected}
                 cleaning={cleaning}
+                cleaned={cleaned}
                 cleaningIds={cleaningIds}
                 onClean={onClean}
                 onScanAgain={onScanAgain}
@@ -1160,6 +1164,7 @@ function CleanupCompleteBody({
   sessionById,
   selected,
   cleaning,
+  cleaned,
   cleaningIds,
   onClean,
   onScanAgain,
@@ -1172,6 +1177,7 @@ function CleanupCompleteBody({
   sessionById: Map<string, SessionRecord>
   selected: string[]
   cleaning: boolean
+  cleaned: boolean
   cleaningIds: string[]
   onClean: () => void
   onScanAgain: () => void
@@ -1239,19 +1245,57 @@ function CleanupCompleteBody({
         </div>
       </div>
       <div className="cleanup-result-actions">
-        <div className="cleanup-result-selection">
-          <ShieldCheck className="size-4 text-emerald-300" />
-          <span>
-            {selectedCount} selected / {formatBytes(selectedBytes)}
-          </span>
+        <div className={`cleanup-result-selection ${cleaned ? 'is-cleaned' : ''}`}>
+          <AnimatePresence mode="wait">
+            <motion.span
+              key={cleaned ? 'cleaned' : 'selected'}
+              className="cleanup-result-selection-inner"
+              initial={{ opacity: 0, y: 6, filter: 'blur(4px)' }}
+              animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+              exit={{ opacity: 0, y: -6, filter: 'blur(4px)' }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+            >
+              {cleaned ? (
+                <>
+                  <CheckCircle2 className="size-4 text-emerald-300" />
+                  <span>Moved to Trash. Backup retained.</span>
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="size-4 text-emerald-300" />
+                  <span>
+                    {selectedCount} selected / {formatBytes(selectedBytes)}
+                  </span>
+                </>
+              )}
+            </motion.span>
+          </AnimatePresence>
         </div>
         <Button
           onClick={onClean}
-          disabled={selectedCount === 0 || cleaning}
-          className="cleanup-primary-action h-10 rounded-lg bg-emerald-400 text-[13px] font-semibold text-emerald-950 shadow-[0_18px_38px_rgb(52_211_153_/_26%)] hover:bg-emerald-300 disabled:pointer-events-none disabled:brightness-75 disabled:saturate-50"
+          disabled={selectedCount === 0 && !cleaned}
+          aria-disabled={cleaning || (selectedCount === 0 && !cleaned)}
+          className={`cleanup-primary-action cleanup-clean-button h-10 rounded-lg bg-emerald-400 text-[13px] font-semibold text-emerald-950 shadow-[0_18px_38px_rgb(52_211_153_/_26%)] hover:bg-emerald-300 disabled:pointer-events-none disabled:brightness-75 disabled:saturate-50 ${
+            cleaning ? 'is-cleaning' : ''
+          } ${cleaned ? 'is-cleaned' : ''}`}
         >
-          <Sparkles className="size-4" />
-          Clean
+          {cleaned && (
+            <span className="cleanup-clean-button-burst" aria-hidden>
+              {Array.from({ length: 8 }).map((_, index) => (
+                <span key={index} />
+              ))}
+            </span>
+          )}
+          <span className="cleanup-clean-button-content">
+            {cleaning ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : cleaned ? (
+              <CheckCircle2 className="size-4" />
+            ) : (
+              <Sparkles className="size-4" />
+            )}
+            {cleaning ? 'Cleaning...' : cleaned ? 'Cleaned' : 'Clean'}
+          </span>
         </Button>
         <Button
           variant="outline"

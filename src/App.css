@@ -1439,6 +1439,18 @@ textarea,
   color: rgb(255 255 255 / 48%);
 }
 
+.cleanup-result-selection.is-cleaned {
+  color: #5ff0b4;
+}
+
+.cleanup-result-selection-inner {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
 .cleanup-primary-action {
   width: 100%;
   min-width: 0;
@@ -2116,6 +2128,151 @@ textarea,
   filter: brightness(1.08);
 }
 
+.cleanup-clean-button {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.cleanup-clean-button::before,
+.cleanup-clean-button::after {
+  position: absolute;
+  content: '';
+  pointer-events: none;
+}
+
+.cleanup-clean-button::before {
+  inset: -35% -24%;
+  z-index: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 8%,
+    rgb(255 255 255 / 0%) 32%,
+    rgb(255 255 255 / 52%) 48%,
+    rgb(167 243 208 / 42%) 56%,
+    transparent 74%
+  );
+  opacity: 0;
+  transform: translateX(-95%) skewX(-14deg);
+}
+
+.cleanup-clean-button::after {
+  inset: 6px;
+  z-index: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at 50% 50%, rgb(255 255 255 / 26%), transparent 34%),
+    radial-gradient(circle at 50% 50%, rgb(16 185 129 / 20%), transparent 64%);
+  opacity: 0;
+  transform: scale(1.24);
+}
+
+.cleanup-clean-button-content {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.cleanup-clean-button.is-cleaning {
+  pointer-events: none;
+  box-shadow:
+    0 18px 42px rgb(16 185 129 / 36%),
+    0 0 0 1px rgb(255 255 255 / 18%) inset;
+  animation: cleanup-clean-button-breathe 980ms ease-in-out infinite;
+}
+
+.cleanup-clean-button.is-cleaning::before {
+  opacity: 1;
+  animation: cleanup-clean-button-sweep 860ms ease-in-out infinite;
+}
+
+.cleanup-clean-button.is-cleaning::after {
+  animation: cleanup-clean-button-vacuum 920ms ease-out infinite;
+}
+
+.cleanup-clean-button.is-cleaned {
+  color: rgb(5 42 31 / 96%);
+  background: #69efb4;
+  box-shadow:
+    0 20px 48px rgb(52 211 153 / 42%),
+    0 0 0 1px rgb(255 255 255 / 32%) inset;
+  animation: cleanup-clean-button-complete 640ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.cleanup-clean-button.is-cleaned::before {
+  opacity: 1;
+  animation: cleanup-clean-button-sweep 620ms ease-out 1;
+}
+
+.cleanup-clean-button-burst {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.cleanup-clean-button-burst span {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: #9afbd1;
+  box-shadow: 0 0 12px rgb(94 234 212 / 76%);
+  transform: translate(-50%, -50%) scale(0);
+  animation: cleanup-clean-particle 680ms ease-out both;
+}
+
+.cleanup-clean-button-burst span:nth-child(1) {
+  --cleanup-particle-x: -156px;
+  --cleanup-particle-y: -18px;
+}
+
+.cleanup-clean-button-burst span:nth-child(2) {
+  --cleanup-particle-x: -112px;
+  --cleanup-particle-y: 28px;
+  animation-delay: 40ms;
+}
+
+.cleanup-clean-button-burst span:nth-child(3) {
+  --cleanup-particle-x: -38px;
+  --cleanup-particle-y: -42px;
+  animation-delay: 20ms;
+}
+
+.cleanup-clean-button-burst span:nth-child(4) {
+  --cleanup-particle-x: 46px;
+  --cleanup-particle-y: -36px;
+  animation-delay: 60ms;
+}
+
+.cleanup-clean-button-burst span:nth-child(5) {
+  --cleanup-particle-x: 126px;
+  --cleanup-particle-y: -24px;
+  animation-delay: 30ms;
+}
+
+.cleanup-clean-button-burst span:nth-child(6) {
+  --cleanup-particle-x: 152px;
+  --cleanup-particle-y: 24px;
+  animation-delay: 70ms;
+}
+
+.cleanup-clean-button-burst span:nth-child(7) {
+  --cleanup-particle-x: 34px;
+  --cleanup-particle-y: 42px;
+  animation-delay: 90ms;
+}
+
+.cleanup-clean-button-burst span:nth-child(8) {
+  --cleanup-particle-x: -64px;
+  --cleanup-particle-y: 38px;
+  animation-delay: 50ms;
+}
+
 .cleanup-success-pop {
   animation: cleanup-success-pop 560ms cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -2177,6 +2334,82 @@ textarea,
 
   to {
     background-position: -120% 0;
+  }
+}
+
+@keyframes cleanup-clean-button-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+
+  50% {
+    transform: scale(0.985);
+    filter: brightness(1.08);
+  }
+}
+
+@keyframes cleanup-clean-button-sweep {
+  from {
+    transform: translateX(-95%) skewX(-14deg);
+  }
+
+  to {
+    transform: translateX(95%) skewX(-14deg);
+  }
+}
+
+@keyframes cleanup-clean-button-vacuum {
+  0% {
+    opacity: 0.36;
+    transform: scale(1.24);
+  }
+
+  70% {
+    opacity: 0.12;
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(0.82);
+  }
+}
+
+@keyframes cleanup-clean-button-complete {
+  0% {
+    transform: scale(0.96);
+    filter: brightness(1.1);
+  }
+
+  52% {
+    transform: scale(1.035);
+    filter: brightness(1.18);
+  }
+
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
+@keyframes cleanup-clean-particle {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.2);
+  }
+
+  38% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(
+        calc(-50% + var(--cleanup-particle-x)),
+        calc(-50% + var(--cleanup-particle-y))
+      )
+      scale(0.05);
   }
 }
 
