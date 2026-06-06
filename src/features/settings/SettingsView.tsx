@@ -17,7 +17,9 @@ import {
 import { AgentGlyph } from '@/components/agent-glyph'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { agentLabel, formatBytes, formatRelative } from '@/lib/format'
+import { agentLabel, formatBytes } from '@/lib/format'
+import { useI18n } from '@/lib/i18n-context'
+import type { TranslationKey } from '@/lib/i18n'
 import { agentSources, type AgentSource, type DashboardSnapshot } from '@/shared/types'
 
 type SettingsViewProps = {
@@ -60,13 +62,13 @@ const initialToggles: Record<ToggleKey, boolean> = {
   checkUpdates: true,
 }
 
-function latestScanLabel(snapshot: DashboardSnapshot): string {
+function latestScanValue(snapshot: DashboardSnapshot): string | undefined {
   const latest = snapshot.agents
     .map((agent) => agent.lastScannedAt)
     .filter((value): value is string => Boolean(value))
     .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0]
 
-  return formatRelative(latest)
+  return latest
 }
 
 function SettingsSection({ title, children }: { title: string; children: ReactNode }) {
@@ -153,8 +155,15 @@ function ActionChevron() {
   return <ChevronRight className="size-4 text-white/42 transition group-hover:text-white/62" />
 }
 
-function ProviderStatus({ detected, enabled }: { detected: boolean; enabled: boolean }) {
-  const label = !enabled ? 'Disabled' : detected ? 'Detected' : 'Not found'
+function ProviderStatus({
+  detected,
+  enabled,
+  label,
+}: {
+  detected: boolean
+  enabled: boolean
+  label: string
+}) {
   const color = !enabled ? 'bg-white/38' : detected ? 'bg-emerald-300' : 'bg-amber-300'
 
   return (
@@ -171,10 +180,14 @@ export function SettingsView({
   onMockDataChange,
   onRescan,
 }: SettingsViewProps) {
+  const { formatRelative, t } = useI18n()
   const [providers, setProviders] = useState(initialProviderState)
   const [toggles, setToggles] = useState(initialToggles)
   const [volume, setVolume] = useState(35)
-  const scanLabel = useMemo(() => latestScanLabel(snapshot), [snapshot])
+  const scanLabel = useMemo(
+    () => formatRelative(latestScanValue(snapshot)),
+    [formatRelative, snapshot],
+  )
   const agentBySource = useMemo(
     () => new Map(snapshot.agents.map((agent) => [agent.source, agent])),
     [snapshot.agents],
@@ -188,9 +201,19 @@ export function SettingsView({
     setToggles((current) => ({ ...current, [key]: enabled }))
   }
 
+  const providerStatusLabel = (detected: boolean, enabled: boolean) => {
+    if (!enabled) return t('settings.providerDisabled')
+    return detected ? t('settings.providerDetected') : t('settings.providerNotFound')
+  }
+
+  const providerToggleLabel = (source: AgentSource) =>
+    t('settings.toggleProvider', { provider: agentLabel[source] })
+
+  const toggleLabel = (key: TranslationKey) => t(key)
+
   return (
     <div className="mx-auto w-full max-w-[900px] space-y-5 pb-8">
-      <SettingsSection title="Providers">
+      <SettingsSection title={t('settings.providers')}>
         <SettingsPanel>
           {agentSources.map((source) => {
             const agent = agentBySource.get(source)
@@ -208,25 +231,37 @@ export function SettingsView({
                     {agentLabel[source]}
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-white/50">
-                    <span>{agent?.sessionCount ?? 0} sessions</span>
+                    <span>
+                      {t('settings.providerSessionCount', {
+                        count: agent?.sessionCount ?? 0,
+                      })}
+                    </span>
                     <span className="text-white/32">•</span>
                     <span>{formatBytes(agent?.sizeBytes ?? 0)}</span>
                   </div>
                 </div>
-                <ProviderStatus detected={detected} enabled={enabled} />
+                <ProviderStatus
+                  detected={detected}
+                  enabled={enabled}
+                  label={providerStatusLabel(detected, enabled)}
+                />
                 <SwitchControl
                   checked={enabled}
                   onCheckedChange={(checked) => setProvider(source, checked)}
-                  label={`Toggle ${agentLabel[source]} provider`}
+                  label={providerToggleLabel(source)}
                 />
               </div>
             )
           })}
-          <SettingsRow icon={Plus} title="Add custom provider" trailing={<ActionChevron />} />
+          <SettingsRow
+            icon={Plus}
+            title={t('settings.addCustomProvider')}
+            trailing={<ActionChevron />}
+          />
           <SettingsRow
             icon={RefreshCcw}
-            title="Rescan providers"
-            description="Search for new or changed providers"
+            title={t('settings.rescanProviders')}
+            description={t('settings.rescanProvidersDescription')}
             trailing={
               <Button
                 variant="ghost"
@@ -234,42 +269,42 @@ export function SettingsView({
                 onClick={() => void onRescan()}
                 className="text-white/58 hover:bg-white/8 hover:text-white"
               >
-                Scan
+                {t('settings.scan')}
               </Button>
             }
           />
         </SettingsPanel>
       </SettingsSection>
 
-      <SettingsSection title="Scan">
+      <SettingsSection title={t('settings.scanSection')}>
         <SettingsPanel>
           <SettingsRow
             icon={Play}
-            title="Scan on launch"
-            description="Automatically scan providers when Clean My Agent starts"
+            title={t('settings.scanOnLaunch')}
+            description={t('settings.scanOnLaunchDescription')}
             trailing={
               <SwitchControl
                 checked={toggles.scanOnLaunch}
                 onCheckedChange={(checked) => setToggle('scanOnLaunch', checked)}
-                label="Toggle scan on launch"
+                label={toggleLabel('settings.toggleScanOnLaunch')}
               />
             }
           />
           <SettingsRow
             icon={RefreshCcw}
-            title="Background scan"
-            description="Keep scanning in the background for changes"
+            title={t('settings.backgroundScan')}
+            description={t('settings.backgroundScanDescription')}
             trailing={
               <SwitchControl
                 checked={toggles.backgroundScan}
                 onCheckedChange={(checked) => setToggle('backgroundScan', checked)}
-                label="Toggle background scan"
+                label={toggleLabel('settings.toggleBackgroundScan')}
               />
             }
           />
           <SettingsRow
             icon={Clock3}
-            title="Last scanned"
+            title={t('settings.lastScanned')}
             trailing={
               <div className="flex items-center gap-3">
                 <span className="text-sm text-white/58">{scanLabel}</span>
@@ -279,7 +314,7 @@ export function SettingsView({
                   onClick={() => void onRescan()}
                   className="border-white/10 bg-white/[0.045] text-white/72 hover:bg-white/[0.085] hover:text-white"
                 >
-                  Scan now
+                  {t('settings.scanNow')}
                 </Button>
               </div>
             }
@@ -287,68 +322,68 @@ export function SettingsView({
         </SettingsPanel>
       </SettingsSection>
 
-      <SettingsSection title="Cleanup & Safety">
+      <SettingsSection title={t('settings.cleanupSafety')}>
         <SettingsPanel>
           <SettingsRow
             icon={Trash2}
-            title="Move cleaned sessions to App Trash"
-            description="Keep cleanup recoverable instead of deleting files permanently"
+            title={t('settings.moveCleanedToTrash')}
+            description={t('settings.moveCleanedToTrashDescription')}
             trailing={
               <SwitchControl
                 checked={toggles.moveToTrash}
                 onCheckedChange={(checked) => setToggle('moveToTrash', checked)}
-                label="Toggle app trash cleanup"
+                label={toggleLabel('settings.toggleMoveToTrash')}
               />
             }
           />
           <SettingsRow
             icon={ShieldCheck}
-            title="Confirm before cleanup"
-            description="Review selected candidates before moving anything"
+            title={t('settings.confirmBeforeCleanup')}
+            description={t('settings.confirmBeforeCleanupDescription')}
             trailing={
               <SwitchControl
                 checked={toggles.confirmCleanup}
                 onCheckedChange={(checked) => setToggle('confirmCleanup', checked)}
-                label="Toggle cleanup confirmation"
+                label={toggleLabel('settings.toggleCleanupConfirmation')}
               />
             }
           />
           <SettingsRow
             icon={Clock3}
-            title="Protect recent sessions"
-            description="Recent sessions are never suggested for cleanup"
-            trailing={<ValueButton>7 days</ValueButton>}
+            title={t('settings.protectRecentSessions')}
+            description={t('settings.protectRecentSessionsDescription')}
+            trailing={<ValueButton>{t('settings.sevenDays')}</ValueButton>}
           />
           <SettingsRow
             icon={Folder}
-            title="Excluded folders"
-            description="Manage custom scan exclusions"
+            title={t('settings.excludedFolders')}
+            description={t('settings.excludedFoldersDescription')}
             trailing={<ActionChevron />}
           />
         </SettingsPanel>
       </SettingsSection>
 
-      <SettingsSection title="Sounds">
+      <SettingsSection title={t('settings.sounds')}>
         <SettingsPanel>
           <SettingsRow
             icon={Volume2}
-            title="Sound effects"
+            title={t('settings.soundEffects')}
             trailing={
               <SwitchControl
                 checked={toggles.soundEffects}
                 onCheckedChange={(checked) => setToggle('soundEffects', checked)}
-                label="Toggle sound effects"
+                label={toggleLabel('settings.toggleSoundEffects')}
               />
             }
           />
           <SettingsRow
             icon={Volume2}
-            title="Volume"
+            title={t('settings.volume')}
             trailing={<span className="w-11 text-right text-sm text-white/58">{volume}%</span>}
           >
             <div className="mt-3 flex max-w-[260px] items-center gap-3">
               <input
-                aria-label="Sound effects volume"
+                aria-label={t('settings.soundEffectsVolume')}
                 type="range"
                 min="0"
                 max="100"
@@ -359,86 +394,86 @@ export function SettingsView({
             </div>
           </SettingsRow>
           <SettingsRow
-            title="Cleanup complete sound"
+            title={t('settings.cleanupCompleteSound')}
             trailing={
               <SwitchControl
                 checked={toggles.cleanupSound}
                 onCheckedChange={(checked) => setToggle('cleanupSound', checked)}
-                label="Toggle cleanup complete sound"
+                label={toggleLabel('settings.toggleCleanupCompleteSound')}
               />
             }
           />
           <SettingsRow
-            title="Scan complete sound"
+            title={t('settings.scanCompleteSound')}
             trailing={
               <SwitchControl
                 checked={toggles.scanSound}
                 onCheckedChange={(checked) => setToggle('scanSound', checked)}
-                label="Toggle scan complete sound"
+                label={toggleLabel('settings.toggleScanCompleteSound')}
               />
             }
           />
           <SettingsRow
-            title="Error warning sound"
+            title={t('settings.errorWarningSound')}
             trailing={
               <SwitchControl
                 checked={toggles.errorSound}
                 onCheckedChange={(checked) => setToggle('errorSound', checked)}
-                label="Toggle error warning sound"
+                label={toggleLabel('settings.toggleErrorWarningSound')}
               />
             }
           />
           <SettingsRow
             icon={Bell}
-            title="Preview sound"
+            title={t('settings.previewSound')}
             trailing={
               <Button
                 variant="outline"
                 size="sm"
                 className="border-white/10 bg-white/[0.045] text-white/72 hover:bg-white/[0.085] hover:text-white"
               >
-                Play
+                {t('settings.play')}
               </Button>
             }
           />
         </SettingsPanel>
       </SettingsSection>
 
-      <SettingsSection title="App">
+      <SettingsSection title={t('settings.app')}>
         <SettingsPanel>
           <SettingsRow
             icon={Palette}
-            title="Appearance"
-            trailing={<ValueButton>System</ValueButton>}
+            title={t('settings.appearance')}
+            trailing={<ValueButton>{t('settings.appearanceSystem')}</ValueButton>}
           />
           <SettingsRow
-            title="Launch at login"
+            title={t('settings.launchAtLogin')}
             trailing={
               <SwitchControl
                 checked={toggles.launchAtLogin}
                 onCheckedChange={(checked) => setToggle('launchAtLogin', checked)}
-                label="Toggle launch at login"
+                label={toggleLabel('settings.toggleLaunchAtLogin')}
               />
             }
           />
           <SettingsRow
-            title="Check for updates"
+            title={t('settings.checkForUpdates')}
             trailing={
               <SwitchControl
                 checked={toggles.checkUpdates}
                 onCheckedChange={(checked) => setToggle('checkUpdates', checked)}
-                label="Toggle update checks"
+                label={toggleLabel('settings.toggleUpdateChecks')}
               />
             }
           />
           <SettingsRow
-            title="Show demo data"
-            description="Use curated values for visual review"
+            title={t('settings.showDemoData')}
+            description={t('settings.showDemoDataDescription')}
             trailing={
               <SwitchControl
                 checked={mockDataEnabled}
                 onCheckedChange={(checked) => void onMockDataChange(checked)}
-                label="Toggle demo data"
+                label={t('settings.toggleDemoData')}
               />
             }
           />
