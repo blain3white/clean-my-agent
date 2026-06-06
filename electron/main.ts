@@ -118,7 +118,7 @@ function registerIpc(): void {
     app.setLoginItemSettings({ openAtLogin: enabled })
     return app.getLoginItemSettings().openAtLogin
   })
-  ipcMain.handle('app:checkForUpdates', () => service.checkForUpdates())
+  ipcMain.handle('app:checkForUpdates', () => updateService.checkForUpdates())
   ipcMain.handle('app:downloadLatestUpdate', () => updateService.downloadLatestUpdate())
 }
 

@@ -242,15 +242,19 @@ export function useDashboard(): DashboardState {
     setCheckingForUpdates(true)
     try {
       const result = await window.cleanMyAgent.checkForUpdates()
-      if (result.updateAvailable) {
+      if (result.available) {
         toast.success(
           t('toast.updateAvailable', {
-            version: result.latestVersion ?? result.currentVersion,
+            version: result.latestVersion,
           }),
         )
         return
       }
-      toast.success(t('toast.noUpdatesAvailable'))
+      toast.success(
+        t('toast.noUpdateAvailable', {
+          version: result.currentVersion,
+        }),
+      )
     } catch (error) {
       console.error(error)
       toast.error(t('toast.updateCheckError'))
