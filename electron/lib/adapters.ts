@@ -12,6 +12,7 @@ import type {
   UniversalRelayDocument,
   UniversalRelayMessage,
 } from '../../src/shared/types'
+import { agentSources } from '../../src/shared/types'
 import { calculateUsageModelCost } from '../../src/shared/usage-pricing'
 import {
   asString,
@@ -101,7 +102,28 @@ const definitions: AgentDefinition[] = [
     patterns: ['**/*.json', '**/*.jsonl', '**/*.db', '**/*.sqlite', '**/*.md', '**/*.log'],
     note: 'Scans OpenCode data roots using a generic session parser.',
   },
+  {
+    source: 'custom',
+    name: 'Custom',
+    roots: [],
+    patterns: ['**/*.json', '**/*.jsonl', '**/*.db', '**/*.sqlite', '**/*.md', '**/*.log'],
+    note: 'Scans user-selected custom session folders with the generic parser.',
+  },
 ]
+
+function normalizePathForCompare(value: string): string {
+  return path.resolve(expandHome(value)).replace(/[\\/]+$/, '')
+}
+
+function isInsidePath(filePath: string, parentPath: string): boolean {
+  const file = normalizePathForCompare(filePath)
+  const parent = normalizePathForCompare(parentPath)
+  return file === parent || file.startsWith(`${parent}${path.sep}`)
+}
+
+export function enabledProviderSources(settings: AppSettings): AgentSource[] {
+  return agentSources.filter((source) => settings.enabledProviders[source] !== false)
+}
 
 function textFromContent(value: unknown): string {
   if (typeof value === 'string') return value
@@ -628,7 +650,7 @@ export class AgentAdapter {
 
   async recentCandidates(settings: AppSettings, limit: number): Promise<SessionFileCandidate[]> {
     const roots = await this.readableRoots(settings)
-    const candidates = await this.fileCandidates(roots)
+    const candidates = await this.fileCandidates(roots, settings.excludedFolders)
     return candidates.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, limit)
   }
 
@@ -637,7 +659,7 @@ export class AgentAdapter {
   ): Promise<{ state: AgentInstallState; sessions: SessionRecord[] }> {
     const roots = this.roots(settings)
     const readableRoots = await this.readableRoots(settings)
-    const files = await this.fileCandidates(readableRoots)
+    const files = await this.fileCandidates(readableRoots, settings.excludedFolders)
 
     const sessions: SessionRecord[] = []
     for (const candidate of files) {
@@ -715,18 +737,23 @@ export class AgentAdapter {
     return readableRoots
   }
 
-  private async fileCandidates(roots: string[]): Promise<SessionFileCandidate[]> {
+  private async fileCandidates(
+    roots: string[],
+    excludedFolders: string[] = [],
+  ): Promise<SessionFileCandidate[]> {
     const filesByRoot = await Promise.all(
       roots.map(async (root) => ({
         root,
         files: await listFiles(root, this.definition.patterns),
       })),
     )
+    const exclusions = excludedFolders.map(normalizePathForCompare)
 
     const candidates: SessionFileCandidate[] = []
     for (const { root, files } of filesByRoot) {
       for (const filePath of files) {
         try {
+          if (exclusions.some((excluded) => isInsidePath(filePath, excluded))) continue
           const info = await stat(filePath)
           if (info.size === 0) continue
           if (info.size > 250_000_000) continue

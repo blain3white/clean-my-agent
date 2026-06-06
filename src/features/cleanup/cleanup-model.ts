@@ -55,6 +55,7 @@ export const cleanupSourceWeights: Record<AgentSource, { start: number; end: num
   cursor: { start: 34, end: 72 },
   gemini: { start: 52, end: 88 },
   opencode: { start: 72, end: 100 },
+  custom: { start: 82, end: 100 },
 }
 
 export const cleanupRiskRank: Record<CleanupCandidate['risk'], number> = {

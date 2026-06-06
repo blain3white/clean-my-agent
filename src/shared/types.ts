@@ -1,4 +1,4 @@
-export const agentSources = ['codex', 'claude', 'cursor', 'gemini', 'opencode'] as const
+export const agentSources = ['codex', 'claude', 'cursor', 'gemini', 'opencode', 'custom'] as const
 
 export type AgentSource = (typeof agentSources)[number]
 
@@ -135,6 +135,7 @@ export type UsagePoint = {
   cursor: number
   gemini: number
   opencode: number
+  custom: number
   total: number
 }
 
@@ -204,8 +205,27 @@ export type AppSettings = {
   mockDataEnabled: boolean
   language: AppLanguage
   launchAtLogin: boolean
+  enabledProviders: Partial<Record<AgentSource, boolean>>
+  scanOnLaunch: boolean
+  backgroundScan: boolean
+  confirmBeforeCleanup: boolean
+  excludedFolders: string[]
+  soundEffects: boolean
+  cleanupSound: boolean
+  scanSound: boolean
+  errorSound: boolean
+  soundVolume: number
+  checkForUpdates: boolean
   defaultRelayMode: 'full-context' | 'fit-to-window' | 'manual-select'
   exportDirectory: string
+}
+
+export type UpdateCheckResult = {
+  currentVersion: string
+  latestVersion?: string
+  updateAvailable: boolean
+  releaseUrl?: string
+  checkedAt: string
 }
 
 export type ThemePreference = 'system' | 'light' | 'dark'
@@ -224,6 +244,8 @@ export type CleanMyAgentApi = {
   exportUniversalRelay: (sessionId: string) => Promise<string>
   getSettings: () => Promise<AppSettings>
   updateSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>
+  chooseFolders: () => Promise<string[]>
+  checkForUpdates: () => Promise<UpdateCheckResult>
   openPath: (path: string) => Promise<void>
   playSystemSound: () => Promise<void>
   getLaunchAtLogin: () => Promise<boolean>

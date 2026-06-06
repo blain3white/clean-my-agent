@@ -18,6 +18,8 @@ const api: CleanMyAgentApi = {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   updateSettings: (settings: Partial<AppSettings>) =>
     ipcRenderer.invoke('settings:update', settings),
+  chooseFolders: () => ipcRenderer.invoke('settings:chooseFolders'),
+  checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
   openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),
   playSystemSound: () => ipcRenderer.invoke('shell:beep'),
   getLaunchAtLogin: () => ipcRenderer.invoke('app:getLaunchAtLogin'),

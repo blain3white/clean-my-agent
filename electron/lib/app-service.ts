@@ -11,10 +11,11 @@ import type {
   SessionRecord,
   StorageSlice,
   TrashRecord,
+  UpdateCheckResult,
   UsagePoint,
 } from '../../src/shared/types'
-import { appLanguages, defaultLanguage } from '../../src/shared/types'
-import { adapters, adapterFor } from './adapters'
+import { agentSources, appLanguages, defaultLanguage } from '../../src/shared/types'
+import { adapters, adapterFor, enabledProviderSources } from './adapters'
 import { LocalDatabase } from './database'
 import {
   compressFileBrotli,
@@ -34,12 +35,14 @@ import {
 const oneDayMs = 24 * 60 * 60 * 1000
 const usageHistoryDays = 365
 const scanSchemaVersion = 3
+const currentAppVersion = process.env.npm_package_version ?? '0.1.1'
 const agentLabels: Record<AgentSource, string> = {
   codex: 'Codex',
   claude: 'Claude Code',
   cursor: 'Cursor',
   gemini: 'Gemini',
   opencode: 'OpenCode',
+  custom: 'Custom',
 }
 
 function formatDateKey(date: Date): string {
@@ -48,6 +51,19 @@ function formatDateKey(date: Date): string {
 
 function bytesFromRecords(records: Array<{ sizeBytes: number }>): number {
   return records.reduce((total, record) => total + record.sizeBytes, 0)
+}
+
+function usageSeed(date: string): UsagePoint {
+  return {
+    date,
+    codex: 0,
+    claude: 0,
+    cursor: 0,
+    gemini: 0,
+    opencode: 0,
+    custom: 0,
+    total: 0,
+  }
 }
 
 function archiveBytes(records: ArchiveRecord[]): number {
@@ -115,6 +131,7 @@ export class AppService {
   private readonly db: LocalDatabase
   private readonly userDataPath: string
   private readonly openPathHandler: (targetPath: string) => Promise<unknown>
+  private launchScanCompleted = false
   private settings?: AppSettings
 
   constructor(options: {
@@ -134,34 +151,46 @@ export class AppService {
   }
 
   async getSnapshot(forceRescan = false): Promise<DashboardSnapshot> {
-    if (forceRescan || this.shouldRescanCachedSessions()) {
+    const settings = this.requireSettings()
+    const shouldRunLaunchScan = settings.scanOnLaunch && !this.launchScanCompleted
+    if (forceRescan || shouldRunLaunchScan || this.shouldRescanCachedSessions()) {
+      this.launchScanCompleted = true
       await this.rescan()
     }
 
     const archives = this.db.getArchives()
-    const sessions = this.mergeBackupStatus([
+    const allSessions = this.mergeBackupStatus([
       ...this.db.getSessions(),
       ...this.sessionsFromArchives(archives),
     ])
+    const enabledSources = new Set(enabledProviderSources(settings))
+    const sessions = allSessions.filter((session) => enabledSources.has(session.source))
     const backups = this.db.getBackups()
     const trash = this.db.getTrash()
     const liveSessions = sessions.filter((session) => session.storageState === 'live')
     const cleanup = this.buildCleanupCandidates(liveSessions, backups)
+    const lastScannedAt = this.db.getSetting<string>('lastScannedAt')
     const agents = await Promise.all(
       adapters.map(async (adapter) => {
+        const providerEnabled = enabledSources.has(adapter.source)
         const sourceSessions = sessions.filter((session) => session.source === adapter.source)
         const liveSourceSessions = sourceSessions.filter(
           (session) => session.storageState === 'live',
         )
+        const roots = adapter.roots(settings)
+        const hasConfiguredRoots = roots.length > 0
         return {
           source: adapter.source,
           name: adapter.name,
-          installed: sourceSessions.length > 0,
-          readable: sourceSessions.length > 0,
-          rootPaths: adapter.roots(this.requireSettings()),
+          installed:
+            providerEnabled &&
+            (sourceSessions.length > 0 || (adapter.source === 'custom' && hasConfiguredRoots)),
+          readable: providerEnabled && sourceSessions.length > 0,
+          rootPaths: roots,
           sessionCount: sourceSessions.length,
           sizeBytes: bytesFromRecords(liveSourceSessions),
-          lastScannedAt: new Date().toISOString(),
+          lastScannedAt: providerEnabled ? lastScannedAt : undefined,
+          note: providerEnabled ? adapter.name : 'Provider disabled in Settings.',
         }
       }),
     )
@@ -191,20 +220,29 @@ export class AppService {
 
   async rescan(): Promise<DashboardSnapshot> {
     const settings = this.requireSettings()
-    const results = await Promise.all(adapters.map((adapter) => adapter.scan(settings)))
+    const enabledSources = new Set(enabledProviderSources(settings))
+    const activeAdapters = adapters.filter((adapter) => enabledSources.has(adapter.source))
+    const results = await Promise.all(activeAdapters.map((adapter) => adapter.scan(settings)))
     const sessions = results.flatMap((result) => result.sessions)
-    this.db.replaceSessions(this.mergeBackupStatus(sessions))
+    const inactiveCachedSessions = this.db
+      .getSessions()
+      .filter((session) => !enabledSources.has(session.source))
+    this.db.replaceSessions(this.mergeBackupStatus([...inactiveCachedSessions, ...sessions]))
     this.db.setSetting('scanSchemaVersion', scanSchemaVersion)
+    this.db.setSetting('lastScannedAt', new Date().toISOString())
     return this.getSnapshot(false)
   }
 
   async refreshRecentSessions(limit = 10): Promise<DashboardSnapshot> {
     const settings = this.requireSettings()
+    const enabledSources = new Set(enabledProviderSources(settings))
     const candidateGroups = await Promise.all(
-      adapters.map(async (adapter) => ({
-        adapter,
-        candidates: await adapter.recentCandidates(settings, limit),
-      })),
+      adapters
+        .filter((adapter) => enabledSources.has(adapter.source))
+        .map(async (adapter) => ({
+          adapter,
+          candidates: await adapter.recentCandidates(settings, limit),
+        })),
     )
     const latestCandidates = candidateGroups
       .flatMap(({ adapter, candidates }) => candidates.map((candidate) => ({ adapter, candidate })))
@@ -375,8 +413,11 @@ export class AppService {
   }
 
   async scanCleanup(): Promise<CleanupCandidate[]> {
+    const enabledSources = new Set(enabledProviderSources(this.requireSettings()))
     return this.buildCleanupCandidates(
-      this.mergeBackupStatus(this.db.getSessions()),
+      this.mergeBackupStatus(this.db.getSessions()).filter((session) =>
+        enabledSources.has(session.source),
+      ),
       this.db.getBackups(),
     )
   }
@@ -454,10 +495,41 @@ export class AppService {
         ...current.scanRoots,
         ...patch.scanRoots,
       },
+      enabledProviders: {
+        ...current.enabledProviders,
+        ...patch.enabledProviders,
+      },
     })
     this.settings = next
     this.db.setSetting('settings', next)
     return next
+  }
+
+  async checkForUpdates(): Promise<UpdateCheckResult> {
+    const checkedAt = new Date().toISOString()
+    const fallback = { currentVersion: currentAppVersion, updateAvailable: false, checkedAt }
+
+    try {
+      const response = await fetch(
+        'https://api.github.com/repos/blain3white/clean-my-agent/releases/latest',
+        { headers: { Accept: 'application/vnd.github+json' } },
+      )
+      if (!response.ok) return fallback
+      const json = (await response.json()) as {
+        tag_name?: string
+        html_url?: string
+      }
+      const latestVersion = json.tag_name?.replace(/^v/i, '')
+      return {
+        currentVersion: currentAppVersion,
+        latestVersion,
+        updateAvailable: Boolean(latestVersion && latestVersion !== currentAppVersion),
+        releaseUrl: json.html_url,
+        checkedAt,
+      }
+    } catch {
+      return fallback
+    }
   }
 
   async openPath(targetPath: string): Promise<void> {
@@ -467,12 +539,25 @@ export class AppService {
   private defaultSettings(): AppSettings {
     return {
       scanRoots: {},
-      cleanupRetentionDays: 30,
+      cleanupRetentionDays: 7,
       trashRetentionDays: 14,
       autoBackup: true,
       mockDataEnabled: false,
       language: defaultLanguage,
       launchAtLogin: false,
+      enabledProviders: Object.fromEntries(
+        agentSources.map((source) => [source, true]),
+      ) as AppSettings['enabledProviders'],
+      scanOnLaunch: true,
+      backgroundScan: true,
+      confirmBeforeCleanup: true,
+      excludedFolders: [],
+      soundEffects: true,
+      cleanupSound: true,
+      scanSound: false,
+      errorSound: true,
+      soundVolume: 35,
+      checkForUpdates: true,
       defaultRelayMode: 'full-context',
       exportDirectory: path.join(this.userDataPath, 'Exports'),
     }
@@ -486,10 +571,32 @@ export class AppService {
       language: appLanguages.includes(settings?.language as AppLanguage)
         ? (settings?.language as AppLanguage)
         : defaults.language,
+      cleanupRetentionDays: Math.max(
+        0,
+        Number.isFinite(settings?.cleanupRetentionDays)
+          ? Number(settings?.cleanupRetentionDays)
+          : defaults.cleanupRetentionDays,
+      ),
       scanRoots: {
         ...defaults.scanRoots,
         ...settings?.scanRoots,
       },
+      enabledProviders: {
+        ...defaults.enabledProviders,
+        ...settings?.enabledProviders,
+      },
+      excludedFolders: Array.isArray(settings?.excludedFolders)
+        ? Array.from(new Set(settings.excludedFolders.filter((item) => item.trim())))
+        : defaults.excludedFolders,
+      soundVolume: Math.min(
+        100,
+        Math.max(
+          0,
+          Number.isFinite(settings?.soundVolume)
+            ? Number(settings?.soundVolume)
+            : defaults.soundVolume,
+        ),
+      ),
       exportDirectory: settings?.exportDirectory || defaults.exportDirectory,
     }
   }
@@ -623,15 +730,7 @@ export class AppService {
     for (let offset = usageHistoryDays - 1; offset >= 0; offset -= 1) {
       const date = new Date(Date.now() - offset * oneDayMs)
       const key = formatDateKey(date)
-      points.set(key, {
-        date: key,
-        codex: 0,
-        claude: 0,
-        cursor: 0,
-        gemini: 0,
-        opencode: 0,
-        total: 0,
-      })
+      points.set(key, usageSeed(key))
     }
 
     sessions.forEach((session) => {

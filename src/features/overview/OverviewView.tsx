@@ -91,6 +91,7 @@ const tokenBarGlowColors: Record<
   cursor: { bright: '#f8fafc', base: '#cbd5e1', deep: '#718096', glow: '#cbd5e1' },
   gemini: { bright: '#7dd3fc', base: '#38bdf8', deep: '#0e7490', glow: '#38bdf8' },
   opencode: { bright: '#93c5fd', base: '#60a5fa', deep: '#2563eb', glow: '#60a5fa' },
+  custom: { bright: '#86efac', base: '#34d399', deep: '#047857', glow: '#34d399' },
   archives: { bright: '#86efac', base: '#34d399', deep: '#047857', glow: '#34d399' },
 }
 const heatmapTimeLabels = ['00', '04', '08', '12', '16', '20', '24']

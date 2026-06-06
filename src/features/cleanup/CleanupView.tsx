@@ -53,6 +53,7 @@ import { agentLabel, formatBytes, formatRelative, riskAccent } from '@/lib/forma
 import {
   agentSources,
   type AgentSource,
+  type AppSettings,
   type CleanupCandidate,
   type DashboardSnapshot,
   type SessionRecord,
@@ -62,6 +63,7 @@ type CleanupViewProps = {
   cleanup: CleanupCandidate[]
   agents: DashboardSnapshot['agents']
   sessions: SessionRecord[]
+  settings: AppSettings
   onScanCleanup: () => Promise<CleanupCandidate[]>
   onMoveToTrash: (candidateIds: string[]) => Promise<void>
 }
@@ -104,6 +106,7 @@ export function CleanupView({
   cleanup,
   agents,
   sessions,
+  settings,
   onScanCleanup,
   onMoveToTrash,
 }: CleanupViewProps) {
@@ -347,7 +350,15 @@ export function CleanupView({
 
   const moveSelectedToTrash = async () => {
     if (selected.length === 0 || cleaning) return
-    playCleanupSystemSound()
+    if (
+      settings.confirmBeforeCleanup &&
+      !window.confirm(`Move ${selected.length} selected cleanup item(s) to app Trash?`)
+    ) {
+      return
+    }
+    if (settings.soundEffects && settings.cleanupSound) {
+      void playCleanupSystemSound(settings.soundVolume / 100)
+    }
     setCleaning(true)
     setCleaned(false)
     setCleaningIds(selected)
@@ -364,11 +375,16 @@ export function CleanupView({
         setCleaningIds([])
         setCleaning(false)
         setCleaned(true)
-        playCleanupSystemSound()
+        if (settings.soundEffects && settings.cleanupSound) {
+          void playCleanupSystemSound(settings.soundVolume / 100)
+        }
         window.setTimeout(() => setCleaned(false), 1500)
       }, 520)
     } catch (error) {
       console.error(error)
+      if (settings.soundEffects && settings.errorSound) {
+        void playCleanupSystemSound(settings.soundVolume / 100)
+      }
       setCleaningIds([])
       setCleaning(false)
     }

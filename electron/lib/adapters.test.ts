@@ -16,6 +16,17 @@ function makeSettings(scanRoot: string, source = 'codex'): AppSettings {
     mockDataEnabled: false,
     language: 'en',
     launchAtLogin: false,
+    enabledProviders: {},
+    scanOnLaunch: true,
+    backgroundScan: true,
+    confirmBeforeCleanup: true,
+    excludedFolders: [],
+    soundEffects: true,
+    cleanupSound: true,
+    scanSound: false,
+    errorSound: true,
+    soundVolume: 35,
+    checkForUpdates: true,
     defaultRelayMode: 'full-context',
     exportDirectory: '/tmp',
   }
@@ -990,5 +1001,37 @@ describe('scan state fields', () => {
     expect(state.sessionCount).toBe(3)
     expect(state.sizeBytes).toBeGreaterThan(0)
     expect(typeof state.lastScannedAt).toBe('string')
+  })
+
+  it('filters session files under excluded folders', async () => {
+    const root = await makeTmpDir('scan-exclusions')
+    const keptPath = path.join(root, 'kept.jsonl')
+    const excludedRoot = path.join(root, 'excluded')
+    const excludedPath = path.join(excludedRoot, 'ignored.jsonl')
+    await mkdir(excludedRoot, { recursive: true })
+    await writeFile(
+      keptPath,
+      JSON.stringify({
+        type: 'response_item',
+        payload: { role: 'user', content: 'Kept adapter session' },
+      }) + '\n',
+    )
+    await writeFile(
+      excludedPath,
+      JSON.stringify({
+        type: 'response_item',
+        payload: { role: 'user', content: 'Excluded adapter session' },
+      }) + '\n',
+    )
+
+    const adapter = makeAdapter('codex', [root])
+    const { sessions } = await adapter.scan({
+      ...makeSettings(root),
+      excludedFolders: [excludedRoot],
+    })
+
+    expect(sessions).toHaveLength(1)
+    expect(sessions[0].storagePath).toBe(keptPath)
+    expect(sessions[0].searchText).toContain('Kept adapter session')
   })
 })

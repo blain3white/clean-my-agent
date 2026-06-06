@@ -15,9 +15,16 @@ import {
 type DashboardState = {
   snapshot: DashboardSnapshot
   loading: boolean
+  settings: AppSettings
   mockDataEnabled: boolean
   language: AppLanguage
   launchAtLogin: boolean
+  updateSettings: (
+    patch: Partial<AppSettings>,
+    options?: { rescan?: boolean },
+  ) => Promise<AppSettings>
+  chooseFolders: () => Promise<string[]>
+  checkForUpdates: () => Promise<void>
   setMockDataEnabled: (enabled: boolean) => Promise<void>
   setLanguage: (language: AppLanguage) => Promise<void>
   setLaunchAtLogin: (enabled: boolean) => Promise<void>
@@ -38,16 +45,30 @@ const agentNames: Record<AgentSource, string> = {
   cursor: 'Cursor',
   gemini: 'Gemini',
   opencode: 'OpenCode',
+  custom: 'Custom',
 }
 
 const defaultSettings = (): AppSettings => ({
   scanRoots: {},
-  cleanupRetentionDays: 30,
+  cleanupRetentionDays: 7,
   trashRetentionDays: 14,
   autoBackup: true,
   mockDataEnabled: false,
   language: defaultLanguage,
   launchAtLogin: false,
+  enabledProviders: Object.fromEntries(
+    agentSources.map((source) => [source, true]),
+  ) as AppSettings['enabledProviders'],
+  scanOnLaunch: true,
+  backgroundScan: true,
+  confirmBeforeCleanup: true,
+  excludedFolders: [],
+  soundEffects: true,
+  cleanupSound: true,
+  scanSound: false,
+  errorSound: true,
+  soundVolume: 35,
+  checkForUpdates: true,
   defaultRelayMode: 'full-context',
   exportDirectory: '',
 })
@@ -60,6 +81,15 @@ const mergeSettings = (settings?: Partial<AppSettings>): AppSettings => ({
     ...defaultSettings().scanRoots,
     ...settings?.scanRoots,
   },
+  enabledProviders: {
+    ...defaultSettings().enabledProviders,
+    ...settings?.enabledProviders,
+  },
+  excludedFolders: Array.isArray(settings?.excludedFolders) ? settings.excludedFolders : [],
+  soundVolume: Math.min(
+    100,
+    Math.max(0, Number.isFinite(settings?.soundVolume) ? Number(settings?.soundVolume) : 35),
+  ),
 })
 
 const emptySnapshot = (): DashboardSnapshot => ({
@@ -165,8 +195,108 @@ export function useDashboard(): DashboardState {
     return () => window.clearTimeout(timer)
   }, [load])
 
+  useEffect(() => {
+    if (!settings.backgroundScan || settings.mockDataEnabled || !window.cleanMyAgent) return
+    const timer = window.setInterval(
+      () => {
+        void window.cleanMyAgent
+          ?.refreshRecentSessions()
+          .then(setSnapshot)
+          .catch((error) => {
+            console.error(error)
+            if (settings.soundEffects && settings.errorSound) {
+              void import('@/features/cleanup/cleanup-system-sound').then(
+                ({ playCleanupSystemSound }) => playCleanupSystemSound(settings.soundVolume / 100),
+              )
+            }
+          })
+      },
+      5 * 60 * 1000,
+    )
+    return () => window.clearInterval(timer)
+  }, [
+    settings.backgroundScan,
+    settings.errorSound,
+    settings.mockDataEnabled,
+    settings.soundEffects,
+    settings.soundVolume,
+  ])
+
+  useEffect(() => {
+    if (!settings.checkForUpdates || !window.cleanMyAgent) return
+    void window.cleanMyAgent.checkForUpdates().catch((error) => {
+      console.error(error)
+    })
+  }, [settings.checkForUpdates])
+
   const actions = useMemo(
     () => ({
+      updateSettings: async (
+        patch: Partial<AppSettings>,
+        options: { rescan?: boolean } = {},
+      ): Promise<AppSettings> => {
+        const optimistic = mergeSettings({
+          ...settings,
+          ...patch,
+          scanRoots: {
+            ...settings.scanRoots,
+            ...patch.scanRoots,
+          },
+          enabledProviders: {
+            ...settings.enabledProviders,
+            ...patch.enabledProviders,
+          },
+        })
+        setSettings(optimistic)
+        if (patch.mockDataEnabled !== undefined) {
+          globalThis.localStorage?.setItem(
+            'clean-my-agent.mockDataEnabled',
+            String(patch.mockDataEnabled),
+          )
+        }
+        if (patch.language) {
+          globalThis.localStorage?.setItem('clean-my-agent.language', patch.language)
+        }
+
+        try {
+          const persisted = window.cleanMyAgent
+            ? await window.cleanMyAgent.updateSettings(patch)
+            : optimistic
+          const nextSettings = mergeSettings(persisted)
+          setSettings(nextSettings)
+          if (options.rescan && !nextSettings.mockDataEnabled) await load(true)
+          return nextSettings
+        } catch (error) {
+          console.error(error)
+          toast.error(t('toast.updateSettingsError'))
+          setSettings(settings)
+          throw error
+        }
+      },
+      chooseFolders: async () => {
+        if (!window.cleanMyAgent) {
+          toast.info(t('toast.folderPickerDesktopOnly'))
+          return []
+        }
+        return window.cleanMyAgent.chooseFolders()
+      },
+      checkForUpdates: async () => {
+        if (!window.cleanMyAgent) {
+          toast.info(t('toast.updateCheckDesktopOnly'))
+          return
+        }
+        const result = await window.cleanMyAgent.checkForUpdates()
+        if (result.updateAvailable) {
+          toast.success(
+            t('toast.updateAvailable', {
+              version: result.latestVersion ?? result.currentVersion,
+            }),
+          )
+          if (result.releaseUrl) await window.cleanMyAgent.openPath(result.releaseUrl)
+          return
+        }
+        toast.success(t('toast.noUpdatesAvailable'))
+      },
       setMockDataEnabled: async (enabled: boolean) => {
         const nextSettings = mergeSettings({ ...settings, mockDataEnabled: enabled })
         setSettings(nextSettings)
@@ -246,6 +376,10 @@ export function useDashboard(): DashboardState {
       },
       rescan: async () => {
         await load(true)
+        if (!settings.mockDataEnabled && settings.soundEffects && settings.scanSound) {
+          const { playCleanupSystemSound } = await import('@/features/cleanup/cleanup-system-sound')
+          await playCleanupSystemSound(settings.soundVolume / 100)
+        }
         toast.success(settings.mockDataEnabled ? t('toast.demoRefreshed') : t('toast.agentScanned'))
       },
       refreshRecentSessions: async () => {
@@ -264,9 +398,19 @@ export function useDashboard(): DashboardState {
         try {
           const next = await window.cleanMyAgent.refreshRecentSessions()
           setSnapshot(next)
+          if (settings.soundEffects && settings.scanSound) {
+            const { playCleanupSystemSound } =
+              await import('@/features/cleanup/cleanup-system-sound')
+            await playCleanupSystemSound(settings.soundVolume / 100)
+          }
           toast.success(t('toast.recentRefreshed'))
         } catch (error) {
           console.error(error)
+          if (settings.soundEffects && settings.errorSound) {
+            const { playCleanupSystemSound } =
+              await import('@/features/cleanup/cleanup-system-sound')
+            await playCleanupSystemSound(settings.soundVolume / 100)
+          }
           toast.error(t('toast.refreshRecentError'))
         } finally {
           setLoading(false)
@@ -353,6 +497,7 @@ export function useDashboard(): DashboardState {
   return {
     snapshot,
     loading,
+    settings,
     mockDataEnabled: settings.mockDataEnabled,
     language: settings.language,
     launchAtLogin: settings.launchAtLogin,

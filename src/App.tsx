@@ -58,6 +58,7 @@ function App() {
             cleanup={dashboard.snapshot.cleanup}
             agents={dashboard.snapshot.agents}
             sessions={dashboard.snapshot.sessions}
+            settings={dashboard.settings}
             onScanCleanup={dashboard.scanCleanup}
             onMoveToTrash={dashboard.moveCleanupToTrash}
           />
@@ -91,10 +92,14 @@ function App() {
             themePreference={theme.preference}
             launchAtLogin={dashboard.launchAtLogin}
             mockDataEnabled={dashboard.mockDataEnabled}
+            settings={dashboard.settings}
             onLanguageChange={dashboard.setLanguage}
             onThemePreferenceChange={theme.setPreference}
             onLaunchAtLoginChange={dashboard.setLaunchAtLogin}
             onMockDataChange={dashboard.setMockDataEnabled}
+            onSettingsChange={dashboard.updateSettings}
+            onChooseFolders={dashboard.chooseFolders}
+            onCheckForUpdates={dashboard.checkForUpdates}
             onRescan={dashboard.rescan}
           />
         )

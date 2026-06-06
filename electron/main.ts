@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -63,6 +63,16 @@ function createWindow(): void {
   }
 }
 
+async function openTarget(targetPath: string): Promise<void> {
+  if (/^https?:\/\//i.test(targetPath)) {
+    await shell.openExternal(targetPath)
+    return
+  }
+
+  const error = await shell.openPath(targetPath)
+  if (error) throw new Error(error)
+}
+
 function registerIpc(): void {
   ipcMain.handle('app:getSnapshot', () => service.getSnapshot(false))
   ipcMain.handle('app:rescan', () => service.getSnapshot(true))
@@ -89,6 +99,14 @@ function registerIpc(): void {
   ipcMain.handle('settings:update', (_event, settings: Partial<AppSettings>) =>
     service.updateSettings(settings),
   )
+  ipcMain.handle('settings:chooseFolders', async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      properties: ['openDirectory', 'multiSelections', 'createDirectory'],
+    })
+    if (result.canceled) return []
+    return result.filePaths
+  })
+  ipcMain.handle('app:checkForUpdates', () => service.checkForUpdates())
   ipcMain.handle('shell:openPath', (_event, targetPath: string) => service.openPath(targetPath))
   ipcMain.handle('shell:beep', () => {
     shell.beep()
@@ -102,7 +120,7 @@ function registerIpc(): void {
 
 app.whenReady().then(async () => {
   nativeTheme.themeSource = 'system'
-  service = new AppService({ userDataPath: app.getPath('userData'), openPath: shell.openPath })
+  service = new AppService({ userDataPath: app.getPath('userData'), openPath: openTarget })
   await service.init()
   registerIpc()
   createWindow()

@@ -1,6 +1,13 @@
 import { dateKeyFromTime } from '@/lib/date-key'
 import { sessionDateTokenEntries, sessionTokenTotalForDates } from '@/lib/usage-sessions'
-import type { AgentSource, DashboardSnapshot, SessionRecord, UsagePoint } from '@/shared/types'
+import {
+  agentSources,
+  type AgentSource,
+  type DashboardSnapshot,
+  type SessionRecord,
+  type UsagePoint,
+} from '@/shared/types'
+import { agentLabel } from '@/lib/format'
 import { usagePageRanges, type UsagePageRange } from '@/features/usage/ranges'
 
 export type UsageTokenType = 'input' | 'output' | 'cache' | 'tools'
@@ -647,14 +654,10 @@ export function exportUsageCsv(snapshot: DashboardSnapshot, range: UsagePageRang
     ['Active Sessions', String(analytics.summary.activeSessions)],
     ['Avg Tokens Per Day', String(Math.round(analytics.summary.avgTokensPerDay))],
     [],
-    ['Date', 'Codex', 'Claude Code', 'Cursor', 'Gemini', 'OpenCode', 'Total'],
+    ['Date', ...agentSources.map((source) => agentLabel[source]), 'Total'],
     ...analytics.selectedUsage.map((point) => [
       point.date,
-      String(point.codex),
-      String(point.claude),
-      String(point.cursor),
-      String(point.gemini),
-      String(point.opencode),
+      ...agentSources.map((source) => String(point[source])),
       String(point.total),
     ]),
   ])

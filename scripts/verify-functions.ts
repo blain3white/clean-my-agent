@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { AppService } from '../electron/lib/app-service'
 import type { AgentSource } from '../src/shared/types'
 
-const sources: AgentSource[] = ['codex', 'claude', 'cursor', 'gemini', 'opencode']
+const sources: AgentSource[] = ['codex', 'claude', 'cursor', 'gemini', 'opencode', 'custom']
 
 async function writeSession(root: string, source: AgentSource, daysOld: number, name = 'session') {
   const dir = path.join(root, source)
