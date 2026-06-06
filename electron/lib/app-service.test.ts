@@ -172,6 +172,13 @@ describe('init and settings', () => {
     const service = makeService(userDataPath)
     await service.init()
 
+    expect(() => service.updateSettings(null as never)).toThrow(/settings patch must be an object/)
+    expect(() => service.updateSettings({ scanRoots: [] as never })).toThrow(
+      /scanRoots must be an object/,
+    )
+    expect(() => service.updateSettings({ scanRoots: { codex: '/tmp' } as never })).toThrow(
+      /scanRoots.codex must be an array/,
+    )
     expect(() => service.updateSettings({ exportDirectory: 'relative/path' })).toThrow(
       /exportDirectory must be an absolute local path/,
     )
@@ -181,12 +188,120 @@ describe('init and settings', () => {
     expect(() => service.updateSettings({ scanRoots: { unknown: ['/tmp'] } as never })).toThrow(
       /Unsupported scan root source/,
     )
+    expect(() => service.updateSettings({ enabledProviders: [] as never })).toThrow(
+      /enabledProviders must be an object/,
+    )
+    expect(() => service.updateSettings({ enabledProviders: { unknown: true } as never })).toThrow(
+      /Unsupported provider source/,
+    )
+    expect(() => service.updateSettings({ enabledProviders: { codex: 'yes' } as never })).toThrow(
+      /enabledProviders.codex must be a boolean/,
+    )
     expect(() => service.updateSettings({ trashRetentionDays: -1 })).toThrow(
       /trashRetentionDays must be an integer/,
+    )
+    expect(() => service.updateSettings({ cleanupRetentionDays: 1.5 })).toThrow(
+      /cleanupRetentionDays must be an integer/,
+    )
+    expect(() => service.updateSettings({ autoBackup: 'yes' as never })).toThrow(
+      /autoBackup must be a boolean/,
+    )
+    expect(() => service.updateSettings({ mockDataEnabled: 'yes' as never })).toThrow(
+      /mockDataEnabled must be a boolean/,
+    )
+    expect(() => service.updateSettings({ language: 'xx' as never })).toThrow(
+      /language is not supported/,
+    )
+    expect(() => service.updateSettings({ launchAtLogin: 'yes' as never })).toThrow(
+      /launchAtLogin must be a boolean/,
+    )
+    expect(() => service.updateSettings({ scanOnLaunch: 'yes' as never })).toThrow(
+      /scanOnLaunch must be a boolean/,
+    )
+    expect(() => service.updateSettings({ backgroundScan: 'yes' as never })).toThrow(
+      /backgroundScan must be a boolean/,
+    )
+    expect(() => service.updateSettings({ confirmBeforeCleanup: 'yes' as never })).toThrow(
+      /confirmBeforeCleanup must be a boolean/,
+    )
+    expect(() => service.updateSettings({ excludedFolders: 'nope' as never })).toThrow(
+      /excludedFolders must be an array/,
+    )
+    expect(() => service.updateSettings({ excludedFolders: ['relative/path'] })).toThrow(
+      /excludedFolders must be an absolute local path/,
+    )
+    expect(() => service.updateSettings({ soundEffects: 'yes' as never })).toThrow(
+      /soundEffects must be a boolean/,
+    )
+    expect(() => service.updateSettings({ cleanupSound: 'yes' as never })).toThrow(
+      /cleanupSound must be a boolean/,
+    )
+    expect(() => service.updateSettings({ scanSound: 'yes' as never })).toThrow(
+      /scanSound must be a boolean/,
+    )
+    expect(() => service.updateSettings({ errorSound: 'yes' as never })).toThrow(
+      /errorSound must be a boolean/,
+    )
+    expect(() => service.updateSettings({ soundVolume: 101 })).toThrow(
+      /soundVolume must be a number between 0 and 100/,
+    )
+    expect(() => service.updateSettings({ checkForUpdates: 'yes' as never })).toThrow(
+      /checkForUpdates must be a boolean/,
     )
     expect(() => service.updateSettings({ defaultRelayMode: 'unsupported' as never })).toThrow(
       /defaultRelayMode is not supported/,
     )
+  })
+
+  it('accepts every validated settings field in one patch', async () => {
+    const service = makeService(userDataPath)
+    await service.init()
+    const exportDirectory = path.join(userDataPath, 'Custom Exports')
+    const excludedFolder = path.join(fixtureRoot, 'excluded')
+    const settings = service.updateSettings({
+      scanRoots: { codex: [path.join(fixtureRoot, 'codex')] },
+      enabledProviders: { codex: false, claude: true },
+      cleanupRetentionDays: 30,
+      trashRetentionDays: 60,
+      autoBackup: false,
+      mockDataEnabled: true,
+      language: 'zh-CN',
+      launchAtLogin: true,
+      scanOnLaunch: false,
+      backgroundScan: false,
+      confirmBeforeCleanup: false,
+      excludedFolders: [excludedFolder, excludedFolder],
+      soundEffects: false,
+      cleanupSound: false,
+      scanSound: true,
+      errorSound: false,
+      soundVolume: 0,
+      checkForUpdates: false,
+      defaultRelayMode: 'manual-select',
+      exportDirectory,
+    })
+
+    expect(settings.scanRoots.codex).toEqual([path.join(fixtureRoot, 'codex')])
+    expect(settings.enabledProviders.codex).toBe(false)
+    expect(settings.enabledProviders.claude).toBe(true)
+    expect(settings.cleanupRetentionDays).toBe(30)
+    expect(settings.trashRetentionDays).toBe(60)
+    expect(settings.autoBackup).toBe(false)
+    expect(settings.mockDataEnabled).toBe(true)
+    expect(settings.language).toBe('zh-CN')
+    expect(settings.launchAtLogin).toBe(true)
+    expect(settings.scanOnLaunch).toBe(false)
+    expect(settings.backgroundScan).toBe(false)
+    expect(settings.confirmBeforeCleanup).toBe(false)
+    expect(settings.excludedFolders).toEqual([excludedFolder])
+    expect(settings.soundEffects).toBe(false)
+    expect(settings.cleanupSound).toBe(false)
+    expect(settings.scanSound).toBe(true)
+    expect(settings.errorSound).toBe(false)
+    expect(settings.soundVolume).toBe(0)
+    expect(settings.checkForUpdates).toBe(false)
+    expect(settings.defaultRelayMode).toBe('manual-select')
+    expect(settings.exportDirectory).toBe(exportDirectory)
   })
 
   it('falls back to defaults when persisted settings are invalid', async () => {

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   compareVersions,
   normalizeVersionTag,
@@ -44,6 +44,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  vi.unstubAllGlobals()
   await rm(userDataPath, { recursive: true, force: true })
 })
 
@@ -102,9 +103,63 @@ describe('selectUpdateAsset', () => {
 
     expect(asset).toBeUndefined()
   })
+
+  it('falls back to universal assets and prefers larger ties', () => {
+    const asset = selectUpdateAsset(
+      [
+        {
+          name: 'Clean-My-Agent-mac-universal.zip',
+          browser_download_url: 'https://example.test/small.zip',
+          size: 10,
+        },
+        {
+          name: 'Clean-My-Agent-mac-universal-large.zip',
+          browser_download_url: 'https://example.test/large.zip',
+          size: 20,
+        },
+      ],
+      'darwin',
+      'arm64',
+    )
+
+    expect(asset?.downloadUrl).toBe('https://example.test/large.zip')
+  })
+
+  it('penalizes mismatched architecture assets and ignores checksums', () => {
+    const asset = selectUpdateAsset(
+      [
+        {
+          name: 'Clean-My-Agent-mac-x64.dmg',
+          browser_download_url: 'https://example.test/x64.dmg',
+          size: 20,
+        },
+        {
+          name: 'Clean-My-Agent-mac-arm64.sha256',
+          browser_download_url: 'https://example.test/checksum',
+          size: 1,
+        },
+      ],
+      'darwin',
+      'arm64',
+    )
+
+    expect(asset?.name).toBe('Clean-My-Agent-mac-x64.dmg')
+  })
 })
 
 describe('UpdateService', () => {
+  it('requires a fetch implementation', () => {
+    vi.stubGlobal('fetch', undefined)
+
+    expect(
+      () =>
+        new UpdateService({
+          userDataPath,
+          currentVersion: '0.1.1',
+        }),
+    ).toThrow(/fetch support/)
+  })
+
   it('reports when a newer GitHub release is available', async () => {
     const service = new UpdateService({
       userDataPath,
@@ -132,6 +187,52 @@ describe('UpdateService', () => {
     expect(result.available).toBe(true)
     expect(result.latestVersion).toBe('0.2.0')
     expect(result.asset?.name).toBe('Clean-My-Agent-mac-arm64.dmg')
+  })
+
+  it('reports no update when the latest release is not newer', async () => {
+    const service = new UpdateService({
+      userDataPath,
+      currentVersion: '0.2.0',
+      platform: 'darwin',
+      arch: 'arm64',
+      fetcher: async () =>
+        jsonResponse({
+          tag_name: 'v0.2.0',
+          html_url: 'https://github.com/blain3white/clean-my-agent/releases/tag/v0.2.0',
+        }),
+    })
+
+    const result = await service.downloadLatestUpdate()
+
+    expect(result.available).toBe(false)
+    expect(result.downloadedPath).toBeUndefined()
+  })
+
+  it('returns an available release without downloading when no installer asset matches', async () => {
+    const service = new UpdateService({
+      userDataPath,
+      currentVersion: '0.1.1',
+      platform: 'darwin',
+      arch: 'arm64',
+      fetcher: async () =>
+        jsonResponse({
+          tag_name: 'v0.2.0',
+          html_url: 'https://github.com/blain3white/clean-my-agent/releases/tag/v0.2.0',
+          assets: [
+            {
+              name: 'latest-mac.yml',
+              browser_download_url: 'https://example.test/latest.yml',
+              size: 12,
+            },
+          ],
+        }),
+    })
+
+    const result = await service.downloadLatestUpdate()
+
+    expect(result.available).toBe(true)
+    expect(result.asset).toBeUndefined()
+    expect(result.downloadedPath).toBeUndefined()
   })
 
   it('downloads the selected release asset into user data updates', async () => {
@@ -165,6 +266,34 @@ describe('UpdateService', () => {
     expect(result.downloadedPath).toMatch(/Clean-My-Agent-mac-arm64\.dmg$/)
     expect(result.downloadedBytes).toBeGreaterThan(0)
     expect(await readFile(result.downloadedPath ?? '', 'utf8')).toBe('installer-bytes')
+  })
+
+  it('rejects empty downloaded assets', async () => {
+    const service = new UpdateService({
+      userDataPath,
+      currentVersion: '0.1.1',
+      platform: 'darwin',
+      arch: 'arm64',
+      fetcher: async (url) => {
+        if (url.includes('/releases/latest')) {
+          return jsonResponse({
+            tag_name: 'v0.2.0',
+            html_url: 'https://github.com/blain3white/clean-my-agent/releases/tag/v0.2.0',
+            assets: [
+              {
+                name: 'Clean-My-Agent-mac-arm64.dmg',
+                browser_download_url: 'https://example.test/update.dmg',
+                size: 12,
+              },
+            ],
+          })
+        }
+
+        return fileResponse('')
+      },
+    })
+
+    await expect(service.downloadLatestUpdate()).rejects.toThrow(/empty/)
   })
 
   it('removes partial downloads when the asset request fails', async () => {
@@ -202,5 +331,15 @@ describe('UpdateService', () => {
     })
 
     await expect(service.downloadLatestUpdate()).rejects.toThrow(/GitHub update request failed/)
+  })
+
+  it('rejects unrecognized latest release responses', async () => {
+    const service = new UpdateService({
+      userDataPath,
+      currentVersion: '0.1.1',
+      fetcher: async () => jsonResponse({ tag_name: 'v0.2.0' }),
+    })
+
+    await expect(service.checkForUpdates()).rejects.toThrow(/not recognized/)
   })
 })
