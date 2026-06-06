@@ -67,6 +67,11 @@ index, compares the PR against its base branch, and writes the GitNexus summary
 into the PR body between the `gitnexus-report` markers. If GitNexus cannot
 analyze the PR or the summary is missing, CI must fail.
 
+`Verify` runs from the `pull_request` event. `GitNexus Report` runs from the
+`pull_request_target` event so it can update the PR body. Each workflow run will
+show the other job as skipped; the PR is healthy only when both required status
+checks have separate successful results.
+
 The full local gate is:
 
 ```bash
