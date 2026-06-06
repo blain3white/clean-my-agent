@@ -19,6 +19,7 @@ type DashboardState = {
   mockDataEnabled: boolean
   language: AppLanguage
   launchAtLogin: boolean
+  checkingForUpdates: boolean
   updateSettings: (
     patch: Partial<AppSettings>,
     options?: { rescan?: boolean },
@@ -28,6 +29,7 @@ type DashboardState = {
   setMockDataEnabled: (enabled: boolean) => Promise<void>
   setLanguage: (language: AppLanguage) => Promise<void>
   setLaunchAtLogin: (enabled: boolean) => Promise<void>
+  downloadLatestUpdate: () => Promise<void>
   rescan: () => Promise<void>
   refreshRecentSessions: () => Promise<void>
   backupSession: (sessionId: string) => Promise<void>
@@ -134,6 +136,7 @@ export function useDashboard(): DashboardState {
     return mergeSettings({ mockDataEnabled, language })
   })
   const [loading, setLoading] = useState(true)
+  const [checkingForUpdates, setCheckingForUpdates] = useState(false)
   const t = useCallback(
     (key: Parameters<typeof translate>[1], values?: Parameters<typeof translate>[2]) =>
       translate(settings.language, key, values),
@@ -229,6 +232,75 @@ export function useDashboard(): DashboardState {
     })
   }, [settings.checkForUpdates])
 
+  const runUpdateCheck = useCallback(async () => {
+    if (!window.cleanMyAgent) {
+      toast.info(t('toast.updateCheckDesktopOnly'))
+      return
+    }
+
+    setCheckingForUpdates(true)
+    try {
+      const result = await window.cleanMyAgent.checkForUpdates()
+      if (result.available) {
+        toast.success(
+          t('toast.updateAvailable', {
+            version: result.latestVersion,
+          }),
+        )
+        if (result.releaseUrl) await window.cleanMyAgent.openPath(result.releaseUrl)
+        return
+      }
+      toast.success(t('toast.noUpdatesAvailable'))
+    } catch (error) {
+      console.error(error)
+      toast.error(t('toast.updateCheckError'))
+    } finally {
+      setCheckingForUpdates(false)
+    }
+  }, [t])
+
+  const runUpdateDownload = useCallback(async () => {
+    if (!window.cleanMyAgent) {
+      toast.info(t('toast.updateDesktopOnly'))
+      return
+    }
+
+    setCheckingForUpdates(true)
+    try {
+      const result = await window.cleanMyAgent.downloadLatestUpdate()
+      if (!result.available) {
+        toast.success(
+          t('toast.noUpdateAvailable', {
+            version: result.currentVersion,
+          }),
+        )
+        return
+      }
+
+      if (!result.downloadedPath) {
+        toast.info(
+          t('toast.updateAvailableNoAsset', {
+            version: result.latestVersion,
+          }),
+        )
+        return
+      }
+
+      toast.success(
+        t('toast.updateDownloaded', {
+          version: result.latestVersion,
+          path: result.downloadedPath,
+        }),
+      )
+      await window.cleanMyAgent.openPath(result.downloadedPath)
+    } catch (error) {
+      console.error(error)
+      toast.error(t('toast.updateCheckError'))
+    } finally {
+      setCheckingForUpdates(false)
+    }
+  }, [t])
+
   const actions = useMemo(
     () => ({
       updateSettings: async (
@@ -280,23 +352,7 @@ export function useDashboard(): DashboardState {
         }
         return window.cleanMyAgent.chooseFolders()
       },
-      checkForUpdates: async () => {
-        if (!window.cleanMyAgent) {
-          toast.info(t('toast.updateCheckDesktopOnly'))
-          return
-        }
-        const result = await window.cleanMyAgent.checkForUpdates()
-        if (result.updateAvailable) {
-          toast.success(
-            t('toast.updateAvailable', {
-              version: result.latestVersion ?? result.currentVersion,
-            }),
-          )
-          if (result.releaseUrl) await window.cleanMyAgent.openPath(result.releaseUrl)
-          return
-        }
-        toast.success(t('toast.noUpdatesAvailable'))
-      },
+      checkForUpdates: runUpdateCheck,
       setMockDataEnabled: async (enabled: boolean) => {
         const nextSettings = mergeSettings({ ...settings, mockDataEnabled: enabled })
         setSettings(nextSettings)
@@ -374,6 +430,7 @@ export function useDashboard(): DashboardState {
           setSettings(settings)
         }
       },
+      downloadLatestUpdate: runUpdateDownload,
       rescan: async () => {
         await load(true)
         if (!settings.mockDataEnabled && settings.soundEffects && settings.scanSound) {
@@ -491,7 +548,7 @@ export function useDashboard(): DashboardState {
         await load(true)
       },
     }),
-    [load, settings, snapshot.cleanup, t],
+    [load, runUpdateCheck, runUpdateDownload, settings, snapshot.cleanup, t],
   )
 
   return {
@@ -501,6 +558,7 @@ export function useDashboard(): DashboardState {
     mockDataEnabled: settings.mockDataEnabled,
     language: settings.language,
     launchAtLogin: settings.launchAtLogin,
+    checkingForUpdates,
     ...actions,
   }
 }

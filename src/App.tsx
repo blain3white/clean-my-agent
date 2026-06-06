@@ -93,13 +93,14 @@ function App() {
             launchAtLogin={dashboard.launchAtLogin}
             mockDataEnabled={dashboard.mockDataEnabled}
             settings={dashboard.settings}
+            checkingForUpdates={dashboard.checkingForUpdates}
             onLanguageChange={dashboard.setLanguage}
             onThemePreferenceChange={theme.setPreference}
             onLaunchAtLoginChange={dashboard.setLaunchAtLogin}
             onMockDataChange={dashboard.setMockDataEnabled}
             onSettingsChange={dashboard.updateSettings}
             onChooseFolders={dashboard.chooseFolders}
-            onCheckForUpdates={dashboard.checkForUpdates}
+            onDownloadLatestUpdate={dashboard.downloadLatestUpdate}
             onRescan={dashboard.rescan}
           />
         )

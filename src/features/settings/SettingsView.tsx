@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from 'react'
 import {
   Bell,
   Clock3,
+  Download,
   Folder,
   Languages,
   Palette,
@@ -36,6 +37,7 @@ type SettingsViewProps = {
   launchAtLogin: boolean
   mockDataEnabled: boolean
   settings: AppSettings
+  checkingForUpdates: boolean
   onLanguageChange: (language: AppLanguage) => Promise<void>
   onThemePreferenceChange: (preference: ThemePreference) => void
   onLaunchAtLoginChange: (enabled: boolean) => Promise<void>
@@ -45,10 +47,9 @@ type SettingsViewProps = {
     options?: { rescan?: boolean },
   ) => Promise<AppSettings>
   onChooseFolders: () => Promise<string[]>
-  onCheckForUpdates: () => Promise<void>
+  onDownloadLatestUpdate: () => Promise<void>
   onRescan: () => Promise<void>
 }
-
 const themeOptions: Array<{ value: ThemePreference; labelKey: TranslationKey }> = [
   { value: 'system', labelKey: 'theme.system' },
   { value: 'light', labelKey: 'theme.light' },
@@ -211,13 +212,14 @@ export function SettingsView({
   launchAtLogin,
   mockDataEnabled,
   settings,
+  checkingForUpdates,
   onLanguageChange,
   onThemePreferenceChange,
   onLaunchAtLoginChange,
   onMockDataChange,
   onSettingsChange,
   onChooseFolders,
-  onCheckForUpdates,
+  onDownloadLatestUpdate,
   onRescan,
 }: SettingsViewProps) {
   const { formatRelative, t } = useI18n()
@@ -329,16 +331,19 @@ export function SettingsView({
             }
           />
           <SettingsRow
+            icon={Download}
             title={t('settings.checkForUpdates')}
+            description={t('settings.checkForUpdatesDescription')}
             trailing={
               <>
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => void onCheckForUpdates()}
+                  onClick={() => void onDownloadLatestUpdate()}
+                  disabled={checkingForUpdates}
                   className="settings-ghost-button"
                 >
-                  {t('settings.checkNow')}
+                  {checkingForUpdates ? t('settings.checkingUpdates') : t('settings.checkNow')}
                 </Button>
                 <SwitchControl
                   checked={settings.checkForUpdates}

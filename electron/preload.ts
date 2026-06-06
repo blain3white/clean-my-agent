@@ -19,11 +19,12 @@ const api: CleanMyAgentApi = {
   updateSettings: (settings: Partial<AppSettings>) =>
     ipcRenderer.invoke('settings:update', settings),
   chooseFolders: () => ipcRenderer.invoke('settings:chooseFolders'),
-  checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
   openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),
   playSystemSound: () => ipcRenderer.invoke('shell:beep'),
   getLaunchAtLogin: () => ipcRenderer.invoke('app:getLaunchAtLogin'),
   setLaunchAtLogin: (enabled: boolean) => ipcRenderer.invoke('app:setLaunchAtLogin', enabled),
+  checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
+  downloadLatestUpdate: () => ipcRenderer.invoke('app:downloadLatestUpdate'),
 }
 
 contextBridge.exposeInMainWorld('cleanMyAgent', api)

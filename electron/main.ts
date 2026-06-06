@@ -4,12 +4,14 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { AppSettings, ExportFormat } from '../src/shared/types'
 import { AppService } from './lib/app-service'
+import { UpdateService } from './lib/update-service'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const appName = 'Clean My Agent'
 
 let mainWindow: BrowserWindow | undefined
 let service: AppService
+let updateService: UpdateService
 
 app.setName(appName)
 app.setAboutPanelOptions({ applicationName: appName })
@@ -106,7 +108,6 @@ function registerIpc(): void {
     if (result.canceled) return []
     return result.filePaths
   })
-  ipcMain.handle('app:checkForUpdates', () => service.checkForUpdates())
   ipcMain.handle('shell:openPath', (_event, targetPath: string) => service.openPath(targetPath))
   ipcMain.handle('shell:beep', () => {
     shell.beep()
@@ -116,11 +117,17 @@ function registerIpc(): void {
     app.setLoginItemSettings({ openAtLogin: enabled })
     return app.getLoginItemSettings().openAtLogin
   })
+  ipcMain.handle('app:checkForUpdates', () => updateService.checkForUpdates())
+  ipcMain.handle('app:downloadLatestUpdate', () => updateService.downloadLatestUpdate())
 }
 
 app.whenReady().then(async () => {
   nativeTheme.themeSource = 'system'
   service = new AppService({ userDataPath: app.getPath('userData'), openPath: openTarget })
+  updateService = new UpdateService({
+    userDataPath: app.getPath('userData'),
+    currentVersion: app.getVersion(),
+  })
   await service.init()
   registerIpc()
   createWindow()
