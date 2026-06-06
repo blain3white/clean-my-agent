@@ -91,10 +91,12 @@ function App() {
             themePreference={theme.preference}
             launchAtLogin={dashboard.launchAtLogin}
             mockDataEnabled={dashboard.mockDataEnabled}
+            checkingForUpdates={dashboard.checkingForUpdates}
             onLanguageChange={dashboard.setLanguage}
             onThemePreferenceChange={theme.setPreference}
             onLaunchAtLoginChange={dashboard.setLaunchAtLogin}
             onMockDataChange={dashboard.setMockDataEnabled}
+            onDownloadLatestUpdate={dashboard.downloadLatestUpdate}
             onRescan={dashboard.rescan}
           />
         )

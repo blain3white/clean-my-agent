@@ -210,6 +210,27 @@ export type AppSettings = {
 
 export type ThemePreference = 'system' | 'light' | 'dark'
 
+export type UpdateReleaseAsset = {
+  name: string
+  sizeBytes: number
+  downloadUrl: string
+}
+
+export type UpdateCheckResult = {
+  currentVersion: string
+  latestVersion: string
+  releaseName: string
+  releaseUrl: string
+  publishedAt?: string
+  available: boolean
+  asset?: UpdateReleaseAsset
+}
+
+export type UpdateDownloadResult = UpdateCheckResult & {
+  downloadedPath?: string
+  downloadedBytes?: number
+}
+
 export type CleanMyAgentApi = {
   getSnapshot: () => Promise<DashboardSnapshot>
   rescan: () => Promise<DashboardSnapshot>
@@ -228,4 +249,6 @@ export type CleanMyAgentApi = {
   playSystemSound: () => Promise<void>
   getLaunchAtLogin: () => Promise<boolean>
   setLaunchAtLogin: (enabled: boolean) => Promise<boolean>
+  checkForUpdates: () => Promise<UpdateCheckResult>
+  downloadLatestUpdate: () => Promise<UpdateDownloadResult>
 }

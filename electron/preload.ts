@@ -22,6 +22,8 @@ const api: CleanMyAgentApi = {
   playSystemSound: () => ipcRenderer.invoke('shell:beep'),
   getLaunchAtLogin: () => ipcRenderer.invoke('app:getLaunchAtLogin'),
   setLaunchAtLogin: (enabled: boolean) => ipcRenderer.invoke('app:setLaunchAtLogin', enabled),
+  checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
+  downloadLatestUpdate: () => ipcRenderer.invoke('app:downloadLatestUpdate'),
 }
 
 contextBridge.exposeInMainWorld('cleanMyAgent', api)

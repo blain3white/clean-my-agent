@@ -18,9 +18,11 @@ type DashboardState = {
   mockDataEnabled: boolean
   language: AppLanguage
   launchAtLogin: boolean
+  checkingForUpdates: boolean
   setMockDataEnabled: (enabled: boolean) => Promise<void>
   setLanguage: (language: AppLanguage) => Promise<void>
   setLaunchAtLogin: (enabled: boolean) => Promise<void>
+  downloadLatestUpdate: () => Promise<void>
   rescan: () => Promise<void>
   refreshRecentSessions: () => Promise<void>
   backupSession: (sessionId: string) => Promise<void>
@@ -104,6 +106,7 @@ export function useDashboard(): DashboardState {
     return mergeSettings({ mockDataEnabled, language })
   })
   const [loading, setLoading] = useState(true)
+  const [checkingForUpdates, setCheckingForUpdates] = useState(false)
   const t = useCallback(
     (key: Parameters<typeof translate>[1], values?: Parameters<typeof translate>[2]) =>
       translate(settings.language, key, values),
@@ -244,6 +247,47 @@ export function useDashboard(): DashboardState {
           setSettings(settings)
         }
       },
+      downloadLatestUpdate: async () => {
+        if (!window.cleanMyAgent) {
+          toast.info(t('toast.updateDesktopOnly'))
+          return
+        }
+
+        setCheckingForUpdates(true)
+        try {
+          const result = await window.cleanMyAgent.downloadLatestUpdate()
+          if (!result.available) {
+            toast.success(
+              t('toast.noUpdateAvailable', {
+                version: result.currentVersion,
+              }),
+            )
+            return
+          }
+
+          if (!result.downloadedPath) {
+            toast.info(
+              t('toast.updateAvailableNoAsset', {
+                version: result.latestVersion,
+              }),
+            )
+            return
+          }
+
+          toast.success(
+            t('toast.updateDownloaded', {
+              version: result.latestVersion,
+              path: result.downloadedPath,
+            }),
+          )
+          await window.cleanMyAgent.openPath(result.downloadedPath)
+        } catch (error) {
+          console.error(error)
+          toast.error(t('toast.updateCheckError'))
+        } finally {
+          setCheckingForUpdates(false)
+        }
+      },
       rescan: async () => {
         await load(true)
         toast.success(settings.mockDataEnabled ? t('toast.demoRefreshed') : t('toast.agentScanned'))
@@ -356,6 +400,7 @@ export function useDashboard(): DashboardState {
     mockDataEnabled: settings.mockDataEnabled,
     language: settings.language,
     launchAtLogin: settings.launchAtLogin,
+    checkingForUpdates,
     ...actions,
   }
 }

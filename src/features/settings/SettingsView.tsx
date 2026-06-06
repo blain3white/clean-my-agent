@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock3,
+  Download,
   Folder,
   Languages,
   Palette,
@@ -37,10 +38,12 @@ type SettingsViewProps = {
   themePreference: ThemePreference
   launchAtLogin: boolean
   mockDataEnabled: boolean
+  checkingForUpdates: boolean
   onLanguageChange: (language: AppLanguage) => Promise<void>
   onThemePreferenceChange: (preference: ThemePreference) => void
   onLaunchAtLoginChange: (enabled: boolean) => Promise<void>
   onMockDataChange: (enabled: boolean) => Promise<void>
+  onDownloadLatestUpdate: () => Promise<void>
   onRescan: () => Promise<void>
 }
 
@@ -53,7 +56,6 @@ type ToggleKey =
   | 'cleanupSound'
   | 'scanSound'
   | 'errorSound'
-  | 'checkUpdates'
 
 const initialProviderState: Record<AgentSource, boolean> = {
   codex: true,
@@ -72,7 +74,6 @@ const initialToggles: Record<ToggleKey, boolean> = {
   cleanupSound: true,
   scanSound: false,
   errorSound: true,
-  checkUpdates: true,
 }
 
 const themeOptions: Array<{ value: ThemePreference; labelKey: TranslationKey }> = [
@@ -228,10 +229,12 @@ export function SettingsView({
   themePreference,
   launchAtLogin,
   mockDataEnabled,
+  checkingForUpdates,
   onLanguageChange,
   onThemePreferenceChange,
   onLaunchAtLoginChange,
   onMockDataChange,
+  onDownloadLatestUpdate,
   onRescan,
 }: SettingsViewProps) {
   const { formatRelative, t } = useI18n()
@@ -313,13 +316,19 @@ export function SettingsView({
             }
           />
           <SettingsRow
+            icon={Download}
             title={t('settings.checkForUpdates')}
+            description={t('settings.checkForUpdatesDescription')}
             trailing={
-              <SwitchControl
-                checked={toggles.checkUpdates}
-                onCheckedChange={(checked) => setToggle('checkUpdates', checked)}
-                label={toggleLabel('settings.toggleUpdateChecks')}
-              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void onDownloadLatestUpdate()}
+                disabled={checkingForUpdates}
+                className="settings-outline-button"
+              >
+                {checkingForUpdates ? t('settings.checkingUpdates') : t('settings.checkNow')}
+              </Button>
             }
           />
           <SettingsRow
