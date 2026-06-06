@@ -12,15 +12,16 @@ Recommended `main` rules:
 - Require at least one approval.
 - Require review from Code Owners.
 - Dismiss stale approvals when new commits are pushed.
+- Require the `Verify` CI check.
 - Require the `GitNexus Report` CI check.
 - Require branches to be up to date before merging.
 - Block force pushes.
 - Block branch deletion.
 - Require linear history if the project uses squash merges.
 
-`main` intentionally does not run the normal CI gate for `develop` to `main`
-release merges. Release readiness should already be proven before code reaches
-`develop`.
+`main` runs the normal `Verify` gate for PRs and direct protected-branch pushes.
+Release readiness should already be proven before code reaches `main`; the
+`main` CI run is a final confirmation, not the first release quality gate.
 
 Recommended `develop` rules:
 
@@ -46,13 +47,18 @@ Normal changes:
 
 Release flow:
 
-1. Open a release PR from `develop` into `main`.
+1. Update `package.json` to the release version on `develop` before integration.
 2. Verify changelog or release notes.
-3. Merge after review. The normal `Verify` gate is not run for this release merge.
-4. Update `package.json` to the release version before tagging.
+3. Confirm the latest `develop` `Verify` run is green.
+4. Open a release PR from `develop` into `main`, or perform a direct maintainer
+   merge only for a release operation.
 5. Tag the release from `main` with the matching semantic version, such as
    `v0.1.0`.
 6. The release workflow builds the macOS DMG and publishes the GitHub Release.
+
+Direct release merges should record the source branch SHA, target branch SHA,
+merge SHA, tag, and release workflow URL in the maintainer handoff. Do not force
+push or bypass a failed release check.
 
 Urgent fixes:
 
@@ -62,8 +68,8 @@ Urgent fixes:
 
 ## Required Checks
 
-The `CI` workflow runs on pull requests into `develop` and pushes to `develop`.
-It does not run on `main`.
+The `CI` workflow runs on pull requests into `develop` and `main`, and on pushes
+to `develop` and `main`.
 
 Pull requests also run a required `GitNexus Report` job. It builds a GitNexus
 index, compares the PR against its base branch, and writes the GitNexus summary

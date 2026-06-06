@@ -98,15 +98,19 @@ Before opening a PR:
 
 Maintainers should squash-merge normal PRs unless the commit history carries useful context.
 
-PRs targeting `develop` must pass CI before merge. Direct pushes to `develop`
-run the same gate. The required `Verify` check includes formatting, linting,
-unit tests, functional smoke verification, build verification, the PR test-change
-gate, and the 90% coverage gate. The `develop` to `main` release merge does not
-run this CI gate; release readiness should already be verified before code
-reaches `develop`.
+PRs targeting `develop` or `main` must pass CI before merge. Direct pushes to
+protected branches run the same `Verify` gate as a confirmatory check. The
+required `Verify` check includes formatting, linting, unit tests, functional
+smoke verification, build verification, the PR test-change gate, and the 90%
+coverage gate. Release readiness should already be verified before code reaches
+`main`; the `main` CI run should confirm rather than discover release blockers.
 
 ## Releases
 
-Release candidates should merge from `develop` into `main` after CI passes. Tag
-releases from `main` with semantic version tags such as `v0.1.0`; the tag version
-must match `package.json` so GitHub Actions can build and publish the release.
+Release candidates should merge from `develop` into `main` after CI passes and
+the release version is already committed. Maintainers may use a release PR or a
+direct maintainer merge for this integration, but direct merges should be limited
+to release operations with a green `develop` run, reviewed release notes, and no
+force push. Tag releases from `main` with semantic version tags such as
+`v0.1.0`; the tag version must match `package.json` so GitHub Actions can build
+and publish the release.
