@@ -49,7 +49,10 @@ Release flow:
 1. Open a release PR from `develop` into `main`.
 2. Verify changelog or release notes.
 3. Merge after review. The normal `Verify` gate is not run for this release merge.
-4. Tag the release from `main`.
+4. Update `package.json` to the release version before tagging.
+5. Tag the release from `main` with the matching semantic version, such as
+   `v0.1.0`.
+6. The release workflow builds the macOS DMG and publishes the GitHub Release.
 
 Urgent fixes:
 
