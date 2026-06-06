@@ -14,6 +14,16 @@ async function writeSession(root: string, source: AgentSource, daysOld: number, 
   const workspace = path.join('/tmp', 'clean-my-agent-fixture', source)
   const date = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000)
   const timestamp = date.toISOString()
+  const referencedFile = path.join(workspace, 'src', 'auth.ts')
+  const attachmentPath = path.join(workspace, 'artifacts', 'auth-flow.png')
+  const gitDiff = [
+    'diff --git a/src/auth.ts b/src/auth.ts',
+    '--- a/src/auth.ts',
+    '+++ b/src/auth.ts',
+    '@@ -1 +1 @@',
+    '-old auth flow',
+    '+new auth flow',
+  ].join('\n')
   const lines = [
     {
       role: 'user',
@@ -21,6 +31,10 @@ async function writeSession(root: string, source: AgentSource, daysOld: number, 
       content: `Refactor ${source} auth flow`,
       cwd: workspace,
       branch: 'main',
+      command: `pnpm test --filter ${source}`,
+      files: [{ path: referencedFile }],
+      attachments: [{ path: attachmentPath, mediaType: 'image/png', sizeBytes: 2048 }],
+      gitDiff,
       usage: {
         input_tokens: 100,
         output_tokens: 50,
@@ -166,9 +180,31 @@ async function main() {
   const relay = JSON.parse(await readFile(relayPath, 'utf8')) as {
     schema: string
     messages: unknown[]
+    files: Array<{ path: string }>
+    commands: Array<{ command: string }>
+    attachments: Array<{ path: string; mediaType?: string; sizeBytes?: number }>
+    git?: { diff?: string }
   }
   assert.equal(relay.schema, 'clean-my-agent.universal-session.v1')
   assert.ok(relay.messages.length >= 2, 'relay JSON should include messages')
+  assert.ok(
+    relay.commands.some((item) => item.command === 'pnpm test --filter codex'),
+    'relay JSON should include extracted commands',
+  )
+  assert.ok(
+    relay.files.some((item) => item.path.endsWith('/codex/src/auth.ts')),
+    'relay JSON should include extracted file references',
+  )
+  assert.ok(
+    relay.attachments.some(
+      (item) =>
+        item.path.endsWith('/codex/artifacts/auth-flow.png') &&
+        item.mediaType === 'image/png' &&
+        item.sizeBytes === 2048,
+    ),
+    'relay JSON should include extracted attachments',
+  )
+  assert.match(relay.git?.diff ?? '', /diff --git a\/src\/auth\.ts b\/src\/auth\.ts/)
 
   const cleanup = await service.scanCleanup()
   const target = cleanup.find((item) => item.sessionIds.includes(session.id))
@@ -186,6 +222,31 @@ async function main() {
     (await service.getSnapshot(true)).sessions.some((item) => item.id === session.id),
     true,
   )
+
+  const purgeFile = await writeSession(fixtureRoot, 'codex', 60, 'purge')
+  const purgeSnapshot = await service.rescan()
+  const purgeSession = purgeSnapshot.sessions.find((item) => item.storagePath === purgeFile)
+  assert.ok(purgeSession, 'purge smoke session should be scanned')
+  const purgeTarget = (await service.scanCleanup()).find((item) =>
+    item.sessionIds.includes(purgeSession.id),
+  )
+  assert.ok(purgeTarget, 'purge smoke session should become a cleanup candidate')
+  const [purgeTrash] = await service.moveCleanupToTrash([purgeTarget.id])
+  assert.ok(purgeTrash, 'purge smoke cleanup should move to trash')
+  ;(
+    service as unknown as {
+      db: {
+        insertTrash: (record: typeof purgeTrash) => void
+      }
+    }
+  ).db.insertTrash({
+    ...purgeTrash,
+    deletedAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(),
+  })
+  const purgedTrash = await service.purgeExpiredTrash()
+  assert.equal(purgedTrash.length, 1, 'expired trash purge should remove one item')
+  assert.equal(purgedTrash[0].id, purgeTrash.id, 'expired trash purge should return the record')
+  await assert.rejects(stat(purgeTrash.trashPath), undefined, 'purged trash path should be removed')
 
   const staleService = new AppService({
     userDataPath: await mkdtemp(path.join(os.tmpdir(), 'clean-my-agent-stale-user-data-')),

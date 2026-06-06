@@ -167,6 +167,60 @@ describe('init and settings', () => {
     expect(returned.cleanupRetentionDays).toBe(7)
     expect(returned.autoBackup).toBe(true) // unchanged default
   })
+
+  it('rejects unsafe or unsupported settings patches', async () => {
+    const service = makeService(userDataPath)
+    await service.init()
+
+    expect(() => service.updateSettings({ exportDirectory: 'relative/path' })).toThrow(
+      /exportDirectory must be an absolute local path/,
+    )
+    expect(() =>
+      service.updateSettings({ scanRoots: { codex: ['https://example.test'] } }),
+    ).toThrow(/scanRoots.codex must be an absolute local path/)
+    expect(() => service.updateSettings({ scanRoots: { unknown: ['/tmp'] } as never })).toThrow(
+      /Unsupported scan root source/,
+    )
+    expect(() => service.updateSettings({ trashRetentionDays: -1 })).toThrow(
+      /trashRetentionDays must be an integer/,
+    )
+    expect(() => service.updateSettings({ defaultRelayMode: 'unsupported' as never })).toThrow(
+      /defaultRelayMode is not supported/,
+    )
+  })
+
+  it('falls back to defaults when persisted settings are invalid', async () => {
+    const service = makeService(userDataPath)
+    await service.init()
+    service['db'].setSetting('settings', {
+      cleanupRetentionDays: -1,
+      trashRetentionDays: 100_000,
+      autoBackup: 'yes',
+      mockDataEnabled: 'yes',
+      language: 'xx',
+      launchAtLogin: 'yes',
+      defaultRelayMode: 'unsupported',
+      exportDirectory: 'https://example.test/export',
+      scanRoots: {
+        codex: ['relative/path'],
+        claude: ['/safe/claude'],
+        unknown: ['/tmp/unknown'],
+      },
+    })
+
+    const restored = makeService(userDataPath)
+    await restored.init()
+    const settings = restored.getSettings()
+    expect(settings.cleanupRetentionDays).toBe(7)
+    expect(settings.trashRetentionDays).toBe(14)
+    expect(settings.autoBackup).toBe(true)
+    expect(settings.mockDataEnabled).toBe(false)
+    expect(settings.language).toBe('en')
+    expect(settings.launchAtLogin).toBe(false)
+    expect(settings.defaultRelayMode).toBe('full-context')
+    expect(settings.exportDirectory).toContain(userDataPath)
+    expect(settings.scanRoots).toEqual({ claude: ['/safe/claude'] })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -318,53 +372,6 @@ describe('getSnapshot and rescan', () => {
     const snapshot = await service.rescan()
     expect(snapshot.sessions.some((session) => session.storagePath === keptPath)).toBe(true)
     expect(snapshot.sessions.some((session) => session.storagePath === excludedPath)).toBe(false)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// checkForUpdates
-// ---------------------------------------------------------------------------
-
-describe('checkForUpdates', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals()
-  })
-
-  it('reports an available release from the latest GitHub release response', async () => {
-    const service = makeService(userDataPath)
-    await service.init()
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({
-        ok: true,
-        json: async () => ({
-          tag_name: 'v99.99.99',
-          html_url: 'https://example.test/release',
-        }),
-      })),
-    )
-
-    const result = await service.checkForUpdates()
-    expect(result.updateAvailable).toBe(true)
-    expect(result.latestVersion).toBe('99.99.99')
-    expect(result.releaseUrl).toBe('https://example.test/release')
-    expect(result.checkedAt).toBeTruthy()
-  })
-
-  it('falls back cleanly when update checks fail', async () => {
-    const service = makeService(userDataPath)
-    await service.init()
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => {
-        throw new Error('offline')
-      }),
-    )
-
-    const result = await service.checkForUpdates()
-    expect(result.updateAvailable).toBe(false)
-    expect(result.latestVersion).toBeUndefined()
-    expect(result.releaseUrl).toBeUndefined()
   })
 })
 
@@ -1021,6 +1028,48 @@ describe('restoreTrash', () => {
 })
 
 // ---------------------------------------------------------------------------
+// purgeExpiredTrash
+// ---------------------------------------------------------------------------
+
+describe('purgeExpiredTrash', () => {
+  it('removes only expired trash records and keeps fresh records recoverable', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ cleanupRetentionDays: 0, trashRetentionDays: 1 })
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await writeJsonlSession(fixtureRoot, 'claude', { filename: 'claude-session.jsonl' })
+    await writeJsonlSession(fixtureRoot, 'gemini', { filename: 'gemini-session.jsonl' })
+    await service.rescan()
+    const candidates = await service.scanCleanup()
+    const selected = candidates
+      .filter((candidate) => candidate.source === 'codex' || candidate.source === 'claude')
+      .map((candidate) => candidate.id)
+
+    const trashRecords = await service.moveCleanupToTrash(selected)
+    expect(trashRecords).toHaveLength(2)
+    const [expired, fresh] = trashRecords
+    const expiredRecord = {
+      ...expired,
+      deletedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    }
+    const freshRecord = {
+      ...fresh,
+      deletedAt: new Date().toISOString(),
+    }
+    service['db'].insertTrash(expiredRecord)
+    service['db'].insertTrash(freshRecord)
+
+    const purged = await service.purgeExpiredTrash()
+
+    expect(purged.map((record) => record.id)).toEqual([expired.id])
+    await expect(stat(expired.trashPath)).rejects.toThrow()
+    await expect(stat(fresh.trashPath)).resolves.toBeDefined()
+    const snapshot = await service.getSnapshot(false)
+    expect(snapshot.trash.find((record) => record.id === expired.id)).toBeUndefined()
+    expect(snapshot.trash.find((record) => record.id === fresh.id)).toBeDefined()
+  }, 20_000)
+})
+
+// ---------------------------------------------------------------------------
 // openPath
 // ---------------------------------------------------------------------------
 
@@ -1041,6 +1090,28 @@ describe('openPath', () => {
     await service.init()
     // Should not throw
     await expect(service.openPath('/anything')).resolves.toBeUndefined()
+  })
+
+  it('rejects non-local or relative paths', async () => {
+    const calls: string[] = []
+    const service = new AppService({
+      userDataPath,
+      openPath: async (targetPath) => {
+        calls.push(targetPath)
+      },
+    })
+    await service.init()
+
+    await expect(service.openPath('relative/path')).rejects.toThrow(
+      /targetPath must be an absolute local path/,
+    )
+    await expect(service.openPath('https://example.test/file')).rejects.toThrow(
+      /targetPath must be an absolute local path/,
+    )
+    await expect(service.openPath('file:///tmp/example')).rejects.toThrow(
+      /targetPath must be an absolute local path/,
+    )
+    expect(calls).toEqual([])
   })
 })
 

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, truncate, utimes, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -322,6 +322,7 @@ describe('unreadable and missing roots', () => {
     expect(state.installed).toBe(false)
     expect(state.readable).toBe(false)
     expect(sessions).toHaveLength(0)
+    expect(state.diagnostics?.some((item) => item.code === 'root-not-readable')).toBe(true)
   })
 
   it('recentCandidates returns empty array for missing roots', async () => {
@@ -412,6 +413,34 @@ describe('scanCandidates skipping bad files', () => {
   })
 })
 
+// ─── scan diagnostics ────────────────────────────────────────────────────────
+
+describe('scan diagnostics', () => {
+  it('reports empty and oversized skipped files', async () => {
+    const root = await makeTmpDir('scan-diagnostics-skips')
+    const emptyPath = path.join(root, 'empty.jsonl')
+    const oversizedPath = path.join(root, 'huge.jsonl')
+    const validPath = path.join(root, 'valid.jsonl')
+    await writeFile(emptyPath, '')
+    await writeFile(oversizedPath, 'x')
+    await truncate(oversizedPath, 250_000_001)
+    await writeFile(
+      validPath,
+      JSON.stringify({ type: 'response_item', payload: { role: 'user', content: 'valid' } }) + '\n',
+    )
+
+    const adapter = makeAdapter('codex', [root])
+    const { state, sessions } = await adapter.scan(makeSettings(root))
+
+    expect(sessions).toHaveLength(1)
+    expect(state.scannedFiles).toBe(1)
+    expect(state.skippedFiles).toBe(2)
+    expect(state.diagnostics?.map((item) => item.code)).toEqual(
+      expect.arrayContaining(['empty-file-skipped', 'oversized-file-skipped']),
+    )
+  })
+})
+
 // ─── adapterFor error ─────────────────────────────────────────────────────────
 
 describe('adapterFor', () => {
@@ -472,6 +501,74 @@ describe('toUniversal', () => {
     expect(typeof doc.exportedAt).toBe('string')
     expect(doc.git?.branch).toBe(sessions[0].branch)
     expect(doc.git?.projectPath).toBe(sessions[0].projectPath)
+  })
+
+  it('extracts command, file, attachment, and git diff hints', async () => {
+    const root = await makeTmpDir('to-universal-hints')
+    const filePath = path.join(root, 'session.jsonl')
+    const diff = [
+      'diff --git a/src/app.ts b/src/app.ts',
+      '--- a/src/app.ts',
+      '+++ b/src/app.ts',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+    ].join('\n')
+
+    await writeFile(
+      filePath,
+      [
+        JSON.stringify({
+          role: 'user',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          content: 'Run tests and inspect files',
+          cwd: '/workspace/project',
+          command: 'pnpm test',
+          files: [{ path: '/workspace/project/src/app.ts' }],
+          attachments: [
+            { path: '/workspace/project/screenshot.png', mediaType: 'image/png', sizeBytes: 42 },
+          ],
+          gitDiff: diff,
+        }),
+        JSON.stringify({
+          role: 'assistant',
+          timestamp: '2026-01-01T00:00:01.000Z',
+          content: 'Done',
+          cwd: '/workspace/project',
+          filePath: '/workspace/project/src/result.ts',
+          shellCommand: 'pnpm lint',
+        }),
+      ].join('\n') + '\n',
+    )
+
+    const adapter = makeAdapter('codex', [root])
+    const { sessions } = await adapter.scan(makeSettings(root))
+    const doc = await adapter.toUniversal(sessions[0])
+
+    expect(doc.commands).toEqual(
+      expect.arrayContaining([
+        { command: 'pnpm test', cwd: '/workspace/project', createdAt: '2026-01-01T00:00:00.000Z' },
+        { command: 'pnpm lint', cwd: '/workspace/project', createdAt: '2026-01-01T00:00:01.000Z' },
+      ]),
+    )
+    expect(doc.files).toEqual(
+      expect.arrayContaining([
+        {
+          path: '/workspace/project/src/app.ts',
+          reason: 'Listed in files',
+          lastSeenAt: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          path: '/workspace/project/src/result.ts',
+          reason: 'Referenced by filePath',
+          lastSeenAt: '2026-01-01T00:00:01.000Z',
+        },
+      ]),
+    )
+    expect(doc.attachments).toEqual([
+      { path: '/workspace/project/screenshot.png', mediaType: 'image/png', sizeBytes: 42 },
+    ])
+    expect(doc.git?.diff).toBe(diff)
   })
 })
 

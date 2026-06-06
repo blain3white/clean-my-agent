@@ -49,6 +49,7 @@ type SettingsViewProps = {
   onChooseFolders: () => Promise<string[]>
   onDownloadLatestUpdate: () => Promise<void>
   onRescan: () => Promise<void>
+  onPurgeExpiredTrash: () => Promise<void>
 }
 const themeOptions: Array<{ value: ThemePreference; labelKey: TranslationKey }> = [
   { value: 'system', labelKey: 'theme.system' },
@@ -221,6 +222,7 @@ export function SettingsView({
   onChooseFolders,
   onDownloadLatestUpdate,
   onRescan,
+  onPurgeExpiredTrash,
 }: SettingsViewProps) {
   const { formatRelative, t } = useI18n()
   const scanLabel = useMemo(
@@ -517,6 +519,25 @@ export function SettingsView({
                 }
                 label={toggleLabel('settings.toggleCleanupConfirmation')}
               />
+            }
+          />
+          <SettingsRow
+            icon={Clock3}
+            title={t('settings.purgeExpiredTrash')}
+            description={t('settings.purgeExpiredTrashDescription', {
+              count: snapshot.trash.length,
+              plural: snapshot.trash.length === 1 ? '' : 's',
+            })}
+            trailing={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void onPurgeExpiredTrash()}
+                className="settings-outline-button"
+              >
+                <Trash2 className="mr-2 size-4" />
+                {t('settings.purgeExpiredTrashAction')}
+              </Button>
             }
           />
           <SettingsRow

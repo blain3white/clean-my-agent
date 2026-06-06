@@ -93,6 +93,7 @@ function registerIpc(): void {
   ipcMain.handle('cleanup:trash', (_event, candidateIds: string[]) =>
     service.moveCleanupToTrash(candidateIds),
   )
+  ipcMain.handle('trash:purgeExpired', () => service.purgeExpiredTrash())
   ipcMain.handle('trash:restore', (_event, trashId: string) => service.restoreTrash(trashId))
   ipcMain.handle('relay:exportUniversal', (_event, sessionId: string) =>
     service.exportUniversalRelay(sessionId),
@@ -117,7 +118,7 @@ function registerIpc(): void {
     app.setLoginItemSettings({ openAtLogin: enabled })
     return app.getLoginItemSettings().openAtLogin
   })
-  ipcMain.handle('app:checkForUpdates', () => updateService.checkForUpdates())
+  ipcMain.handle('app:checkForUpdates', () => service.checkForUpdates())
   ipcMain.handle('app:downloadLatestUpdate', () => updateService.downloadLatestUpdate())
 }
 
