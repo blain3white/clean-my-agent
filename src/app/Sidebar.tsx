@@ -31,25 +31,27 @@ export function Sidebar({
       </div>
 
       <nav className="space-y-1">
-        {navItems.map((item) => {
-          const Icon = item.icon
-          const active = activeView === item.id
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setActiveView(item.id)}
-              className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] transition ${
-                active
-                  ? 'bg-white/11 text-white shadow-inner'
-                  : 'text-white/66 hover:bg-white/7 hover:text-white'
-              }`}
-            >
-              <Icon className="size-4" />
-              <span>{t(item.labelKey)}</span>
-            </button>
-          )
-        })}
+        {navItems
+          .filter((item) => !item.hiddenInSidebar)
+          .map((item) => {
+            const Icon = item.icon
+            const active = activeView === item.id
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setActiveView(item.id)}
+                className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] transition ${
+                  active
+                    ? 'bg-white/11 text-white shadow-inner'
+                    : 'text-white/66 hover:bg-white/7 hover:text-white'
+                }`}
+              >
+                <Icon className="size-4" />
+                <span>{t(item.labelKey)}</span>
+              </button>
+            )
+          })}
       </nav>
 
       <div className="mt-8 flex items-center justify-between px-2 text-[11px] uppercase tracking-wide text-white/35">

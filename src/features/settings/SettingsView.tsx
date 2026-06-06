@@ -275,6 +275,67 @@ export function SettingsView({
 
   return (
     <div className="mx-auto w-full max-w-[900px] space-y-5 pb-8">
+      <SettingsSection title={t('settings.app')}>
+        <SettingsPanel>
+          <SettingsRow
+            icon={Languages}
+            title={t('settings.language')}
+            description={t('settings.languageDescription')}
+            trailing={
+              <NativeSelect
+                label={t('settings.languageSelectLabel')}
+                value={language}
+                options={languageSelectOptions}
+                onChange={(value) => void onLanguageChange(value)}
+              />
+            }
+          />
+          <SettingsRow
+            icon={Palette}
+            title={t('settings.appearance')}
+            trailing={
+              <NativeSelect
+                label={t('settings.appearanceSelectLabel')}
+                value={themePreference}
+                options={themeSelectOptions}
+                onChange={onThemePreferenceChange}
+              />
+            }
+          />
+          <SettingsRow
+            title={t('settings.launchAtLogin')}
+            trailing={
+              <SwitchControl
+                checked={launchAtLogin}
+                onCheckedChange={(checked) => void onLaunchAtLoginChange(checked)}
+                label={toggleLabel('settings.toggleLaunchAtLogin')}
+              />
+            }
+          />
+          <SettingsRow
+            title={t('settings.checkForUpdates')}
+            trailing={
+              <SwitchControl
+                checked={toggles.checkUpdates}
+                onCheckedChange={(checked) => setToggle('checkUpdates', checked)}
+                label={toggleLabel('settings.toggleUpdateChecks')}
+              />
+            }
+          />
+          <SettingsRow
+            title={t('settings.showDemoData')}
+            description={t('settings.showDemoDataDescription')}
+            trailing={
+              <SwitchControl
+                checked={mockDataEnabled}
+                onCheckedChange={(checked) => void onMockDataChange(checked)}
+                label={t('settings.toggleDemoData')}
+              />
+            }
+          />
+        </SettingsPanel>
+      </SettingsSection>
+
       <SettingsSection title={t('settings.providers')}>
         <SettingsPanel>
           {agentSources.map((source) => {
@@ -498,67 +559,6 @@ export function SettingsView({
               >
                 {t('settings.play')}
               </Button>
-            }
-          />
-        </SettingsPanel>
-      </SettingsSection>
-
-      <SettingsSection title={t('settings.app')}>
-        <SettingsPanel>
-          <SettingsRow
-            icon={Languages}
-            title={t('settings.language')}
-            description={t('settings.languageDescription')}
-            trailing={
-              <NativeSelect
-                label={t('settings.languageSelectLabel')}
-                value={language}
-                options={languageSelectOptions}
-                onChange={(value) => void onLanguageChange(value)}
-              />
-            }
-          />
-          <SettingsRow
-            icon={Palette}
-            title={t('settings.appearance')}
-            trailing={
-              <NativeSelect
-                label={t('settings.appearanceSelectLabel')}
-                value={themePreference}
-                options={themeSelectOptions}
-                onChange={onThemePreferenceChange}
-              />
-            }
-          />
-          <SettingsRow
-            title={t('settings.launchAtLogin')}
-            trailing={
-              <SwitchControl
-                checked={launchAtLogin}
-                onCheckedChange={(checked) => void onLaunchAtLoginChange(checked)}
-                label={toggleLabel('settings.toggleLaunchAtLogin')}
-              />
-            }
-          />
-          <SettingsRow
-            title={t('settings.checkForUpdates')}
-            trailing={
-              <SwitchControl
-                checked={toggles.checkUpdates}
-                onCheckedChange={(checked) => setToggle('checkUpdates', checked)}
-                label={toggleLabel('settings.toggleUpdateChecks')}
-              />
-            }
-          />
-          <SettingsRow
-            title={t('settings.showDemoData')}
-            description={t('settings.showDemoDataDescription')}
-            trailing={
-              <SwitchControl
-                checked={mockDataEnabled}
-                onCheckedChange={(checked) => void onMockDataChange(checked)}
-                label={t('settings.toggleDemoData')}
-              />
             }
           />
         </SettingsPanel>
