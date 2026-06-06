@@ -71,7 +71,7 @@ Clean My Agent is a local-first Electron app for scanning, backing up, exporting
 
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **clean-my-agent** (823 symbols, 1844 relationships, 54 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **clean-my-agent** (1796 symbols, 3886 relationships, 137 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
