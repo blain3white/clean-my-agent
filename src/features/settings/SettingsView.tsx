@@ -93,18 +93,14 @@ function latestScanValue(snapshot: DashboardSnapshot): string | undefined {
 function SettingsSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-2.5">
-      <h2 className="px-0.5 text-sm font-medium text-white/54">{title}</h2>
+      <h2 className="settings-section-title px-0.5 text-sm font-medium">{title}</h2>
       {children}
     </section>
   )
 }
 
 function SettingsPanel({ children }: { children: ReactNode }) {
-  return (
-    <div className="overflow-hidden rounded-xl border border-white/10 bg-white/[0.045] shadow-[inset_0_1px_0_rgb(255_255_255_/_7%),0_22px_58px_rgb(0_0_0_/_18%)]">
-      {children}
-    </div>
-  )
+  return <div className="settings-panel overflow-hidden rounded-xl border">{children}</div>
 }
 
 function SettingsRow({
@@ -121,17 +117,19 @@ function SettingsRow({
   children?: ReactNode
 }) {
   return (
-    <div className="group flex min-h-[64px] items-center gap-4 border-b border-white/[0.075] px-5 py-3 last:border-b-0">
+    <div className="settings-row group flex min-h-[64px] items-center gap-4 border-b px-5 py-3 last:border-b-0">
       {Icon ? (
-        <div className="grid size-6 shrink-0 place-items-center text-white/78">
+        <div className="settings-row-icon grid size-6 shrink-0 place-items-center">
           <Icon className="size-[19px]" />
         </div>
       ) : (
         <div className="size-6 shrink-0" />
       )}
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[15px] font-medium text-white/86">{title}</div>
-        {description && <div className="mt-1 truncate text-sm text-white/46">{description}</div>}
+        <div className="settings-row-title truncate text-[15px] font-medium">{title}</div>
+        {description && (
+          <div className="settings-row-description mt-1 truncate text-sm">{description}</div>
+        )}
         {children}
       </div>
       {trailing && <div className="flex shrink-0 items-center justify-end gap-3">{trailing}</div>}
@@ -152,7 +150,7 @@ function SwitchControl({
     <Switch
       checked={checked}
       onCheckedChange={onCheckedChange}
-      className="data-checked:bg-blue-500 data-unchecked:bg-white/18"
+      className="settings-switch data-checked:bg-blue-500"
       aria-label={label}
     />
   )
@@ -162,10 +160,10 @@ function ValueButton({ children }: { children: ReactNode }) {
   return (
     <button
       type="button"
-      className="inline-flex h-8 min-w-28 items-center justify-between gap-3 rounded-lg border border-white/9 bg-white/[0.055] px-3 text-sm text-white/78 transition hover:bg-white/[0.085]"
+      className="settings-value-button inline-flex h-8 min-w-28 items-center justify-between gap-3 rounded-lg border px-3 text-sm transition"
     >
       <span>{children}</span>
-      <ChevronDown className="size-4 text-white/42" />
+      <ChevronDown className="settings-muted-icon size-4" />
     </button>
   )
 }
@@ -184,12 +182,12 @@ function NativeSelect<T extends string>({
   return (
     <select
       aria-label={label}
-      className="h-8 min-w-36 appearance-auto rounded-lg border border-white/9 bg-white/[0.055] px-3 text-sm text-white/78 outline-none transition hover:bg-white/[0.085] focus:border-blue-400/70 focus:ring-2 focus:ring-blue-400/25"
+      className="settings-native-select h-8 min-w-36 appearance-auto rounded-lg border px-3 text-sm outline-none transition focus:border-blue-400/70 focus:ring-2 focus:ring-blue-400/25"
       value={value}
       onChange={(event) => onChange(event.target.value as T)}
     >
       {options.map((option) => (
-        <option key={option.value} value={option.value} className="bg-[#151923]">
+        <option key={option.value} value={option.value} className="settings-native-option">
           {option.label}
         </option>
       ))}
@@ -198,7 +196,7 @@ function NativeSelect<T extends string>({
 }
 
 function ActionChevron() {
-  return <ChevronRight className="size-4 text-white/42 transition group-hover:text-white/62" />
+  return <ChevronRight className="settings-chevron size-4 transition" />
 }
 
 function ProviderStatus({
@@ -210,10 +208,14 @@ function ProviderStatus({
   enabled: boolean
   label: string
 }) {
-  const color = !enabled ? 'bg-white/38' : detected ? 'bg-emerald-300' : 'bg-amber-300'
+  const color = !enabled
+    ? 'settings-provider-dot-disabled'
+    : detected
+      ? 'settings-provider-dot-detected'
+      : 'settings-provider-dot-warning'
 
   return (
-    <span className="flex min-w-28 items-center gap-2 text-sm text-white/58">
+    <span className="settings-provider-status flex min-w-28 items-center gap-2 text-sm">
       <span className={`size-1.5 rounded-full ${color}`} />
       {label}
     </span>
@@ -283,20 +285,20 @@ export function SettingsView({
             return (
               <div
                 key={source}
-                className="flex min-h-[72px] items-center gap-4 border-b border-white/[0.075] px-5 py-3 last:border-b-0"
+                className="settings-row flex min-h-[72px] items-center gap-4 border-b px-5 py-3 last:border-b-0"
               >
                 <AgentGlyph source={source} />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[15px] font-semibold text-white/90">
+                  <div className="settings-row-title truncate text-[15px] font-semibold">
                     {agentLabel[source]}
                   </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-white/50">
+                  <div className="settings-row-description mt-1 flex flex-wrap items-center gap-2 text-sm">
                     <span>
                       {t('settings.providerSessionCount', {
                         count: agent?.sessionCount ?? 0,
                       })}
                     </span>
-                    <span className="text-white/32">•</span>
+                    <span className="settings-row-separator">•</span>
                     <span>{formatBytes(agent?.sizeBytes ?? 0)}</span>
                   </div>
                 </div>
@@ -327,7 +329,7 @@ export function SettingsView({
                 variant="ghost"
                 size="sm"
                 onClick={() => void onRescan()}
-                className="text-white/58 hover:bg-white/8 hover:text-white"
+                className="settings-ghost-button"
               >
                 {t('settings.scan')}
               </Button>
@@ -367,12 +369,12 @@ export function SettingsView({
             title={t('settings.lastScanned')}
             trailing={
               <div className="flex items-center gap-3">
-                <span className="text-sm text-white/58">{scanLabel}</span>
+                <span className="settings-trailing-value text-sm">{scanLabel}</span>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => void onRescan()}
-                  className="border-white/10 bg-white/[0.045] text-white/72 hover:bg-white/[0.085] hover:text-white"
+                  className="settings-outline-button"
                 >
                   {t('settings.scanNow')}
                 </Button>
@@ -450,7 +452,7 @@ export function SettingsView({
                   onChange={(event) => setVolume(Number(event.target.value))}
                   className="h-1.5 w-[250px] accent-blue-500"
                 />
-                <span className="w-11 text-right text-sm text-white/58">{volume}%</span>
+                <span className="settings-trailing-value w-11 text-right text-sm">{volume}%</span>
               </div>
             }
           />
@@ -492,7 +494,7 @@ export function SettingsView({
                 variant="outline"
                 size="sm"
                 onClick={() => void playCleanupSystemSound(volume / 100)}
-                className="border-white/10 bg-white/[0.045] text-white/72 hover:bg-white/[0.085] hover:text-white"
+                className="settings-outline-button"
               >
                 {t('settings.play')}
               </Button>
