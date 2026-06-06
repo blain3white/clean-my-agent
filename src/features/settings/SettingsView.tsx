@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Clock3,
   Folder,
+  Languages,
   Palette,
   Play,
   Plus,
@@ -18,13 +19,21 @@ import { AgentGlyph } from '@/components/agent-glyph'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { agentLabel, formatBytes } from '@/lib/format'
+import { languageOptions } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n-context'
 import type { TranslationKey } from '@/lib/i18n'
-import { agentSources, type AgentSource, type DashboardSnapshot } from '@/shared/types'
+import {
+  agentSources,
+  type AgentSource,
+  type AppLanguage,
+  type DashboardSnapshot,
+} from '@/shared/types'
 
 type SettingsViewProps = {
   snapshot: DashboardSnapshot
+  language: AppLanguage
   mockDataEnabled: boolean
+  onLanguageChange: (language: AppLanguage) => Promise<void>
   onMockDataChange: (enabled: boolean) => Promise<void>
   onRescan: () => Promise<void>
 }
@@ -176,7 +185,9 @@ function ProviderStatus({
 
 export function SettingsView({
   snapshot,
+  language,
   mockDataEnabled,
+  onLanguageChange,
   onMockDataChange,
   onRescan,
 }: SettingsViewProps) {
@@ -441,6 +452,25 @@ export function SettingsView({
 
       <SettingsSection title={t('settings.app')}>
         <SettingsPanel>
+          <SettingsRow
+            icon={Languages}
+            title={t('settings.language')}
+            description={t('settings.languageDescription')}
+            trailing={
+              <select
+                aria-label={t('settings.languageSelectLabel')}
+                className="h-8 min-w-36 appearance-auto rounded-lg border border-white/9 bg-white/[0.055] px-3 text-sm text-white/78 outline-none transition hover:bg-white/[0.085] focus:border-blue-400/70 focus:ring-2 focus:ring-blue-400/25"
+                value={language}
+                onChange={(event) => void onLanguageChange(event.target.value as AppLanguage)}
+              >
+                {languageOptions.map((option) => (
+                  <option key={option.value} value={option.value} className="bg-[#151923]">
+                    {option.nativeLabel}
+                  </option>
+                ))}
+              </select>
+            }
+          />
           <SettingsRow
             icon={Palette}
             title={t('settings.appearance')}

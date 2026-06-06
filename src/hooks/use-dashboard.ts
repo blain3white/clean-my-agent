@@ -219,7 +219,7 @@ export function useDashboard(): DashboardState {
         }
 
         const label = languageOptions.find((option) => option.value === language)?.nativeLabel
-        toast.success(t('toast.languageUpdated', { language: label ?? language }))
+        toast.success(translate(language, 'toast.languageUpdated', { language: label ?? language }))
       },
       rescan: async () => {
         await load(true)

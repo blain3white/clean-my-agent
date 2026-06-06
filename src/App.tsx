@@ -87,7 +87,9 @@ function App() {
         return (
           <SettingsView
             snapshot={dashboard.snapshot}
+            language={dashboard.language}
             mockDataEnabled={dashboard.mockDataEnabled}
+            onLanguageChange={dashboard.setLanguage}
             onMockDataChange={dashboard.setMockDataEnabled}
             onRescan={dashboard.rescan}
           />
