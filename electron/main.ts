@@ -81,6 +81,7 @@ function registerIpc(): void {
   ipcMain.handle('cleanup:trash', (_event, candidateIds: string[]) =>
     service.moveCleanupToTrash(candidateIds),
   )
+  ipcMain.handle('trash:purgeExpired', () => service.purgeExpiredTrash())
   ipcMain.handle('trash:restore', (_event, trashId: string) => service.restoreTrash(trashId))
   ipcMain.handle('relay:exportUniversal', (_event, sessionId: string) =>
     service.exportUniversalRelay(sessionId),

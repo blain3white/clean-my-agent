@@ -30,6 +30,7 @@ type DashboardState = {
   exportUniversalRelay: (sessionId: string) => Promise<void>
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<void>
+  purgeExpiredTrash: () => Promise<void>
 }
 
 const agentNames: Record<AgentSource, string> = {
@@ -345,6 +346,31 @@ export function useDashboard(): DashboardState {
           }),
         )
         await load(true)
+      },
+      purgeExpiredTrash: async () => {
+        if (settings.mockDataEnabled) {
+          toast.info(t('toast.trashPurgeLiveOnly'))
+          return
+        }
+
+        if (!window.cleanMyAgent) {
+          toast.info(t('toast.trashDesktopOnly'))
+          return
+        }
+
+        try {
+          const records = await window.cleanMyAgent.purgeExpiredTrash()
+          toast.success(
+            t('toast.trashPurged', {
+              count: records.length,
+              plural: records.length === 1 ? '' : 's',
+            }),
+          )
+          await load(false)
+        } catch (error) {
+          console.error(error)
+          toast.error(t('toast.trashPurgeError'))
+        }
       },
     }),
     [load, settings, snapshot.cleanup, t],

@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import type {
+  AgentScanDiagnostic,
   AgentInstallState,
   AgentSource,
   AppSettings,
@@ -37,6 +38,10 @@ type ParsedSession = {
   projectPath?: string
   branch?: string
   messages: UniversalRelayMessage[]
+  files: UniversalRelayDocument['files']
+  commands: UniversalRelayDocument['commands']
+  attachments: UniversalRelayDocument['attachments']
+  gitDiff?: string
   tokens: TokenUsage
   usageByDate: Record<string, number>
   metadata: JsonRecord
@@ -51,6 +56,18 @@ type SessionFileCandidate = {
   lastUpdated: string
   mtimeMs: number
 }
+
+type CandidateDiscovery = {
+  candidates: SessionFileCandidate[]
+  diagnostics: AgentScanDiagnostic[]
+  skippedFiles: number
+}
+
+type RelayHints = Pick<ParsedSession, 'files' | 'commands' | 'attachments' | 'gitDiff'>
+
+const maxDiagnosticsPerScan = 50
+const maxRelayItems = 500
+const maxRelayDiffLength = 200_000
 
 const emptyTokens = (): TokenUsage => ({
   input: 0,
@@ -103,6 +120,211 @@ const definitions: AgentDefinition[] = [
   },
 ]
 
+function pushDiagnostic(diagnostics: AgentScanDiagnostic[], diagnostic: AgentScanDiagnostic): void {
+  if (diagnostics.length < maxDiagnosticsPerScan) {
+    diagnostics.push(diagnostic)
+    return
+  }
+
+  const overflow = diagnostics.find((item) => item.code === 'diagnostic-overflow')
+  if (overflow) {
+    overflow.count = (overflow.count ?? 0) + 1
+    return
+  }
+
+  diagnostics.push({
+    level: 'info',
+    code: 'diagnostic-overflow',
+    message: 'Additional scan diagnostics were suppressed.',
+    count: 1,
+  })
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : 'Unknown error'
+}
+
+function isLikelyPath(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > 4096 || trimmed.includes('\0')) return false
+  if (/^(https?|data|blob):/i.test(trimmed)) return false
+  return (
+    trimmed.startsWith('/') ||
+    trimmed.startsWith('~/') ||
+    trimmed.startsWith('./') ||
+    trimmed.startsWith('../') ||
+    /^[A-Za-z]:[\\/]/.test(trimmed)
+  )
+}
+
+function mediaTypeFromPath(filePath: string): string | undefined {
+  const extension = path.extname(filePath).toLowerCase()
+  if (extension === '.png') return 'image/png'
+  if (extension === '.jpg' || extension === '.jpeg') return 'image/jpeg'
+  if (extension === '.webp') return 'image/webp'
+  if (extension === '.gif') return 'image/gif'
+  if (extension === '.svg') return 'image/svg+xml'
+  if (extension === '.pdf') return 'application/pdf'
+  if (extension === '.json') return 'application/json'
+  if (extension === '.md') return 'text/markdown'
+  if (extension === '.txt' || extension === '.log') return 'text/plain'
+  return undefined
+}
+
+function createRelayHints(): RelayHints {
+  return {
+    files: [],
+    commands: [],
+    attachments: [],
+  }
+}
+
+function addRelayFile(
+  hints: RelayHints,
+  filePath: string | undefined,
+  reason: string,
+  lastSeenAt?: string,
+): void {
+  if (!filePath || !isLikelyPath(filePath)) return
+  if (hints.files.some((item) => item.path === filePath)) return
+  if (hints.files.length >= maxRelayItems) return
+  hints.files.push({ path: filePath, reason, lastSeenAt })
+}
+
+function addRelayCommand(
+  hints: RelayHints,
+  command: string | undefined,
+  cwd?: string,
+  createdAt?: string,
+): void {
+  const normalized = command?.replace(/\s+/g, ' ').trim()
+  if (!normalized || normalized.length > 4096) return
+  if (hints.commands.some((item) => item.command === normalized && item.cwd === cwd)) return
+  if (hints.commands.length >= maxRelayItems) return
+  hints.commands.push({ command: normalized, cwd, createdAt })
+}
+
+function addRelayAttachment(
+  hints: RelayHints,
+  filePath: string | undefined,
+  mediaType?: string,
+  sizeBytes?: number,
+): void {
+  if (!filePath || !isLikelyPath(filePath)) return
+  if (hints.attachments.some((item) => item.path === filePath)) return
+  if (hints.attachments.length >= maxRelayItems) return
+  hints.attachments.push({
+    path: filePath,
+    mediaType: mediaType ?? mediaTypeFromPath(filePath),
+    sizeBytes,
+  })
+}
+
+function timestampFromRecord(record: JsonRecord): string | undefined {
+  const payload = toRecord(record.payload)
+  const message = toRecord(record.message)
+  return (
+    asString(record.timestamp) ??
+    asString(record.created_at) ??
+    asString(record.createdAt) ??
+    asString(message?.timestamp) ??
+    asString(message?.created_at) ??
+    asString(message?.createdAt) ??
+    asString(payload?.timestamp) ??
+    asString(payload?.created_at) ??
+    asString(payload?.createdAt)
+  )
+}
+
+function extractRelayHints(
+  value: unknown,
+  hints: RelayHints,
+  inherited?: { cwd?: string; createdAt?: string },
+  depth = 0,
+): void {
+  if (depth > 5) return
+  if (Array.isArray(value)) {
+    value.forEach((item) => extractRelayHints(item, hints, inherited, depth + 1))
+    return
+  }
+
+  const record = toRecord(value)
+  if (!record) return
+
+  const cwd =
+    asString(record.cwd) ??
+    asString(record.projectPath) ??
+    asString(record.project_path) ??
+    inherited?.cwd
+  const createdAt = timestampFromRecord(record) ?? inherited?.createdAt
+  const command =
+    asString(record.command) ??
+    asString(record.cmd) ??
+    asString(record.shell_command) ??
+    asString(record.shellCommand) ??
+    asString(record.terminalCommand)
+  addRelayCommand(hints, command, cwd, createdAt)
+
+  const diff = asString(record.diff) ?? asString(record.gitDiff) ?? asString(record.patch)
+  if (diff && !hints.gitDiff && /\bdiff --git\b|^@@\s|^\+\+\+ /m.test(diff)) {
+    hints.gitDiff = diff.slice(0, maxRelayDiffLength)
+  }
+
+  const pathKeys = ['path', 'file', 'filePath', 'file_path', 'filename', 'workspaceFile', 'uri']
+  pathKeys.forEach((key) => {
+    const filePath = asString(record[key])
+    addRelayFile(hints, filePath, `Referenced by ${key}`, createdAt)
+  })
+
+  const attachmentValues = [record.attachments, record.attachment]
+  attachmentValues.forEach((attachments) => {
+    if (!Array.isArray(attachments)) {
+      const attachmentPath = asString(attachments)
+      addRelayAttachment(hints, attachmentPath)
+      return
+    }
+
+    attachments.forEach((attachment) => {
+      const attachmentRecord = toRecord(attachment)
+      if (!attachmentRecord) {
+        addRelayAttachment(hints, asString(attachment))
+        return
+      }
+      const attachmentPath =
+        asString(attachmentRecord.path) ??
+        asString(attachmentRecord.filePath) ??
+        asString(attachmentRecord.file_path) ??
+        asString(attachmentRecord.filename)
+      addRelayAttachment(
+        hints,
+        attachmentPath,
+        asString(attachmentRecord.mediaType) ?? asString(attachmentRecord.mimeType),
+        optionalNumberFromRecord(attachmentRecord, ['sizeBytes', 'size_bytes', 'size']),
+      )
+    })
+  })
+
+  Object.entries(record).forEach(([key, child]) => {
+    if (key === 'raw') return
+    if (key === 'files' && Array.isArray(child)) {
+      child.forEach((item) => {
+        const itemRecord = toRecord(item)
+        if (!itemRecord) {
+          addRelayFile(hints, asString(item), 'Listed in files', createdAt)
+          return
+        }
+        const filePath =
+          asString(itemRecord.path) ??
+          asString(itemRecord.filePath) ??
+          asString(itemRecord.file_path) ??
+          asString(itemRecord.filename)
+        addRelayFile(hints, filePath, 'Listed in files', createdAt)
+      })
+    }
+    extractRelayHints(child, hints, { cwd, createdAt }, depth + 1)
+  })
+}
+
 function textFromContent(value: unknown): string {
   if (typeof value === 'string') return value
   if (Array.isArray(value)) return value.map(textFromContent).filter(Boolean).join('\n')
@@ -154,18 +376,7 @@ function findStringByKeys(value: unknown, keys: string[], depth = 0): string | u
 }
 
 function dateKeyFromRecord(record: JsonRecord): string | undefined {
-  const payload = toRecord(record.payload)
-  const message = toRecord(record.message)
-  const timestamp =
-    asString(record.timestamp) ??
-    asString(record.created_at) ??
-    asString(record.createdAt) ??
-    asString(message?.timestamp) ??
-    asString(message?.created_at) ??
-    asString(message?.createdAt) ??
-    asString(payload?.timestamp) ??
-    asString(payload?.created_at) ??
-    asString(payload?.createdAt)
+  const timestamp = timestampFromRecord(record)
 
   if (!timestamp) return undefined
   const date = new Date(timestamp)
@@ -505,6 +716,7 @@ function projectNameFromPath(projectPath: string | undefined, filePath: string):
 async function parseJsonLike(filePath: string): Promise<ParsedSession> {
   const messages: UniversalRelayMessage[] = []
   const metadata: JsonRecord = {}
+  const relayHints = createRelayHints()
   const usageByDate: Record<string, number> = {}
   let sampleForHints: unknown
   let tokens = emptyTokens()
@@ -535,6 +747,7 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
         currentModel = record ? (modelHintFromRecord(record) ?? currentModel) : currentModel
         const usage = extractUsage(json, seenUsageIds, currentModel)
         addTokens(tokens, usage)
+        extractRelayHints(json, relayHints)
         const dateKey = record ? dateKeyFromRecord(record) : undefined
         if (dateKey && usage.total > 0)
           usageByDate[dateKey] = (usageByDate[dateKey] ?? 0) + usage.total
@@ -559,6 +772,7 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
       if (isCursorWorkspaceRecord(json)) metadata.sourceFormat = 'cursor-workspace-json'
       const record = toRecord(json)
       currentModel = record ? modelHintFromRecord(record) : undefined
+      extractRelayHints(json, relayHints)
       const array =
         (Array.isArray(json) && json) ||
         (Array.isArray(record?.messages) && record?.messages) ||
@@ -595,6 +809,10 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
     ]),
     branch: findStringByKeys(sampleForHints, ['branch', 'gitBranch', 'git_branch']),
     messages,
+    files: relayHints.files,
+    commands: relayHints.commands,
+    attachments: relayHints.attachments,
+    gitDiff: relayHints.gitDiff,
     tokens,
     usageByDate,
     metadata: {
@@ -628,7 +846,7 @@ export class AgentAdapter {
 
   async recentCandidates(settings: AppSettings, limit: number): Promise<SessionFileCandidate[]> {
     const roots = await this.readableRoots(settings)
-    const candidates = await this.fileCandidates(roots)
+    const { candidates } = await this.fileCandidates(roots)
     return candidates.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, limit)
   }
 
@@ -636,14 +854,38 @@ export class AgentAdapter {
     settings: AppSettings,
   ): Promise<{ state: AgentInstallState; sessions: SessionRecord[] }> {
     const roots = this.roots(settings)
-    const readableRoots = await this.readableRoots(settings)
-    const files = await this.fileCandidates(readableRoots)
+    const rootChecks = await Promise.all(
+      roots.map(async (root) => ({ root, isReadable: await readable(root) })),
+    )
+    const readableRoots = rootChecks.filter((item) => item.isReadable).map((item) => item.root)
+    const diagnostics: AgentScanDiagnostic[] = []
+    rootChecks
+      .filter((item) => !item.isReadable)
+      .forEach((item) => {
+        pushDiagnostic(diagnostics, {
+          level: 'warning',
+          code: 'root-not-readable',
+          message: 'Scan root is missing or not readable.',
+          path: item.root,
+        })
+      })
+    const discovery = await this.fileCandidates(readableRoots)
+    diagnostics.push(...discovery.diagnostics)
+    const files = discovery.candidates
 
     const sessions: SessionRecord[] = []
+    let skippedFiles = discovery.skippedFiles
     for (const candidate of files) {
       try {
         sessions.push(await this.parseCandidate(candidate))
-      } catch {
+      } catch (error) {
+        skippedFiles += 1
+        pushDiagnostic(diagnostics, {
+          level: 'warning',
+          code: 'parse-failed',
+          message: `Could not parse session file: ${errorMessage(error)}`,
+          path: candidate.path,
+        })
         continue
       }
     }
@@ -666,8 +908,11 @@ export class AgentAdapter {
         rootPaths: roots,
         sessionCount: sessions.length,
         sizeBytes,
+        scannedFiles: files.length,
+        skippedFiles,
         lastScannedAt: new Date().toISOString(),
         note: this.definition.note,
+        diagnostics,
       },
       sessions,
     }
@@ -693,13 +938,14 @@ export class AgentAdapter {
       source: session.source,
       session,
       messages: parsed.messages,
-      files: [],
-      commands: [],
+      files: parsed.files,
+      commands: parsed.commands,
       git: {
         branch: session.branch,
         projectPath: session.projectPath,
+        diff: parsed.gitDiff,
       },
-      attachments: [],
+      attachments: parsed.attachments,
       warnings: [
         'This is a generic relay export. Agent-specific import converters can transform this document later.',
       ],
@@ -715,7 +961,7 @@ export class AgentAdapter {
     return readableRoots
   }
 
-  private async fileCandidates(roots: string[]): Promise<SessionFileCandidate[]> {
+  private async fileCandidates(roots: string[]): Promise<CandidateDiscovery> {
     const filesByRoot = await Promise.all(
       roots.map(async (root) => ({
         root,
@@ -724,12 +970,32 @@ export class AgentAdapter {
     )
 
     const candidates: SessionFileCandidate[] = []
+    const diagnostics: AgentScanDiagnostic[] = []
+    let skippedFiles = 0
     for (const { root, files } of filesByRoot) {
       for (const filePath of files) {
         try {
           const info = await stat(filePath)
-          if (info.size === 0) continue
-          if (info.size > 250_000_000) continue
+          if (info.size === 0) {
+            skippedFiles += 1
+            pushDiagnostic(diagnostics, {
+              level: 'info',
+              code: 'empty-file-skipped',
+              message: 'Skipped an empty session file.',
+              path: filePath,
+            })
+            continue
+          }
+          if (info.size > 250_000_000) {
+            skippedFiles += 1
+            pushDiagnostic(diagnostics, {
+              level: 'warning',
+              code: 'oversized-file-skipped',
+              message: 'Skipped a session file larger than 250 MB.',
+              path: filePath,
+            })
+            continue
+          }
 
           candidates.push({
             path: filePath,
@@ -740,13 +1006,20 @@ export class AgentAdapter {
             lastUpdated: info.mtime.toISOString(),
             mtimeMs: info.mtimeMs,
           })
-        } catch {
+        } catch (error) {
+          skippedFiles += 1
+          pushDiagnostic(diagnostics, {
+            level: 'warning',
+            code: 'candidate-stat-failed',
+            message: `Could not inspect session file: ${errorMessage(error)}`,
+            path: filePath,
+          })
           continue
         }
       }
     }
 
-    return candidates
+    return { candidates, diagnostics, skippedFiles }
   }
 
   private async parseCandidate(candidate: SessionFileCandidate): Promise<SessionRecord> {

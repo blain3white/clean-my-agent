@@ -42,6 +42,7 @@ type SettingsViewProps = {
   onLaunchAtLoginChange: (enabled: boolean) => Promise<void>
   onMockDataChange: (enabled: boolean) => Promise<void>
   onRescan: () => Promise<void>
+  onPurgeExpiredTrash: () => Promise<void>
 }
 
 type ToggleKey =
@@ -233,6 +234,7 @@ export function SettingsView({
   onLaunchAtLoginChange,
   onMockDataChange,
   onRescan,
+  onPurgeExpiredTrash,
 }: SettingsViewProps) {
   const { formatRelative, t } = useI18n()
   const [providers, setProviders] = useState(initialProviderState)
@@ -469,6 +471,25 @@ export function SettingsView({
                 onCheckedChange={(checked) => setToggle('confirmCleanup', checked)}
                 label={toggleLabel('settings.toggleCleanupConfirmation')}
               />
+            }
+          />
+          <SettingsRow
+            icon={Clock3}
+            title={t('settings.purgeExpiredTrash')}
+            description={t('settings.purgeExpiredTrashDescription', {
+              count: snapshot.trash.length,
+              plural: snapshot.trash.length === 1 ? '' : 's',
+            })}
+            trailing={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void onPurgeExpiredTrash()}
+                className="settings-outline-button"
+              >
+                <Trash2 className="mr-2 size-4" />
+                {t('settings.purgeExpiredTrashAction')}
+              </Button>
             }
           />
           <SettingsRow

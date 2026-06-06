@@ -1,22 +1,43 @@
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Sidebar } from '@/app/Sidebar'
 import { Topbar } from '@/app/Topbar'
 import type { ViewId } from '@/app/navigation'
-import { CleanupView } from '@/features/cleanup/CleanupView'
-import { HealthView } from '@/features/health/HealthView'
-import { OverviewView } from '@/features/overview/OverviewView'
-import { RelayView } from '@/features/relay/RelayView'
-import { SessionsView } from '@/features/sessions/SessionsView'
-import { SettingsView } from '@/features/settings/SettingsView'
-import { UsageView } from '@/features/usage/UsageView'
 import { exportUsageCsv } from '@/features/usage/usage-analytics'
 import type { UsagePageRange, UsageRange } from '@/features/usage/ranges'
 import { useDashboard } from '@/hooks/use-dashboard'
 import { useTheme } from '@/hooks/use-theme'
 import { I18nProvider } from '@/lib/i18n-provider'
 import './App.css'
+
+const CleanupView = lazy(() =>
+  import('@/features/cleanup/CleanupView').then((module) => ({ default: module.CleanupView })),
+)
+const HealthView = lazy(() =>
+  import('@/features/health/HealthView').then((module) => ({ default: module.HealthView })),
+)
+const OverviewView = lazy(() =>
+  import('@/features/overview/OverviewView').then((module) => ({ default: module.OverviewView })),
+)
+const RelayView = lazy(() =>
+  import('@/features/relay/RelayView').then((module) => ({ default: module.RelayView })),
+)
+const SessionsView = lazy(() =>
+  import('@/features/sessions/SessionsView').then((module) => ({ default: module.SessionsView })),
+)
+const SettingsView = lazy(() =>
+  import('@/features/settings/SettingsView').then((module) => ({ default: module.SettingsView })),
+)
+const UsageView = lazy(() =>
+  import('@/features/usage/UsageView').then((module) => ({ default: module.UsageView })),
+)
+
+const viewFallback = (
+  <div className="flex min-h-[320px] items-center justify-center text-sm text-white/45">
+    Loading...
+  </div>
+)
 
 function App() {
   const [activeView, setActiveView] = useState<ViewId>('overview')
@@ -96,6 +117,7 @@ function App() {
             onLaunchAtLoginChange={dashboard.setLaunchAtLogin}
             onMockDataChange={dashboard.setMockDataEnabled}
             onRescan={dashboard.rescan}
+            onPurgeExpiredTrash={dashboard.purgeExpiredTrash}
           />
         )
       default:
@@ -150,7 +172,7 @@ function App() {
                     : 'min-w-[1120px] p-5'
                 }
               >
-                {content}
+                <Suspense fallback={viewFallback}>{content}</Suspense>
               </div>
             </div>
           </main>

@@ -2,6 +2,7 @@ import path from 'node:path'
 import type {
   AgentSource,
   AppLanguage,
+  AgentInstallState,
   ArchiveRecord,
   AppSettings,
   BackupRecord,
@@ -13,7 +14,7 @@ import type {
   TrashRecord,
   UsagePoint,
 } from '../../src/shared/types'
-import { appLanguages, defaultLanguage } from '../../src/shared/types'
+import { agentSources, appLanguages, defaultLanguage, exportFormats } from '../../src/shared/types'
 import { adapters, adapterFor } from './adapters'
 import { LocalDatabase } from './database'
 import {
@@ -22,6 +23,7 @@ import {
   decompressFileBrotli,
   ensureDir,
   exists,
+  expandHome,
   hashFile,
   hashId,
   movePath,
@@ -34,6 +36,13 @@ import {
 const oneDayMs = 24 * 60 * 60 * 1000
 const usageHistoryDays = 365
 const scanSchemaVersion = 3
+const maxPathLength = 4096
+const maxRetentionDays = 36_500
+const relayModes: AppSettings['defaultRelayMode'][] = [
+  'full-context',
+  'fit-to-window',
+  'manual-select',
+]
 const agentLabels: Record<AgentSource, string> = {
   codex: 'Codex',
   claude: 'Claude Code',
@@ -48,6 +57,147 @@ function formatDateKey(date: Date): string {
 
 function bytesFromRecords(records: Array<{ sizeBytes: number }>): number {
   return records.reduce((total, record) => total + record.sizeBytes, 0)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isSafePathString(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > maxPathLength || trimmed.includes('\0')) return false
+  if (/^(https?|data|blob|file):/i.test(trimmed)) return false
+  return path.isAbsolute(trimmed) || trimmed.startsWith('~/') || /^[A-Za-z]:[\\/]/.test(trimmed)
+}
+
+function normalizePath(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !isSafePathString(value)) {
+    throw new Error(`${label} must be an absolute local path.`)
+  }
+  return expandHome(value.trim())
+}
+
+function validateIdentifier(value: unknown, label: string): string {
+  if (
+    typeof value !== 'string' ||
+    !value.trim() ||
+    value.length > 256 ||
+    value.includes('\0') ||
+    !/^[\w:./-]+$/.test(value)
+  ) {
+    throw new Error(`${label} must be a non-empty identifier.`)
+  }
+  return value
+}
+
+function validateIdentifierArray(value: unknown, label: string): string[] {
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array.`)
+  return Array.from(new Set(value.map((item) => validateIdentifier(item, label))))
+}
+
+function normalizeDays(value: unknown, label: string): number {
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < 0 ||
+    value > maxRetentionDays
+  ) {
+    throw new Error(`${label} must be an integer between 0 and ${maxRetentionDays}.`)
+  }
+  return value
+}
+
+function safeDays(value: unknown, fallback: number): number {
+  return typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= maxRetentionDays
+    ? value
+    : fallback
+}
+
+function safeBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
+}
+
+function safePath(value: unknown, fallback: string): string {
+  return typeof value === 'string' && isSafePathString(value) ? expandHome(value.trim()) : fallback
+}
+
+function normalizeScanRoots(value: unknown): AppSettings['scanRoots'] | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value)) throw new Error('scanRoots must be an object.')
+
+  const scanRoots: AppSettings['scanRoots'] = {}
+  Object.entries(value).forEach(([source, roots]) => {
+    if (!agentSources.includes(source as AgentSource)) {
+      throw new Error(`Unsupported scan root source: ${source}`)
+    }
+    if (!Array.isArray(roots)) throw new Error(`scanRoots.${source} must be an array.`)
+    scanRoots[source as AgentSource] = roots.map((root) =>
+      normalizePath(root, `scanRoots.${source}`),
+    )
+  })
+
+  return scanRoots
+}
+
+function safeScanRoots(value: unknown): AppSettings['scanRoots'] {
+  if (!isRecord(value)) return {}
+  const scanRoots: AppSettings['scanRoots'] = {}
+  Object.entries(value).forEach(([source, roots]) => {
+    if (!agentSources.includes(source as AgentSource) || !Array.isArray(roots)) return
+    const safeRoots = roots
+      .filter((root): root is string => typeof root === 'string' && isSafePathString(root))
+      .map((root) => expandHome(root.trim()))
+    if (safeRoots.length > 0) scanRoots[source as AgentSource] = safeRoots
+  })
+  return scanRoots
+}
+
+function normalizeSettingsPatch(patch: Partial<AppSettings>): Partial<AppSettings> {
+  if (!isRecord(patch)) throw new Error('settings patch must be an object.')
+
+  const next: Partial<AppSettings> = {}
+  if ('scanRoots' in patch) next.scanRoots = normalizeScanRoots(patch.scanRoots)
+  if ('cleanupRetentionDays' in patch) {
+    next.cleanupRetentionDays = normalizeDays(patch.cleanupRetentionDays, 'cleanupRetentionDays')
+  }
+  if ('trashRetentionDays' in patch) {
+    next.trashRetentionDays = normalizeDays(patch.trashRetentionDays, 'trashRetentionDays')
+  }
+  if ('autoBackup' in patch) {
+    if (typeof patch.autoBackup !== 'boolean') throw new Error('autoBackup must be a boolean.')
+    next.autoBackup = patch.autoBackup
+  }
+  if ('mockDataEnabled' in patch) {
+    if (typeof patch.mockDataEnabled !== 'boolean') {
+      throw new Error('mockDataEnabled must be a boolean.')
+    }
+    next.mockDataEnabled = patch.mockDataEnabled
+  }
+  if ('language' in patch) {
+    if (!appLanguages.includes(patch.language as AppLanguage)) {
+      throw new Error('language is not supported.')
+    }
+    next.language = patch.language as AppLanguage
+  }
+  if ('launchAtLogin' in patch) {
+    if (typeof patch.launchAtLogin !== 'boolean')
+      throw new Error('launchAtLogin must be a boolean.')
+    next.launchAtLogin = patch.launchAtLogin
+  }
+  if ('defaultRelayMode' in patch) {
+    if (!relayModes.includes(patch.defaultRelayMode as AppSettings['defaultRelayMode'])) {
+      throw new Error('defaultRelayMode is not supported.')
+    }
+    next.defaultRelayMode = patch.defaultRelayMode as AppSettings['defaultRelayMode']
+  }
+  if ('exportDirectory' in patch) {
+    next.exportDirectory = normalizePath(patch.exportDirectory, 'exportDirectory')
+  }
+
+  return next
 }
 
 function archiveBytes(records: ArchiveRecord[]): number {
@@ -115,6 +265,7 @@ export class AppService {
   private readonly db: LocalDatabase
   private readonly userDataPath: string
   private readonly openPathHandler: (targetPath: string) => Promise<unknown>
+  private scanStates = new Map<AgentSource, AgentInstallState>()
   private settings?: AppSettings
 
   constructor(options: {
@@ -148,20 +299,22 @@ export class AppService {
     const liveSessions = sessions.filter((session) => session.storageState === 'live')
     const cleanup = this.buildCleanupCandidates(liveSessions, backups)
     const agents = await Promise.all(
-      adapters.map(async (adapter) => {
+      adapters.map(async (adapter): Promise<AgentInstallState> => {
         const sourceSessions = sessions.filter((session) => session.source === adapter.source)
         const liveSourceSessions = sourceSessions.filter(
           (session) => session.storageState === 'live',
         )
+        const state = this.scanStates.get(adapter.source)
         return {
+          ...state,
           source: adapter.source,
           name: adapter.name,
-          installed: sourceSessions.length > 0,
-          readable: sourceSessions.length > 0,
-          rootPaths: adapter.roots(this.requireSettings()),
+          installed: state?.installed ?? sourceSessions.length > 0,
+          readable: state?.readable ?? sourceSessions.length > 0,
+          rootPaths: state?.rootPaths ?? adapter.roots(this.requireSettings()),
           sessionCount: sourceSessions.length,
           sizeBytes: bytesFromRecords(liveSourceSessions),
-          lastScannedAt: new Date().toISOString(),
+          lastScannedAt: state?.lastScannedAt,
         }
       }),
     )
@@ -192,6 +345,7 @@ export class AppService {
   async rescan(): Promise<DashboardSnapshot> {
     const settings = this.requireSettings()
     const results = await Promise.all(adapters.map((adapter) => adapter.scan(settings)))
+    this.scanStates = new Map(results.map((result) => [result.state.source, result.state]))
     const sessions = results.flatMap((result) => result.sessions)
     this.db.replaceSessions(this.mergeBackupStatus(sessions))
     this.db.setSetting('scanSchemaVersion', scanSchemaVersion)
@@ -221,7 +375,7 @@ export class AppService {
   }
 
   async backupSession(sessionId: string): Promise<BackupRecord> {
-    const session = this.requireSession(sessionId)
+    const session = this.requireSession(validateIdentifier(sessionId, 'sessionId'))
     const createdAt = new Date().toISOString()
     const backupRoot = path.join(this.userDataPath, 'Backups', session.source)
     const extension = path.extname(session.storagePath)
@@ -245,7 +399,7 @@ export class AppService {
   }
 
   async archiveSession(sessionId: string): Promise<ArchiveRecord> {
-    const session = this.requireSession(sessionId)
+    const session = this.requireSession(validateIdentifier(sessionId, 'sessionId'))
     if (session.storageState === 'archived') {
       const existing = this.db.getArchiveBySessionId(sessionId)
       if (existing) return existing
@@ -302,7 +456,7 @@ export class AppService {
   }
 
   async restoreArchive(archiveId: string): Promise<void> {
-    const record = this.db.getArchiveRecord(archiveId)
+    const record = this.db.getArchiveRecord(validateIdentifier(archiveId, 'archiveId'))
     if (!record) throw new Error(`Archive item not found: ${archiveId}`)
     if (await exists(record.originalPath)) {
       throw new Error(
@@ -322,7 +476,8 @@ export class AppService {
   }
 
   async exportSession(sessionId: string, format: ExportFormat): Promise<string> {
-    const session = this.requireSession(sessionId)
+    if (!exportFormats.includes(format)) throw new Error(`Unsupported export format: ${format}`)
+    const session = this.requireSession(validateIdentifier(sessionId, 'sessionId'))
     const exportRoot = this.requireSettings().exportDirectory
     const basename = `${sanitizeName(session.title)}-${session.id}`
 
@@ -343,7 +498,7 @@ export class AppService {
   }
 
   async exportUniversalRelay(sessionId: string): Promise<string> {
-    const session = this.requireSession(sessionId)
+    const session = this.requireSession(validateIdentifier(sessionId, 'sessionId'))
     const adapter = adapterFor(session.source)
     const archive =
       session.storageState === 'archived' ? this.db.getArchiveBySessionId(session.id) : undefined
@@ -382,8 +537,9 @@ export class AppService {
   }
 
   async moveCleanupToTrash(candidateIds: string[]): Promise<TrashRecord[]> {
+    const ids = validateIdentifierArray(candidateIds, 'candidateIds')
     const candidates = await this.scanCleanup()
-    const selected = candidates.filter((candidate) => candidateIds.includes(candidate.id))
+    const selected = candidates.filter((candidate) => ids.includes(candidate.id))
     const records: TrashRecord[] = []
 
     for (const candidate of selected) {
@@ -430,7 +586,7 @@ export class AppService {
   }
 
   async restoreTrash(trashId: string): Promise<void> {
-    const record = this.db.getTrashRecord(trashId)
+    const record = this.db.getTrashRecord(validateIdentifier(trashId, 'trashId'))
     if (!record) throw new Error(`Trash item not found: ${trashId}`)
 
     for (const originalPath of record.originalPaths) {
@@ -441,18 +597,37 @@ export class AppService {
     await this.rescan()
   }
 
+  async purgeExpiredTrash(): Promise<TrashRecord[]> {
+    const retentionMs = this.requireSettings().trashRetentionDays * oneDayMs
+    const now = Date.now()
+    const purged: TrashRecord[] = []
+
+    for (const record of this.db.getTrash()) {
+      const deletedAt = new Date(record.deletedAt).getTime()
+      if (Number.isNaN(deletedAt)) continue
+      if (now - deletedAt <= retentionMs) continue
+
+      await removePath(record.trashPath)
+      this.db.deleteTrashRecord(record.id)
+      purged.push(record)
+    }
+
+    return purged
+  }
+
   getSettings(): AppSettings {
     return this.requireSettings()
   }
 
   updateSettings(patch: Partial<AppSettings>): AppSettings {
     const current = this.requireSettings()
+    const normalizedPatch = normalizeSettingsPatch(patch)
     const next = this.mergeSettings({
       ...current,
-      ...patch,
+      ...normalizedPatch,
       scanRoots: {
         ...current.scanRoots,
-        ...patch.scanRoots,
+        ...normalizedPatch.scanRoots,
       },
     })
     this.settings = next
@@ -461,7 +636,7 @@ export class AppService {
   }
 
   async openPath(targetPath: string): Promise<void> {
-    await this.openPathHandler(targetPath)
+    await this.openPathHandler(normalizePath(targetPath, 'targetPath'))
   }
 
   private defaultSettings(): AppSettings {
@@ -480,17 +655,26 @@ export class AppService {
 
   private mergeSettings(settings?: Partial<AppSettings>): AppSettings {
     const defaults = this.defaultSettings()
+    const raw = isRecord(settings) ? settings : {}
+    const language = appLanguages.includes(raw.language as AppLanguage)
+      ? (raw.language as AppLanguage)
+      : defaults.language
+    const defaultRelayMode = relayModes.includes(
+      raw.defaultRelayMode as AppSettings['defaultRelayMode'],
+    )
+      ? (raw.defaultRelayMode as AppSettings['defaultRelayMode'])
+      : defaults.defaultRelayMode
     return {
       ...defaults,
-      ...settings,
-      language: appLanguages.includes(settings?.language as AppLanguage)
-        ? (settings?.language as AppLanguage)
-        : defaults.language,
-      scanRoots: {
-        ...defaults.scanRoots,
-        ...settings?.scanRoots,
-      },
-      exportDirectory: settings?.exportDirectory || defaults.exportDirectory,
+      cleanupRetentionDays: safeDays(raw.cleanupRetentionDays, defaults.cleanupRetentionDays),
+      trashRetentionDays: safeDays(raw.trashRetentionDays, defaults.trashRetentionDays),
+      autoBackup: safeBoolean(raw.autoBackup, defaults.autoBackup),
+      mockDataEnabled: safeBoolean(raw.mockDataEnabled, defaults.mockDataEnabled),
+      language,
+      launchAtLogin: safeBoolean(raw.launchAtLogin, defaults.launchAtLogin),
+      defaultRelayMode,
+      scanRoots: safeScanRoots(raw.scanRoots),
+      exportDirectory: safePath(raw.exportDirectory, defaults.exportDirectory),
     }
   }
 

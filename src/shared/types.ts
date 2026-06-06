@@ -16,6 +16,14 @@ export type RiskLevel = 'low' | 'medium' | 'high'
 
 export type TokenCostSource = 'actual' | 'model-estimate' | 'mixed'
 
+export type AgentScanDiagnostic = {
+  level: 'info' | 'warning' | 'error'
+  code: string
+  message: string
+  path?: string
+  count?: number
+}
+
 export type TokenUsage = {
   input: number
   output: number
@@ -37,8 +45,11 @@ export type AgentInstallState = {
   rootPaths: string[]
   sessionCount: number
   sizeBytes: number
+  scannedFiles?: number
+  skippedFiles?: number
   lastScannedAt?: string
   note?: string
+  diagnostics?: AgentScanDiagnostic[]
 }
 
 export type SessionRecord = {
@@ -194,7 +205,9 @@ export type UniversalRelayDocument = {
   warnings: string[]
 }
 
-export type ExportFormat = 'json' | 'markdown' | 'universal-json'
+export const exportFormats = ['json', 'markdown', 'universal-json'] as const
+
+export type ExportFormat = (typeof exportFormats)[number]
 
 export type AppSettings = {
   scanRoots: Partial<Record<AgentSource, string[]>>
@@ -220,6 +233,7 @@ export type CleanMyAgentApi = {
   exportSession: (sessionId: string, format: ExportFormat) => Promise<string>
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<TrashRecord[]>
+  purgeExpiredTrash: () => Promise<TrashRecord[]>
   restoreTrash: (trashId: string) => Promise<void>
   exportUniversalRelay: (sessionId: string) => Promise<string>
   getSettings: () => Promise<AppSettings>

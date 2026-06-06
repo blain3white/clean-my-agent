@@ -12,6 +12,7 @@ const api: CleanMyAgentApi = {
     ipcRenderer.invoke('session:export', sessionId, format),
   scanCleanup: (sessionId?: string) => ipcRenderer.invoke('cleanup:scan', sessionId),
   moveCleanupToTrash: (candidateIds: string[]) => ipcRenderer.invoke('cleanup:trash', candidateIds),
+  purgeExpiredTrash: () => ipcRenderer.invoke('trash:purgeExpired'),
   restoreTrash: (trashId: string) => ipcRenderer.invoke('trash:restore', trashId),
   exportUniversalRelay: (sessionId: string) =>
     ipcRenderer.invoke('relay:exportUniversal', sessionId),
