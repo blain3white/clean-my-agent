@@ -42,9 +42,11 @@ export function Topbar({
       ? t('topbar.usageSubtitle')
       : activeView === 'cleanup'
         ? t('topbar.cleanupSubtitle')
-        : mockDataEnabled
-          ? t('topbar.demoSubtitle')
-          : t('topbar.localSubtitle')
+        : activeView === 'skills'
+          ? t('topbar.skillsSubtitle')
+          : mockDataEnabled
+            ? t('topbar.demoSubtitle')
+            : t('topbar.localSubtitle')
 
   return (
     <header className="drag-region flex h-16 shrink-0 items-center justify-between border-b border-white/8 px-7">

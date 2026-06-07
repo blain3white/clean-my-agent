@@ -14,6 +14,7 @@ export default defineConfig({
         'src/lib/**/*.ts',
         'src/shared/usage-pricing.ts',
         'src/features/cleanup/*.ts',
+        'src/features/skills/*.ts',
         'src/features/usage/*.ts',
       ],
       exclude: [

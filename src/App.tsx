@@ -29,6 +29,9 @@ const SessionsView = lazy(() =>
 const SettingsView = lazy(() =>
   import('@/features/settings/SettingsView').then((module) => ({ default: module.SettingsView })),
 )
+const SkillsView = lazy(() =>
+  import('@/features/skills/SkillsView').then((module) => ({ default: module.SkillsView })),
+)
 const UsageView = lazy(() =>
   import('@/features/usage/UsageView').then((module) => ({ default: module.UsageView })),
 )
@@ -84,6 +87,8 @@ function App() {
             onMoveToTrash={dashboard.moveCleanupToTrash}
           />
         )
+      case 'skills':
+        return <SkillsView />
       case 'usage':
         return (
           <UsageView
