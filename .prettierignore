@@ -1,4 +1,7 @@
 node_modules
+.next
+apps/*/.next
+apps/*/next-env.d.ts
 dist
 dist-ssr
 out
