@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppService } from './app-service'
-import { agentSources, type AgentSource } from '../../src/shared/types'
+import { agentSources, type AgentSource, type DiagnosticReport } from '../../src/shared/types'
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -718,6 +718,54 @@ describe('exportUniversalRelay', () => {
     }
     expect(relay.schema).toBe('clean-my-agent.universal-session.v1')
     expect(relay.messages.some((m) => m.text.includes('rare migration needle'))).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// exportDiagnostics
+// ---------------------------------------------------------------------------
+
+describe('exportDiagnostics', () => {
+  it('exports diagnostics without session content, metadata, raw paths, or secrets', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const sessionPath = await writeJsonlSession(fixtureRoot, 'codex', {
+      contentExtra: ' SECRET_DIAGNOSTIC_NEEDLE api_key=sk-local-test',
+    })
+    const snapshot = await service.rescan()
+    const session = snapshot.sessions.find((s) => s.source === 'codex')
+    assert.ok(session)
+
+    await rm(sessionPath)
+    await expect(service.archiveSession(session.id)).rejects.toThrow(/Session file not found/)
+
+    const exportPath = await service.exportDiagnostics()
+    const raw = await readFile(exportPath, 'utf8')
+    const report = JSON.parse(raw) as DiagnosticReport
+
+    expect(report.schema).toBe('clean-my-agent.diagnostic-report.v1')
+    expect(report.app.version).toBe('0.0.0')
+    expect(report.scanSources.some((source) => source.source === 'codex')).toBe(true)
+    expect(report.performance.some((metric) => metric.operation === 'app.rescan')).toBe(true)
+    expect(report.errorLogs.some((entry) => entry.operation === 'session.archive')).toBe(true)
+    expect(report.privacy).toEqual({
+      fullPaths: 'redacted',
+      sessionContent: 'excluded',
+      sessionMetadata: 'excluded',
+      operationArguments: 'excluded',
+    })
+
+    expect(raw).not.toContain('SECRET_DIAGNOSTIC_NEEDLE')
+    expect(raw).not.toContain('sk-local-test')
+    expect(raw).not.toContain('rare migration needle')
+    expect(raw).not.toContain(fixtureRoot)
+    expect(raw).not.toContain(userDataPath)
+    expect(raw).not.toContain(sessionPath)
+    expect(report.scanSources.flatMap((source) => source.rootIds)).not.toContain(sessionPath)
+    expect(
+      report.scanSources.every((source) =>
+        source.diagnostics.every((diagnostic) => !('path' in diagnostic)),
+      ),
+    ).toBe(true)
   })
 })
 

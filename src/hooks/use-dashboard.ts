@@ -53,6 +53,7 @@ type DashboardState = {
   restoreArchive: (archiveId: string) => Promise<void>
   exportSession: (sessionId: string, format: ExportFormat) => Promise<void>
   exportUniversalRelay: (sessionId: string) => Promise<void>
+  exportDiagnostics: () => Promise<void>
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<void>
   restoreTrash: (trashId: string) => Promise<void>
@@ -632,6 +633,20 @@ export function useDashboard(): DashboardState {
         }
         const exportPath = await window.cleanMyAgent.exportUniversalRelay(sessionId)
         toast.success(t('toast.relayExported', { path: exportPath }))
+      },
+      exportDiagnostics: async () => {
+        if (!window.cleanMyAgent) {
+          toast.info(t('toast.diagnosticsDesktopOnly'))
+          return
+        }
+
+        try {
+          const exportPath = await window.cleanMyAgent.exportDiagnostics()
+          toast.success(t('toast.diagnosticsExported', { path: exportPath }))
+        } catch (error) {
+          console.error(error)
+          toast.error(t('toast.diagnosticsExportError'))
+        }
       },
       scanCleanup: async () => {
         if (settings.mockDataEnabled || !window.cleanMyAgent) {

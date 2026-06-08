@@ -131,6 +131,7 @@ function App() {
             onSettingsChange={dashboard.updateSettings}
             onChooseFolders={dashboard.chooseFolders}
             onDownloadLatestUpdate={dashboard.downloadLatestUpdate}
+            onExportDiagnostics={dashboard.exportDiagnostics}
             onRescan={dashboard.rescan}
             onRestoreTrash={dashboard.restoreTrash}
             onPurgeExpiredTrash={dashboard.purgeExpiredTrash}

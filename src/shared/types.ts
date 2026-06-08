@@ -297,6 +297,98 @@ export type UpdateDownloadResult = UpdateReleaseCheckResult & {
   downloadedBytes?: number
 }
 
+export type DiagnosticOperationStatus = 'success' | 'error'
+
+export type DiagnosticOperation = {
+  id: string
+  operation: string
+  startedAt: string
+  finishedAt: string
+  durationMs: number
+  status: DiagnosticOperationStatus
+  error?: {
+    name: string
+    message: string
+  }
+}
+
+export type DiagnosticPerformanceMetric = {
+  operation: string
+  count: number
+  errorCount: number
+  averageDurationMs: number
+  maxDurationMs: number
+  lastDurationMs: number
+  lastFinishedAt: string
+}
+
+export type DiagnosticReport = {
+  schema: 'clean-my-agent.diagnostic-report.v1'
+  generatedAt: string
+  app: {
+    name: string
+    version: string
+    nodeVersion: string
+    electronVersion?: string
+    chromeVersion?: string
+    v8Version?: string
+  }
+  system: {
+    platform: string
+    arch: string
+    release: string
+    cpuCount: number
+    totalMemoryBytes: number
+    freeMemoryBytes: number
+    locale: string
+    timezone: string
+  }
+  privacy: {
+    fullPaths: 'redacted'
+    sessionContent: 'excluded'
+    sessionMetadata: 'excluded'
+    operationArguments: 'excluded'
+  }
+  settings: {
+    language: AppLanguage
+    usageTimezone: string
+    scanOnLaunch: boolean
+    backgroundScan: boolean
+    mockDataEnabled: boolean
+    cleanupRetentionDays: number
+    trashRetentionDays: number
+    excludedFolderCount: number
+    customScanRootCount: number
+    enabledProviders: Partial<Record<AgentSource, boolean>>
+  }
+  scanSources: Array<{
+    source: AgentSource
+    name: string
+    enabled: boolean
+    installed: boolean
+    readable: boolean
+    rootCount: number
+    configuredRootCount: number
+    rootIds: string[]
+    sessionCount: number
+    liveSessionCount: number
+    sizeBytes: number
+    scannedFiles?: number
+    skippedFiles?: number
+    lastScannedAt?: string
+    diagnostics: Array<{
+      level: AgentScanDiagnostic['level']
+      code: string
+      message: string
+      pathId?: string
+      count?: number
+    }>
+  }>
+  errorLogs: DiagnosticOperation[]
+  recentOperations: DiagnosticOperation[]
+  performance: DiagnosticPerformanceMetric[]
+}
+
 export type CleanMyAgentApi = {
   getSnapshot: () => Promise<DashboardSnapshot>
   rescan: () => Promise<DashboardSnapshot>
@@ -317,6 +409,7 @@ export type CleanMyAgentApi = {
   chooseFolders: () => Promise<string[]>
   openPath: (path: string) => Promise<void>
   playSystemSound: () => Promise<void>
+  exportDiagnostics: () => Promise<string>
   getLaunchAtLogin: () => Promise<boolean>
   setLaunchAtLogin: (enabled: boolean) => Promise<boolean>
   checkForUpdates: () => Promise<UpdateReleaseCheckResult>

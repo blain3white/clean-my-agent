@@ -453,6 +453,10 @@ const en = {
   'settings.providerFolderBlocked': 'Folder missing or permission blocked',
   'settings.showDemoData': 'Show demo data',
   'settings.showDemoDataDescription': 'Use curated values for visual review',
+  'settings.exportDiagnostics': 'Export diagnostics',
+  'settings.exportDiagnosticsDescription':
+    'Create a privacy-safe report with system info, scan sources, errors, recent actions, and timings.',
+  'settings.exportDiagnosticsAction': 'Export report',
   'toast.readSettingsError': 'Could not read app settings.',
   'toast.readLocalDataError': 'Could not read local agent data.',
   'toast.updateSettingsError': 'Could not update app settings.',
@@ -478,6 +482,9 @@ const en = {
   'toast.exported': 'Exported to {path}',
   'toast.relayDesktopOnly': 'Universal relay export is available in the desktop app',
   'toast.relayExported': 'Universal JSON exported to {path}',
+  'toast.diagnosticsDesktopOnly': 'Diagnostics export is available in the desktop app',
+  'toast.diagnosticsExported': 'Diagnostics report exported to {path}',
+  'toast.diagnosticsExportError': 'Could not export diagnostics report.',
   'toast.trashDesktopOnly': 'Trash cleanup is available in the desktop app',
   'toast.cleanupMoved': '{count} cleanup item{plural} moved to Trash',
   'toast.trashPurgeLiveOnly': 'Expired Trash purge is only available with live local data.',
@@ -808,6 +815,10 @@ const zh: Partial<Record<TranslationKey, string>> = {
   'settings.providerFolderBlocked': '目录不存在或权限不足',
   'settings.showDemoData': '显示演示数据',
   'settings.showDemoDataDescription': '使用精选数据进行视觉检查',
+  'settings.exportDiagnostics': '导出诊断报告',
+  'settings.exportDiagnosticsDescription':
+    '生成隐私安全报告，包含系统信息、扫描源、错误、最近操作和耗时。',
+  'settings.exportDiagnosticsAction': '导出报告',
 }
 
 const zhExtra: Partial<Record<TranslationKey, string>> = {
@@ -930,6 +941,9 @@ const zhExtra: Partial<Record<TranslationKey, string>> = {
   'toast.exported': '已导出到 {path}',
   'toast.relayDesktopOnly': '通用 relay 导出仅在桌面应用中可用',
   'toast.relayExported': 'Universal JSON 已导出到 {path}',
+  'toast.diagnosticsDesktopOnly': '诊断报告导出仅在桌面应用中可用',
+  'toast.diagnosticsExported': '诊断报告已导出到 {path}',
+  'toast.diagnosticsExportError': '无法导出诊断报告。',
   'toast.trashDesktopOnly': '回收站清理仅在桌面应用中可用',
   'toast.cleanupMoved': '已将 {count} 个清理项移到回收站',
   'toast.trashPurgeLiveOnly': '过期回收站清理仅适用于实时本地数据。',

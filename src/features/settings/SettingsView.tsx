@@ -4,6 +4,7 @@ import {
   Bell,
   Clock3,
   Download,
+  FileJson,
   Folder,
   FolderX,
   Languages,
@@ -55,6 +56,7 @@ type SettingsViewProps = {
   ) => Promise<AppSettings>
   onChooseFolders: () => Promise<string[]>
   onDownloadLatestUpdate: () => Promise<void>
+  onExportDiagnostics: () => Promise<void>
   onRescan: () => Promise<void>
   onRestoreTrash: (trashId: string) => Promise<void>
   onPurgeExpiredTrash: () => Promise<void>
@@ -303,6 +305,7 @@ export function SettingsView({
   onSettingsChange,
   onChooseFolders,
   onDownloadLatestUpdate,
+  onExportDiagnostics,
   onRescan,
   onRestoreTrash,
   onPurgeExpiredTrash,
@@ -477,6 +480,22 @@ export function SettingsView({
                 onCheckedChange={(checked) => void onMockDataChange(checked)}
                 label={t('settings.toggleDemoData')}
               />
+            }
+          />
+          <SettingsRow
+            icon={FileJson}
+            title={t('settings.exportDiagnostics')}
+            description={t('settings.exportDiagnosticsDescription')}
+            trailing={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void onExportDiagnostics()}
+                className="settings-outline-button"
+              >
+                <Download className="mr-2 size-4" />
+                {t('settings.exportDiagnosticsAction')}
+              </Button>
             }
           />
         </SettingsPanel>
