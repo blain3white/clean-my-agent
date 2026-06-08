@@ -32,6 +32,7 @@ function compactSessionForStorage(session: SessionRecord): SessionRecord {
       relativePath: session.metadata.relativePath,
       sourceFormat: session.metadata.sourceFormat,
       usageByDate: session.metadata.usageByDate,
+      usageEvents: session.metadata.usageEvents,
     },
   }
 }

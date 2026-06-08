@@ -45,6 +45,7 @@ type ParsedSession = {
   gitDiff?: string
   tokens: TokenUsage
   usageByDate: Record<string, number>
+  usageEvents: Array<{ timestamp: string; tokens: number }>
   metadata: JsonRecord
 }
 
@@ -406,6 +407,15 @@ function dateKeyFromRecord(record: JsonRecord): string | undefined {
   return date.toISOString().slice(0, 10)
 }
 
+function timestampFromUsageRecord(record: JsonRecord): string | undefined {
+  const timestamp = timestampFromRecord(record)
+  if (!timestamp) return undefined
+
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return undefined
+  return date.toISOString()
+}
+
 function numberFromRecord(record: JsonRecord, keys: string[]): number {
   for (const key of keys) {
     const value = record[key]
@@ -740,6 +750,7 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
   const metadata: JsonRecord = {}
   const relayHints = createRelayHints()
   const usageByDate: Record<string, number> = {}
+  const usageEvents: Array<{ timestamp: string; tokens: number }> = []
   let sampleForHints: unknown
   let tokens = emptyTokens()
   let currentModel: string | undefined
@@ -773,6 +784,10 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
         const dateKey = record ? dateKeyFromRecord(record) : undefined
         if (dateKey && usage.total > 0)
           usageByDate[dateKey] = (usageByDate[dateKey] ?? 0) + usage.total
+        const usageTimestamp = record ? timestampFromUsageRecord(record) : undefined
+        if (usageTimestamp && usage.total > 0) {
+          usageEvents.push({ timestamp: usageTimestamp, tokens: usage.total })
+        }
         sampleForHints ??= json
       } catch {
         if (messages.length < 3000 && line.length > 24) {
@@ -837,9 +852,11 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
     gitDiff: relayHints.gitDiff,
     tokens,
     usageByDate,
+    usageEvents,
     metadata: {
       ...metadata,
       usageByDate,
+      usageEvents,
       costSource: tokens.costSource,
       model: tokens.model,
     },

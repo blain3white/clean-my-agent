@@ -1,13 +1,14 @@
 import {
   Archive,
   ArrowRightLeft,
-  CheckCircle2,
+  Check,
   Circle,
   Copy,
   Database,
   FileJson2,
   HardDrive,
   ListFilter,
+  Minus,
   MoreHorizontal,
   RefreshCcw,
   Search,
@@ -19,16 +20,21 @@ import { toast } from 'sonner'
 import { AgentGlyph } from '@/components/agent-glyph'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { agentLabel } from '@/lib/format'
 import type { TranslationKey } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n-context'
 import { agentSources, type SkillsSnapshot, type SkillsSummary } from '@/shared/types'
 import {
-  categoryLabelKey,
   filterSkills,
   statusLabelKey,
-  summarizeVisibleSkills,
   type ManagedSkill,
   type SkillOwnerFilter,
   type SkillStatus,
@@ -158,17 +164,40 @@ function StatusPill({ status }: { status: SkillStatus }) {
   )
 }
 
-function SkillCheckbox({ checked }: { checked: boolean }) {
+function SkillCheckbox({ checked, mixed = false }: { checked: boolean; mixed?: boolean }) {
   return (
     <span
-      className={`grid size-[18px] place-items-center rounded-[4px] border ${
-        checked
+      className={`skill-checkbox grid size-[18px] place-items-center rounded-[4px] border ${
+        checked || mixed
           ? 'border-emerald-300/50 bg-emerald-400/80 text-[#061411]'
           : 'border-white/22 bg-white/[0.02]'
       }`}
     >
-      {checked && <CheckCircle2 className="size-3.5" />}
+      <Check className={`skill-checkbox-mark size-3.5 ${checked ? 'opacity-100' : 'opacity-0'}`} />
+      <Minus className={`skill-checkbox-mark size-3.5 ${mixed ? 'opacity-100' : 'opacity-0'}`} />
     </span>
+  )
+}
+
+function SkillAgentIcons({ skill }: { skill: ManagedSkill }) {
+  const { t } = useI18n()
+
+  return (
+    <div className="skills-agent-icons">
+      {skill.linkedAgents.map((source) => (
+        <Tooltip key={source}>
+          <TooltipTrigger asChild>
+            <span
+              className="skills-agent-icon"
+              aria-label={t('skills.agentLinked', { agent: agentLabel[source] })}
+            >
+              <AgentGlyph source={source} />
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{agentLabel[source]}</TooltipContent>
+        </Tooltip>
+      ))}
+    </div>
   )
 }
 
@@ -218,12 +247,14 @@ function SkillRow({
   selected,
   active,
   onSelect,
+  onToggleSelected,
   updatedLabel,
 }: {
   skill: ManagedSkill
   selected: boolean
   active: boolean
   onSelect: (skill: ManagedSkill) => void
+  onToggleSelected: (skillId: string) => void
   updatedLabel: string
 }) {
   const { t } = useI18n()
@@ -234,29 +265,28 @@ function SkillRow({
       onClick={() => onSelect(skill)}
     >
       <td className="w-11 pl-4">
-        <SkillCheckbox checked={selected} />
+        <button
+          type="button"
+          className="grid size-8 place-items-center rounded-md hover:bg-white/8"
+          aria-label={selected ? t('skills.deselectVisible') : t('skills.selectVisible')}
+          onClick={(event) => {
+            event.stopPropagation()
+            onToggleSelected(skill.id)
+          }}
+        >
+          <SkillCheckbox checked={selected} />
+        </button>
       </td>
       <td className="w-[310px] py-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <SkillIcon skill={skill} />
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium text-white">{skill.name}</div>
-            <div className="mt-0.5 max-w-[230px] truncate text-[11px] text-white/42">
-              {skill.description}
-            </div>
+        <div className="min-w-0 pr-5">
+          <div className="truncate text-sm font-medium text-white">{skill.name}</div>
+          <div className="mt-0.5 max-w-[300px] truncate text-[11px] text-white/42">
+            {skill.description}
           </div>
         </div>
       </td>
-      <td className="w-[170px]">
-        <div className="flex items-center gap-2">
-          <AgentGlyph source={skill.ownerAgent} />
-          <span className="text-sm text-white/60">{agentLabel[skill.ownerAgent]}</span>
-        </div>
-      </td>
-      <td className="w-[150px]">
-        <span className={`skills-category skills-category-${skill.category}`}>
-          {t(categoryLabelKey(skill.category))}
-        </span>
+      <td className="w-[220px]">
+        <SkillAgentIcons skill={skill} />
       </td>
       <td className="w-[104px] text-sm text-white/55">{updatedLabel}</td>
       <td className="w-[86px] text-sm text-white/55">{skill.sizeKb} KB</td>
@@ -293,102 +323,114 @@ function DetailField({ label, value }: { label: string; value: string | number }
   )
 }
 
+function SkillContentPreview({ content }: { content: string }) {
+  const { t } = useI18n()
+  const preview = content.trim()
+
+  if (!preview) {
+    return (
+      <div className="skills-content-preview skills-content-empty mt-3">
+        {t('skills.contentUnavailable')}
+      </div>
+    )
+  }
+
+  return <pre className="skills-content-preview mt-3">{preview}</pre>
+}
+
 function formatAbsoluteDate(value: string, locale: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleString(locale)
 }
 
-function SkillsDetailPanel({ skill }: { skill: ManagedSkill }) {
+function SkillsDetailDrawer({
+  skill,
+  open,
+  onOpenChange,
+}: {
+  skill?: ManagedSkill
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
   const { locale, t, formatRelative } = useI18n()
-  const extraAgents = Math.max(0, skill.linkedAgents.length - 3)
 
   return (
-    <aside className="skills-detail-panel">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <SkillIcon skill={skill} />
-          <div className="min-w-0">
-            <h2 className="text-lg font-semibold leading-tight text-white">{skill.name}</h2>
-          </div>
-        </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="text-white/45 hover:bg-white/8 hover:text-white"
-          aria-label={t('skills.closeDetails')}
-        >
-          <X className="size-4" />
-        </Button>
-      </div>
+    <Sheet open={open && Boolean(skill)} onOpenChange={onOpenChange}>
+      <SheetContent className="skills-detail-drawer w-[min(440px,92vw)] p-0 sm:max-w-[440px]">
+        {skill && (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <SheetHeader className="border-b border-white/8 px-5 py-5">
+              <div className="flex min-w-0 items-start gap-3 pr-8">
+                <SkillIcon skill={skill} />
+                <div className="min-w-0">
+                  <SheetTitle className="truncate text-lg font-semibold leading-tight text-white">
+                    {skill.name}
+                  </SheetTitle>
+                  <SheetDescription className="mt-1 line-clamp-2 text-sm leading-5 text-white/50">
+                    {skill.description}
+                  </SheetDescription>
+                </div>
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <StatusPill status={skill.status} />
+              </div>
+            </SheetHeader>
 
-      <div className="mt-4 flex items-center gap-2">
-        <StatusPill status={skill.status} />
-      </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+              <section className="mt-5">
+                <h3 className="text-sm font-semibold text-white">{t('skills.description')}</h3>
+                <p className="mt-3 text-sm leading-6 text-white/55">{skill.description}</p>
+              </section>
 
-      <div className="mt-5 border-t border-white/8 pt-4">
-        <h3 className="text-sm font-semibold text-white">{t('skills.description')}</h3>
-        <p className="mt-3 text-sm leading-6 text-white/55">{skill.description}</p>
-      </div>
+              <section className="mt-5 border-t border-white/8 pt-4">
+                <h3 className="text-sm font-semibold text-white">{t('skills.contentPreview')}</h3>
+                <SkillContentPreview content={skill.content} />
+              </section>
 
-      <div className="mt-5 border-t border-white/8 pt-4">
-        <h3 className="text-sm font-semibold text-white">{t('skills.linkedAgents')}</h3>
-        <div className="mt-4 flex items-center gap-4">
-          {skill.linkedAgents.slice(0, 3).map((source) => (
-            <div key={source} className="grid justify-items-center gap-1.5">
-              <AgentGlyph source={source} />
-              <span className="text-xs text-white/62">{agentLabel[source]}</span>
+              <section className="mt-5 border-t border-white/8 pt-4">
+                <h3 className="text-sm font-semibold text-white">{t('skills.linkedAgents')}</h3>
+                <div className="mt-4 flex flex-wrap items-center gap-4">
+                  {skill.linkedAgents.map((source) => (
+                    <Tooltip key={source}>
+                      <TooltipTrigger asChild>
+                        <span
+                          className="inline-grid place-items-center"
+                          aria-label={t('skills.agentLinked', { agent: agentLabel[source] })}
+                        >
+                          <AgentGlyph source={source} />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>{agentLabel[source]}</TooltipContent>
+                    </Tooltip>
+                  ))}
+                </div>
+              </section>
+
+              <dl className="mt-5 space-y-4 border-t border-white/8 pt-4">
+                <DetailField label={t('skills.version')} value={skill.version} />
+                <DetailField
+                  label={t('skills.created')}
+                  value={formatAbsoluteDate(skill.createdAt, locale)}
+                />
+                <DetailField label={t('skills.updated')} value={formatRelative(skill.updatedAt)} />
+                <DetailField
+                  label={t('skills.lastBackup')}
+                  value={
+                    skill.lastBackupAt
+                      ? formatAbsoluteDate(skill.lastBackupAt, locale)
+                      : t('time.never')
+                  }
+                />
+                <DetailField label={t('skills.usageCount')} value={skill.usageCount} />
+                <DetailField label={t('skills.size')} value={`${skill.sizeKb} KB`} />
+                <DetailField label={t('skills.location')} value={skill.location} />
+              </dl>
             </div>
-          ))}
-          {extraAgents > 0 && <span className="text-sm text-white/45">+{extraAgents} more</span>}
-        </div>
-        <p className="mt-3 text-sm text-white/38">
-          {t('skills.totalAgents', { count: skill.linkedAgents.length })}
-        </p>
-      </div>
-
-      <dl className="mt-5 space-y-4 border-t border-white/8 pt-4">
-        <DetailField label={t('skills.version')} value={skill.version} />
-        <DetailField
-          label={t('skills.created')}
-          value={formatAbsoluteDate(skill.createdAt, locale)}
-        />
-        <DetailField label={t('skills.updated')} value={formatRelative(skill.updatedAt)} />
-        <DetailField
-          label={t('skills.lastBackup')}
-          value={
-            skill.lastBackupAt ? formatAbsoluteDate(skill.lastBackupAt, locale) : t('time.never')
-          }
-        />
-        <DetailField label={t('skills.usageCount')} value={skill.usageCount} />
-        <DetailField label={t('skills.size')} value={`${skill.sizeKb} KB`} />
-        <DetailField label={t('skills.category')} value={t(categoryLabelKey(skill.category))} />
-        <DetailField label={t('skills.location')} value={skill.location} />
-      </dl>
-
-      <div className="mt-6 grid gap-3">
-        <Button className="skills-detail-action" variant="outline">
-          <ArrowRightLeft className="size-4" />
-          {t('skills.transfer')}
-        </Button>
-        <Button className="skills-detail-action" variant="outline">
-          <Copy className="size-4" />
-          {t('skills.duplicate')}
-        </Button>
-        <Button className="skills-detail-action" variant="outline">
-          <Archive className="size-4" />
-          {t('skills.backupNow')}
-        </Button>
-        <Button
-          className="skills-detail-action border-red-400/45 bg-red-500/10 text-red-300 hover:bg-red-500/16 hover:text-red-200"
-          variant="outline"
-        >
-          <Trash2 className="size-4" />
-          {t('skills.deleteSkill')}
-        </Button>
-      </div>
-    </aside>
+          </div>
+        )}
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -401,6 +443,7 @@ export function SkillsView() {
   const [loading, setLoading] = useState(true)
   const [scanError, setScanError] = useState(false)
   const [activeSkillId, setActiveSkillId] = useState<string>()
+  const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(() => new Set())
   const loadSkills = useCallback(async () => {
     if (!window.cleanMyAgent?.getSkills) {
       setSnapshot(emptySnapshot())
@@ -414,7 +457,13 @@ export function SkillsView() {
     try {
       const next = await window.cleanMyAgent.getSkills()
       setSnapshot(next)
-      setActiveSkillId((current) => current ?? next.skills[0]?.id)
+      setActiveSkillId((current) =>
+        current && next.skills.some((skill) => skill.id === current) ? current : undefined,
+      )
+      setSelectedSkillIds((current) => {
+        const availableIds = new Set(next.skills.map((skill) => skill.id))
+        return new Set(Array.from(current).filter((skillId) => availableIds.has(skillId)))
+      })
     } catch (error) {
       console.error(error)
       toast.error(t('skills.scanError'))
@@ -436,11 +485,39 @@ export function SkillsView() {
     () => filterSkills(snapshot.skills, query, owner, status),
     [owner, query, snapshot.skills, status],
   )
-  const visibleSummary = summarizeVisibleSkills(visibleSkills)
-  const activeSkill = visibleSkills.find((skill) => skill.id === activeSkillId) ?? visibleSkills[0]
-  const selectedIds = new Set(visibleSummary.selectedIds)
+  const activeSkill = snapshot.skills.find((skill) => skill.id === activeSkillId)
+  const visibleSkillIds = useMemo(() => visibleSkills.map((skill) => skill.id), [visibleSkills])
+  const selectedVisibleCount = visibleSkillIds.filter((skillId) =>
+    selectedSkillIds.has(skillId),
+  ).length
+  const allVisibleSelected =
+    visibleSkillIds.length > 0 && selectedVisibleCount === visibleSkillIds.length
+  const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected
+  const hasSelection = selectedSkillIds.size > 0
   const hasSkills = snapshot.skills.length > 0
   const hasVisibleSkills = visibleSkills.length > 0
+  const toggleSkillSelection = useCallback((skillId: string) => {
+    setSelectedSkillIds((current) => {
+      const next = new Set(current)
+      if (next.has(skillId)) {
+        next.delete(skillId)
+      } else {
+        next.add(skillId)
+      }
+      return next
+    })
+  }, [])
+  const toggleVisibleSelection = useCallback(() => {
+    setSelectedSkillIds((current) => {
+      const next = new Set(current)
+      if (allVisibleSelected) {
+        visibleSkillIds.forEach((skillId) => next.delete(skillId))
+      } else {
+        visibleSkillIds.forEach((skillId) => next.add(skillId))
+      }
+      return next
+    })
+  }, [allVisibleSelected, visibleSkillIds])
 
   return (
     <div className="skills-page">
@@ -519,25 +596,50 @@ export function SkillsView() {
         <div className="skills-table-panel">
           <div className="skills-bulkbar">
             <span className="text-sm text-white/55">
-              {t('skills.selectedCount', { count: visibleSummary.selectedIds.length })}
+              {t('skills.selectedCount', { count: selectedSkillIds.size })}
             </span>
-            <Button variant="ghost" size="sm" className="skills-bulk-button">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="skills-bulk-button"
+              disabled={!hasSelection}
+            >
               <ArrowRightLeft className="size-4" />
               {t('skills.transfer')}
             </Button>
-            <Button variant="ghost" size="sm" className="skills-bulk-button">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="skills-bulk-button"
+              disabled={!hasSelection}
+            >
               <Copy className="size-4" />
               {t('skills.copy')}
             </Button>
-            <Button variant="ghost" size="sm" className="skills-bulk-button">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="skills-bulk-button"
+              disabled={!hasSelection}
+            >
               <Archive className="size-4" />
               {t('skills.backup')}
             </Button>
-            <Button variant="ghost" size="sm" className="skills-bulk-button">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="skills-bulk-button"
+              disabled={!hasSelection}
+            >
               <Trash2 className="size-4" />
               {t('skills.delete')}
             </Button>
-            <button type="button" className="ml-auto text-sm text-white/38 hover:text-white/70">
+            <button
+              type="button"
+              className="ml-auto text-sm text-white/38 hover:text-white/70 disabled:cursor-not-allowed disabled:text-white/20"
+              disabled={!hasSelection}
+              onClick={() => setSelectedSkillIds(new Set())}
+            >
               {t('skills.clearSelection')}
             </button>
             <X className="size-4 text-white/42" />
@@ -547,11 +649,20 @@ export function SkillsView() {
             <thead>
               <tr className="h-12 border-b border-white/8 text-left text-xs font-medium text-white/45">
                 <th className="w-11 pl-4">
-                  <SkillCheckbox checked={false} />
+                  <button
+                    type="button"
+                    className="grid size-8 place-items-center rounded-md hover:bg-white/8 disabled:cursor-not-allowed"
+                    disabled={!hasVisibleSkills}
+                    aria-label={
+                      allVisibleSelected ? t('skills.deselectVisible') : t('skills.selectVisible')
+                    }
+                    onClick={toggleVisibleSelection}
+                  >
+                    <SkillCheckbox checked={allVisibleSelected} mixed={someVisibleSelected} />
+                  </button>
                 </th>
-                <th className="w-[310px]">{t('skills.skill')}</th>
-                <th className="w-[170px]">{t('skills.ownerAgent')}</th>
-                <th className="w-[150px]">{t('skills.category')}</th>
+                <th className="w-[360px]">{t('skills.skill')}</th>
+                <th className="w-[220px]">{t('skills.ownerAgent')}</th>
                 <th className="w-[104px]">{t('skills.updated')}</th>
                 <th className="w-[86px]">{t('skills.size')}</th>
                 <th className="w-[140px]">{t('skills.status')}</th>
@@ -563,12 +674,13 @@ export function SkillsView() {
                 <SkillRow
                   key={skill.id}
                   skill={skill}
-                  selected={selectedIds.has(skill.id)}
+                  selected={selectedSkillIds.has(skill.id)}
                   active={skill.id === activeSkill?.id}
                   updatedLabel={formatRelative(skill.updatedAt)}
                   onSelect={(nextSkill) => {
                     setActiveSkillId(nextSkill.id)
                   }}
+                  onToggleSelected={toggleSkillSelection}
                 />
               ))}
             </tbody>
@@ -635,14 +747,13 @@ export function SkillsView() {
         </div>
       </section>
 
-      {activeSkill ? (
-        <SkillsDetailPanel skill={activeSkill} />
-      ) : (
-        <aside className="skills-detail-panel">
-          <div className="text-sm font-semibold text-white">{t('skills.emptyDetailsTitle')}</div>
-          <p className="mt-3 text-sm leading-6 text-white/45">{t('skills.emptyDetailsBody')}</p>
-        </aside>
-      )}
+      <SkillsDetailDrawer
+        skill={activeSkill}
+        open={Boolean(activeSkill)}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setActiveSkillId(undefined)
+        }}
+      />
     </div>
   )
 }

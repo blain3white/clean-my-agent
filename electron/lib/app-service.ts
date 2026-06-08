@@ -46,6 +46,8 @@ const relayModes: AppSettings['defaultRelayMode'][] = [
   'fit-to-window',
   'manual-select',
 ]
+const defaultUsageTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+const dateKeyFormatterCache = new Map<string, Intl.DateTimeFormat>()
 const agentLabels: Record<AgentSource, string> = {
   codex: 'Codex',
   claude: 'Claude Code',
@@ -55,8 +57,33 @@ const agentLabels: Record<AgentSource, string> = {
   custom: 'Custom',
 }
 
-function formatDateKey(date: Date): string {
-  return date.toISOString().slice(0, 10)
+function isSupportedTimezone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: value }).format(new Date())
+    return true
+  } catch {
+    return false
+  }
+}
+
+function normalizeTimezone(value: unknown, fallback = defaultUsageTimezone): string {
+  if (typeof value !== 'string' || !value.trim()) return fallback
+  const timezone = value.trim()
+  return isSupportedTimezone(timezone) ? timezone : fallback
+}
+
+function dateKeyForTimezone(date: Date, timezone: string): string {
+  let formatter = dateKeyFormatterCache.get(timezone)
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+    dateKeyFormatterCache.set(timezone, formatter)
+  }
+  return formatter.format(date)
 }
 
 function bytesFromRecords(records: Array<{ sizeBytes: number }>): number {
@@ -182,6 +209,13 @@ function normalizeVolume(value: unknown): number {
   return value
 }
 
+function normalizeTimezoneSetting(value: unknown): string {
+  if (typeof value !== 'string' || !isSupportedTimezone(value.trim())) {
+    throw new Error('usageTimezone must be a supported IANA time zone.')
+  }
+  return value.trim()
+}
+
 function safeScanRoots(value: unknown): AppSettings['scanRoots'] {
   if (!isRecord(value)) return {}
   const scanRoots: AppSettings['scanRoots'] = {}
@@ -220,6 +254,9 @@ function normalizeSettingsPatch(patch: Partial<AppSettings>): Partial<AppSetting
       throw new Error('language is not supported.')
     }
     next.language = patch.language as AppLanguage
+  }
+  if ('usageTimezone' in patch) {
+    next.usageTimezone = normalizeTimezoneSetting(patch.usageTimezone)
   }
   if ('launchAtLogin' in patch) {
     next.launchAtLogin = normalizeBoolean(patch.launchAtLogin, 'launchAtLogin')
@@ -298,6 +335,29 @@ function usageByDateFromMetadata(
   })
 
   return usageByDate
+}
+
+function usageEventsByDateFromMetadata(
+  metadata: Record<string, unknown>,
+  timezone: string,
+): Record<string, number> | undefined {
+  const value = metadata.usageEvents
+  if (!Array.isArray(value)) return undefined
+
+  const usageByDate: Record<string, number> = {}
+  value.forEach((item) => {
+    if (!isRecord(item)) return
+    const timestamp = typeof item.timestamp === 'string' ? item.timestamp : undefined
+    const tokens = typeof item.tokens === 'number' && Number.isFinite(item.tokens) ? item.tokens : 0
+    if (!timestamp || tokens <= 0) return
+
+    const date = new Date(timestamp)
+    if (Number.isNaN(date.getTime())) return
+    const key = dateKeyForTimezone(date, timezone)
+    usageByDate[key] = (usageByDate[key] ?? 0) + tokens
+  })
+
+  return Object.keys(usageByDate).length > 0 ? usageByDate : undefined
 }
 
 function markdownForSession(session: SessionRecord): string {
@@ -745,6 +805,7 @@ export class AppService {
       autoBackup: true,
       mockDataEnabled: false,
       language: defaultLanguage,
+      usageTimezone: defaultUsageTimezone,
       launchAtLogin: false,
       enabledProviders: Object.fromEntries(
         agentSources.map((source) => [source, true]),
@@ -782,6 +843,7 @@ export class AppService {
       autoBackup: safeBoolean(raw.autoBackup, defaults.autoBackup),
       mockDataEnabled: safeBoolean(raw.mockDataEnabled, defaults.mockDataEnabled),
       language,
+      usageTimezone: normalizeTimezone(raw.usageTimezone, defaults.usageTimezone),
       launchAtLogin: safeBoolean(raw.launchAtLogin, defaults.launchAtLogin),
       enabledProviders: {
         ...defaults.enabledProviders,
@@ -971,15 +1033,18 @@ export class AppService {
   }
 
   private buildUsage(sessions: SessionRecord[]): UsagePoint[] {
+    const timezone = this.requireSettings().usageTimezone
     const points = new Map<string, UsagePoint>()
     for (let offset = usageHistoryDays - 1; offset >= 0; offset -= 1) {
       const date = new Date(Date.now() - offset * oneDayMs)
-      const key = formatDateKey(date)
+      const key = dateKeyForTimezone(date, timezone)
       points.set(key, usageSeed(key))
     }
 
     sessions.forEach((session) => {
-      const usageByDate = usageByDateFromMetadata(session.metadata)
+      const usageByDate =
+        usageEventsByDateFromMetadata(session.metadata, timezone) ??
+        usageByDateFromMetadata(session.metadata)
       if (usageByDate && Object.keys(usageByDate).length > 0) {
         Object.entries(usageByDate).forEach(([key, tokens]) => {
           const point = points.get(key)
@@ -990,7 +1055,7 @@ export class AppService {
         return
       }
 
-      const key = formatDateKey(new Date(session.lastUpdated))
+      const key = dateKeyForTimezone(new Date(session.lastUpdated), timezone)
       const point = points.get(key)
       if (!point) return
       point[session.source] += session.tokens.total

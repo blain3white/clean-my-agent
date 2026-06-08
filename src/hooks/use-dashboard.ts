@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { defaultLanguage, languageOptions, normalizeLanguage, translate } from '@/lib/i18n'
 import { mockSnapshot } from '@/lib/mock-data'
@@ -42,6 +42,7 @@ type DashboardState = {
   exportUniversalRelay: (sessionId: string) => Promise<void>
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<void>
+  restoreTrash: (trashId: string) => Promise<void>
   purgeExpiredTrash: () => Promise<void>
 }
 
@@ -54,6 +55,14 @@ const agentNames: Record<AgentSource, string> = {
   custom: 'Custom',
 }
 
+const defaultUsageTimezone = (): string => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  } catch {
+    return 'UTC'
+  }
+}
+
 const defaultSettings = (): AppSettings => ({
   scanRoots: {},
   cleanupRetentionDays: 7,
@@ -61,6 +70,7 @@ const defaultSettings = (): AppSettings => ({
   autoBackup: true,
   mockDataEnabled: false,
   language: defaultLanguage,
+  usageTimezone: defaultUsageTimezone(),
   launchAtLogin: false,
   enabledProviders: Object.fromEntries(
     agentSources.map((source) => [source, true]),
@@ -146,6 +156,11 @@ export function useDashboard(): DashboardState {
       translate(settings.language, key, values),
     [settings.language],
   )
+  const languageRef = useRef(settings.language)
+
+  useEffect(() => {
+    languageRef.current = settings.language
+  }, [settings.language])
 
   useEffect(() => {
     let cancelled = false
@@ -153,18 +168,23 @@ export function useDashboard(): DashboardState {
       if (!window.cleanMyAgent) return
       try {
         const next = await window.cleanMyAgent.getSettings()
-        const launchAtLogin = await window.cleanMyAgent.getLaunchAtLogin()
+        let launchAtLogin = next.launchAtLogin
+        try {
+          launchAtLogin = await window.cleanMyAgent.getLaunchAtLogin()
+        } catch (error) {
+          console.error(error)
+        }
         if (!cancelled) setSettings(mergeSettings({ ...next, launchAtLogin }))
       } catch (error) {
         console.error(error)
-        toast.error(t('toast.readSettingsError'))
+        toast.error(translate(languageRef.current, 'toast.readSettingsError'))
       }
     }
     void hydrateSettings()
     return () => {
       cancelled = true
     }
-  }, [t])
+  }, [])
 
   const load = useCallback(
     async (force = false) => {
@@ -561,6 +581,26 @@ export function useDashboard(): DashboardState {
           }),
         )
         await load(true)
+      },
+      restoreTrash: async (trashId: string) => {
+        if (settings.mockDataEnabled) {
+          toast.info(t('toast.trashRestoreLiveOnly'))
+          return
+        }
+
+        if (!window.cleanMyAgent) {
+          toast.info(t('toast.trashDesktopOnly'))
+          return
+        }
+
+        try {
+          await window.cleanMyAgent.restoreTrash(trashId)
+          toast.success(t('toast.trashRestored'))
+          await load(true)
+        } catch (error) {
+          console.error(error)
+          toast.error(t('toast.trashRestoreError'))
+        }
       },
       purgeExpiredTrash: async () => {
         if (settings.mockDataEnabled) {

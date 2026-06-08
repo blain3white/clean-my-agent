@@ -62,15 +62,59 @@ jobs:
             Clean-My-Agent-mac-arm64.dmg.blockmap \
             latest-mac.yml > checksums.txt
 
-      - name: Write release notes
+      - name: Generate changelog
         run: |
-          cat > release-notes.md <<'NOTES'
-          Automated macOS Apple Silicon release.
+          set -euo pipefail
 
-          This build is ad-hoc signed and not notarized yet. macOS may require
-          right-click > Open or allowing the app from System Settings > Privacy
-          & Security on first launch.
-          NOTES
+          previous_tag="$(git describe --tags --abbrev=0 "${GITHUB_SHA}^" 2>/dev/null || true)"
+          if [ -n "${previous_tag}" ]; then
+            range="${previous_tag}..${GITHUB_SHA}"
+            compare_url="https://github.com/${GITHUB_REPOSITORY}/compare/${previous_tag}...${GITHUB_REF_NAME}"
+          else
+            range="${GITHUB_SHA}"
+            compare_url="https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+          fi
+
+          changelog="$(git log --no-merges --pretty=format:'- %s (%h)' "${range}")"
+          if [ -z "${changelog}" ]; then
+            changelog="- Maintenance release (${GITHUB_SHA::7})"
+          fi
+
+          {
+            echo "Automated macOS Apple Silicon release."
+            echo
+            echo "## Changes"
+            echo
+            echo "${changelog}"
+            echo
+            echo
+            echo "Full changelog: ${compare_url}"
+            echo
+            echo "## Artifacts"
+            echo
+            echo "- Clean-My-Agent-mac-arm64.dmg"
+            echo "- Clean-My-Agent-mac-arm64.dmg.blockmap"
+            echo "- latest-mac.yml"
+            echo "- checksums.txt"
+            echo
+            echo "This build is ad-hoc signed and not notarized yet. macOS may require right-click > Open"
+            echo "or allowing the app from System Settings > Privacy & Security on first launch."
+          } > release-notes.md
+
+          test -s release-notes.md
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clean-my-agent-${{ github.ref_name }}-mac-arm64
+          path: |
+            release/Clean-My-Agent-mac-arm64.dmg
+            release/Clean-My-Agent-mac-arm64.dmg.blockmap
+            release/latest-mac.yml
+            release/checksums.txt
+            release-notes.md
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Publish GitHub release
         env:
