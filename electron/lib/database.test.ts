@@ -50,6 +50,7 @@ function makeSession(overrides: Partial<SessionRecord> = {}): SessionRecord {
       relativePath: 'sessions/session-1',
       sourceFormat: 'jsonl',
       usageByDate: { '2026-01-01': 10 },
+      usageEvents: [{ timestamp: '2026-01-01T23:30:00.000Z', tokens: 10 }],
       extraField: 'should be stripped',
     },
     ...overrides,
@@ -242,7 +243,7 @@ describe('getSession', () => {
 // ---------------------------------------------------------------------------
 
 describe('compactSessionForStorage behavior', () => {
-  it('preserves parser, root, relativePath, sourceFormat, usageByDate', () => {
+  it('preserves parser, root, relativePath, sourceFormat, usageByDate, and usageEvents', () => {
     db.replaceSessions([makeSession()])
     const stored = db.getSession('session-1')!
     expect(stored.metadata.parser).toBe('codex-v1')
@@ -250,6 +251,9 @@ describe('compactSessionForStorage behavior', () => {
     expect(stored.metadata.relativePath).toBe('sessions/session-1')
     expect(stored.metadata.sourceFormat).toBe('jsonl')
     expect(stored.metadata.usageByDate).toEqual({ '2026-01-01': 10 })
+    expect(stored.metadata.usageEvents).toEqual([
+      { timestamp: '2026-01-01T23:30:00.000Z', tokens: 10 },
+    ])
   })
 
   it('strips extra metadata fields', () => {

@@ -11,6 +11,7 @@ import {
   RefreshCcw,
   ShieldCheck,
   Trash2,
+  Globe2,
   Volume2,
   type LucideIcon,
 } from 'lucide-react'
@@ -18,6 +19,7 @@ import { AgentGlyph } from '@/components/agent-glyph'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { playCleanupSystemSound } from '@/features/cleanup/cleanup-system-sound'
+import { trashPrimaryPath, usageTimezoneSelectOptions } from '@/features/settings/settings-model'
 import { agentLabel, formatBytes } from '@/lib/format'
 import { languageOptions } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n-context'
@@ -49,6 +51,7 @@ type SettingsViewProps = {
   onChooseFolders: () => Promise<string[]>
   onDownloadLatestUpdate: () => Promise<void>
   onRescan: () => Promise<void>
+  onRestoreTrash: (trashId: string) => Promise<void>
   onPurgeExpiredTrash: () => Promise<void>
 }
 const themeOptions: Array<{ value: ThemePreference; labelKey: TranslationKey }> = [
@@ -56,7 +59,6 @@ const themeOptions: Array<{ value: ThemePreference; labelKey: TranslationKey }> 
   { value: 'light', labelKey: 'theme.light' },
   { value: 'dark', labelKey: 'theme.dark' },
 ]
-
 function latestScanValue(snapshot: DashboardSnapshot): string | undefined {
   const latest = snapshot.agents
     .map((agent) => agent.lastScannedAt)
@@ -222,6 +224,7 @@ export function SettingsView({
   onChooseFolders,
   onDownloadLatestUpdate,
   onRescan,
+  onRestoreTrash,
   onPurgeExpiredTrash,
 }: SettingsViewProps) {
   const { formatRelative, t } = useI18n()
@@ -264,6 +267,7 @@ export function SettingsView({
     value: option.value,
     label: t(option.labelKey),
   }))
+  const timezoneSelectOptions = usageTimezoneSelectOptions(settings.usageTimezone)
   const retentionOptions = ['0', '7', '14', '30', '60', '90'].map((value) => ({
     value,
     label: t('settings.daysValue', { days: value }),
@@ -319,6 +323,21 @@ export function SettingsView({
                 value={themePreference}
                 options={themeSelectOptions}
                 onChange={onThemePreferenceChange}
+              />
+            }
+          />
+          <SettingsRow
+            icon={Globe2}
+            title={t('settings.usageTimezone')}
+            description={t('settings.usageTimezoneDescription')}
+            trailing={
+              <NativeSelect
+                label={t('settings.usageTimezoneSelectLabel')}
+                value={settings.usageTimezone}
+                options={timezoneSelectOptions}
+                onChange={(value) =>
+                  void onSettingsChange({ usageTimezone: value }, { rescan: true })
+                }
               />
             }
           />
@@ -581,6 +600,55 @@ export function SettingsView({
               </>
             }
           />
+        </SettingsPanel>
+      </SettingsSection>
+
+      <SettingsSection title={t('settings.trash')}>
+        <SettingsPanel>
+          {snapshot.trash.length === 0 ? (
+            <SettingsRow
+              icon={Trash2}
+              title={t('settings.trashEmpty')}
+              description={t('settings.trashEmptyDescription')}
+            />
+          ) : (
+            snapshot.trash.map((record) => (
+              <div
+                key={record.id}
+                className="settings-row flex min-h-[92px] items-center gap-4 border-b px-5 py-4 last:border-b-0"
+              >
+                <div className="settings-row-icon grid size-6 shrink-0 place-items-center">
+                  <Trash2 className="size-[19px]" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="settings-row-title truncate text-[15px] font-semibold">
+                    {record.title}
+                  </div>
+                  <div className="settings-row-description mt-1 flex flex-wrap items-center gap-2 text-sm">
+                    <span>
+                      {record.source ? agentLabel[record.source] : t('settings.unknownSource')}
+                    </span>
+                    <span className="settings-row-separator">•</span>
+                    <span>{formatBytes(record.sizeBytes)}</span>
+                    <span className="settings-row-separator">•</span>
+                    <span>{formatRelative(record.deletedAt)}</span>
+                  </div>
+                  <div className="settings-row-description mt-1 truncate text-xs">
+                    {trashPrimaryPath(record)}
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void onRestoreTrash(record.id)}
+                  className="settings-outline-button"
+                >
+                  <RefreshCcw className="mr-2 size-4" />
+                  {t('settings.restoreTrashAction')}
+                </Button>
+              </div>
+            ))
+          )}
         </SettingsPanel>
       </SettingsSection>
 

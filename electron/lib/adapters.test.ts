@@ -15,6 +15,7 @@ function makeSettings(scanRoot: string, source = 'codex'): AppSettings {
     autoBackup: false,
     mockDataEnabled: false,
     language: 'en',
+    usageTimezone: 'UTC',
     launchAtLogin: false,
     enabledProviders: {},
     scanOnLaunch: true,
@@ -127,6 +128,54 @@ describe('codex JSONL parsing', () => {
     expect(session.tokens.output).toBeGreaterThan(0)
     expect(session.tokens.total).toBeGreaterThan(0)
     expect(session.tokens.estimated).toBe(false)
+    expect(session.metadata.usageEvents).toEqual([
+      { timestamp: '2026-01-10T10:00:01.000Z', tokens: 15 },
+      { timestamp: '2026-01-10T10:00:02.000Z', tokens: 25 },
+    ])
+  })
+
+  it('records only timestamped positive usage events', async () => {
+    const root = await makeTmpDir('codex-usage-events')
+    const filePath = path.join(root, 'session.jsonl')
+
+    const lines = [
+      JSON.stringify({
+        type: 'response_item',
+        timestamp: '2026-01-10T23:30:00.000Z',
+        payload: {
+          role: 'assistant',
+          content: 'Count this usage event',
+          usage: { input_tokens: 10, output_tokens: 20 },
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        timestamp: 'not-a-date',
+        payload: {
+          role: 'assistant',
+          content: 'Ignore invalid timestamp',
+          usage: { input_tokens: 10, output_tokens: 20 },
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        timestamp: '2026-01-11T00:30:00.000Z',
+        payload: {
+          role: 'assistant',
+          content: 'Ignore zero usage',
+          usage: { input_tokens: 0, output_tokens: 0 },
+        },
+      }),
+    ]
+    await writeFile(filePath, lines.join('\n') + '\n')
+
+    const adapter = makeAdapter('codex', [root])
+    const { sessions } = await adapter.scan(makeSettings(root))
+
+    expect(sessions).toHaveLength(1)
+    expect(sessions[0].metadata.usageEvents).toEqual([
+      { timestamp: '2026-01-10T23:30:00.000Z', tokens: 30 },
+    ])
   })
 })
 

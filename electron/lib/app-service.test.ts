@@ -102,6 +102,7 @@ describe('init and settings', () => {
     expect(settings.autoBackup).toBe(true)
     expect(settings.mockDataEnabled).toBe(false)
     expect(settings.language).toBe('en')
+    expect(settings.usageTimezone).toBeTruthy()
     expect(settings.launchAtLogin).toBe(false)
     expect(settings.enabledProviders).toEqual(
       Object.fromEntries(agentSources.map((source) => [source, true])),
@@ -221,6 +222,12 @@ describe('init and settings', () => {
     expect(() => service.updateSettings({ language: 'xx' as never })).toThrow(
       /language is not supported/,
     )
+    expect(() => service.updateSettings({ usageTimezone: 'Mars/Olympus' })).toThrow(
+      /usageTimezone must be a supported IANA time zone/,
+    )
+    expect(() => service.updateSettings({ usageTimezone: '' })).toThrow(
+      /usageTimezone must be a supported IANA time zone/,
+    )
     expect(() => service.updateSettings({ launchAtLogin: 'yes' as never })).toThrow(
       /launchAtLogin must be a boolean/,
     )
@@ -275,6 +282,7 @@ describe('init and settings', () => {
       autoBackup: false,
       mockDataEnabled: true,
       language: 'zh-CN',
+      usageTimezone: 'Asia/Shanghai',
       launchAtLogin: true,
       scanOnLaunch: false,
       backgroundScan: false,
@@ -298,6 +306,7 @@ describe('init and settings', () => {
     expect(settings.autoBackup).toBe(false)
     expect(settings.mockDataEnabled).toBe(true)
     expect(settings.language).toBe('zh-CN')
+    expect(settings.usageTimezone).toBe('Asia/Shanghai')
     expect(settings.launchAtLogin).toBe(true)
     expect(settings.scanOnLaunch).toBe(false)
     expect(settings.backgroundScan).toBe(false)
@@ -322,6 +331,7 @@ describe('init and settings', () => {
       autoBackup: 'yes',
       mockDataEnabled: 'yes',
       language: 'xx',
+      usageTimezone: 'Mars/Olympus',
       launchAtLogin: 'yes',
       defaultRelayMode: 'unsupported',
       exportDirectory: 'https://example.test/export',
@@ -340,6 +350,8 @@ describe('init and settings', () => {
     expect(settings.autoBackup).toBe(true)
     expect(settings.mockDataEnabled).toBe(false)
     expect(settings.language).toBe('en')
+    expect(settings.usageTimezone).toBeTruthy()
+    expect(settings.usageTimezone).not.toBe('Mars/Olympus')
     expect(settings.launchAtLogin).toBe(false)
     expect(settings.defaultRelayMode).toBe('full-context')
     expect(settings.exportDirectory).toContain(userDataPath)
@@ -400,6 +412,58 @@ describe('getSnapshot and rescan', () => {
     expect(snapshot.overview.totalTokens).toBe(
       snapshot.sessions.reduce((s, x) => s + x.tokens.total, 0),
     )
+  })
+
+  it('aggregates usage events by the configured usage timezone', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-02-03T12:00:00.000Z'))
+      const service = await initServiceWithScan(fixtureRoot, userDataPath)
+      service.updateSettings({ usageTimezone: 'Asia/Shanghai' })
+      await writeJsonlSession(fixtureRoot, 'codex', {
+        timestamp: '2026-02-01T23:30:00.000Z',
+      })
+
+      const snapshot = await service.rescan()
+      const feb1 = snapshot.usage.find((point) => point.date === '2026-02-01')
+      const feb2 = snapshot.usage.find((point) => point.date === '2026-02-02')
+
+      expect(feb1?.codex ?? 0).toBe(0)
+      expect(feb2?.codex).toBe(280)
+      expect(feb2?.total).toBe(280)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('falls back to legacy usageByDate metadata when usage events are unavailable', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-02-03T12:00:00.000Z'))
+      const service = await initServiceWithScan(fixtureRoot, userDataPath)
+      await writeJsonlSession(fixtureRoot, 'codex')
+      const snapshot = await service.rescan()
+      const session = snapshot.sessions.find((s) => s.source === 'codex')
+      assert.ok(session)
+
+      service['db'].replaceSessions([
+        {
+          ...session,
+          metadata: {
+            ...session.metadata,
+            usageEvents: [],
+            usageByDate: { '2026-02-01': 123 },
+          },
+        },
+      ])
+
+      const after = await service.getSnapshot(false)
+      const point = after.usage.find((item) => item.date === '2026-02-01')
+      expect(point?.codex).toBe(123)
+      expect(point?.total).toBe(123)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('disabled providers are not scanned, shown, or suggested for cleanup', async () => {
@@ -1028,6 +1092,7 @@ describe('scanCleanup', () => {
             '2026-02-04': '12',
             '1999-01-01': 99,
           },
+          usageEvents: [],
         },
       },
     ])

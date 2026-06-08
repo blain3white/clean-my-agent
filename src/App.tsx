@@ -129,6 +129,7 @@ function App() {
             onChooseFolders={dashboard.chooseFolders}
             onDownloadLatestUpdate={dashboard.downloadLatestUpdate}
             onRescan={dashboard.rescan}
+            onRestoreTrash={dashboard.restoreTrash}
             onPurgeExpiredTrash={dashboard.purgeExpiredTrash}
           />
         )

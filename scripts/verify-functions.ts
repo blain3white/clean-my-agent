@@ -89,6 +89,7 @@ async function main() {
   await service.init()
   service.updateSettings({
     cleanupRetentionDays: 30,
+    usageTimezone: 'UTC',
     scanRoots: Object.fromEntries(
       sources.map((source) => [source, [path.join(fixtureRoot, source)]]),
     ),

@@ -1,6 +1,7 @@
 import { Circle, ShieldCheck } from 'lucide-react'
 import { AgentGlyph } from '@/components/agent-glyph'
 import { navItems, type ViewId } from '@/app/navigation'
+import { visibleSidebarAgents } from '@/app/sidebar-model'
 import { useI18n } from '@/lib/i18n-context'
 import type { DashboardSnapshot } from '@/shared/types'
 
@@ -14,6 +15,7 @@ export function Sidebar({
   snapshot: DashboardSnapshot
 }) {
   const { t } = useI18n()
+  const visibleAgents = visibleSidebarAgents(snapshot)
 
   return (
     <aside className="sidebar-glass drag-region flex w-[232px] shrink-0 flex-col px-4 pb-4 pt-5">
@@ -59,7 +61,7 @@ export function Sidebar({
         <Circle className="size-3 fill-emerald-300/70 text-emerald-300/70" />
       </div>
       <div className="mt-3 space-y-2">
-        {snapshot.agents.map((agent) => (
+        {visibleAgents.map((agent) => (
           <div
             key={agent.source}
             className="flex items-center gap-2 rounded-md px-2 py-1.5 text-white/70"
