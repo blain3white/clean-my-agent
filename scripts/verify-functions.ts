@@ -15,6 +15,7 @@ async function writeSession(root: string, source: AgentSource, daysOld: number, 
   const date = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000)
   const timestamp = date.toISOString()
   const referencedFile = path.join(workspace, 'src', 'auth.ts')
+  const sensitiveFile = path.join(workspace, '.env.local')
   const attachmentPath = path.join(workspace, 'artifacts', 'auth-flow.png')
   const gitDiff = [
     'diff --git a/src/auth.ts b/src/auth.ts',
@@ -31,8 +32,8 @@ async function writeSession(root: string, source: AgentSource, daysOld: number, 
       content: `Refactor ${source} auth flow`,
       cwd: workspace,
       branch: 'main',
-      command: `pnpm test --filter ${source}`,
-      files: [{ path: referencedFile }],
+      command: `TOKEN=secret pnpm test --filter ${source} --api-key sk-test`,
+      files: [{ path: referencedFile }, { path: sensitiveFile }],
       attachments: [{ path: attachmentPath, mediaType: 'image/png', sizeBytes: 2048 }],
       gitDiff,
       usage: {
@@ -140,6 +141,47 @@ async function main() {
     false,
     'raw JSON samples should not be stored in SQLite',
   )
+  assert.ok(
+    Array.isArray(session.metadata.relayFiles) &&
+      session.metadata.relayFiles.some((item) => {
+        return (
+          typeof item === 'object' &&
+          item !== null &&
+          'path' in item &&
+          String(item.path).endsWith('/codex/src/auth.ts')
+        )
+      }),
+    'scan metadata should retain relay file references for reports',
+  )
+  assert.ok(
+    Array.isArray(session.metadata.relayFiles) &&
+      session.metadata.relayFiles.every((item) => {
+        return (
+          typeof item !== 'object' ||
+          item === null ||
+          !('path' in item) ||
+          !String(item.path).includes('.env')
+        )
+      }),
+    'scan metadata should not cache credential-like file paths for reports',
+  )
+  assert.ok(
+    Array.isArray(session.metadata.relayCommands) &&
+      session.metadata.relayCommands.some((item) => {
+        return (
+          typeof item === 'object' &&
+          item !== null &&
+          'command' in item &&
+          item.command === 'TOKEN=[redacted] pnpm test --filter codex --api-key [redacted]'
+        )
+      }),
+    'scan metadata should retain redacted relay commands for reports',
+  )
+  assert.deepEqual(
+    session.metadata.gitChangedFiles,
+    ['src/auth.ts'],
+    'scan metadata should retain changed file paths without storing diff content',
+  )
   const today = new Date().toISOString().slice(0, 10)
   const fixtureUsageDate = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000)
     .toISOString()
@@ -189,7 +231,7 @@ async function main() {
   assert.equal(relay.schema, 'clean-my-agent.universal-session.v1')
   assert.ok(relay.messages.length >= 2, 'relay JSON should include messages')
   assert.ok(
-    relay.commands.some((item) => item.command === 'pnpm test --filter codex'),
+    relay.commands.some((item) => item.command.includes('pnpm test --filter codex')),
     'relay JSON should include extracted commands',
   )
   assert.ok(

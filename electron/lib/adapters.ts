@@ -188,6 +188,60 @@ function addRelayAttachment(
   })
 }
 
+function cleanGitDiffPath(filePath: string): string | undefined {
+  const normalized = filePath
+    .trim()
+    .replace(/^"|"$/g, '')
+    .replace(/^(a|b)\//, '')
+  if (!normalized || normalized === '/dev/null') return undefined
+  return normalized
+}
+
+function gitChangedFilesFromDiff(diff: string | undefined): string[] {
+  if (!diff) return []
+
+  const files = new Set<string>()
+  for (const line of diff.split(/\r?\n/)) {
+    const diffHeader = /^diff --git a\/(.+) b\/(.+)$/.exec(line)
+    if (diffHeader) {
+      const nextPath = cleanGitDiffPath(diffHeader[2])
+      if (nextPath) files.add(nextPath)
+      if (files.size >= maxRelayItems) break
+      continue
+    }
+
+    const fileHeader = /^(?:\+\+\+|---)\s+(.+)$/.exec(line)
+    if (!fileHeader) continue
+    const filePath = cleanGitDiffPath(fileHeader[1])
+    if (filePath) files.add(filePath)
+    if (files.size >= maxRelayItems) break
+  }
+
+  return Array.from(files)
+}
+
+function isSensitiveRelayPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, '/').toLowerCase()
+  const basename = normalized.split('/').filter(Boolean).pop() ?? normalized
+  if (basename === '.env' || basename.startsWith('.env.')) return true
+  if (normalized.includes('/.ssh/') || normalized.includes('/keychain/')) return true
+  return /(^|[._/-])(token|tokens|secret|secrets|credential|credentials|oauth|api[-_]?key|apikey|private[-_]?key|password|passwd)([._/-]|$)/i.test(
+    normalized,
+  )
+}
+
+function redactRelayCommand(command: string): string {
+  return command
+    .replace(
+      /\b([A-Z0-9_]*(?:TOKEN|SECRET|API_KEY|PASSWORD|PASS|PRIVATE_KEY)[A-Z0-9_]*)=("[^"]*"|'[^']*'|\S+)/gi,
+      '$1=[redacted]',
+    )
+    .replace(
+      /(--?(?:token|secret|api-key|apikey|password|pass|private-key|key))(\s+|=)("[^"]*"|'[^']*'|\S+)/gi,
+      '$1$2[redacted]',
+    )
+}
+
 function timestampFromRecord(record: JsonRecord): string | undefined {
   const payload = toRecord(record.payload)
   const message = toRecord(record.message)
@@ -1196,6 +1250,14 @@ export class AgentAdapter {
         parser: this.provider.parserName ?? 'generic-json-session-parser',
         root: candidate.root,
         relativePath: candidate.relativePath,
+        relayFiles: parsed.files.filter((item) => !isSensitiveRelayPath(item.path)),
+        relayCommands: parsed.commands.map((item) => ({
+          ...item,
+          command: redactRelayCommand(item.command),
+        })),
+        gitChangedFiles: gitChangedFilesFromDiff(parsed.gitDiff).filter(
+          (item) => !isSensitiveRelayPath(item),
+        ),
       },
     }
   }

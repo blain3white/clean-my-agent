@@ -33,6 +33,9 @@ function compactSessionForStorage(session: SessionRecord): SessionRecord {
       sourceFormat: session.metadata.sourceFormat,
       usageByDate: session.metadata.usageByDate,
       usageEvents: session.metadata.usageEvents,
+      relayFiles: session.metadata.relayFiles,
+      relayCommands: session.metadata.relayCommands,
+      gitChangedFiles: session.metadata.gitChangedFiles,
     },
   }
 }

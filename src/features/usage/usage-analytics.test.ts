@@ -7,15 +7,18 @@ import {
 } from '@/shared/types'
 import {
   buildUsageAnalytics,
+  buildUsageReport,
   costForTokenShare,
   createSparklinePath,
   exportUsageCsv,
+  exportUsageReportMarkdown,
   formatHourLabel,
   formatHourRange,
   formatShortDate,
   formatUsageShare,
   formatUsageTokens,
   heatLevel,
+  usageReportMarkdown,
   usageDaysForPageRange,
   usageSparklineTrend,
 } from './usage-analytics'
@@ -337,6 +340,295 @@ describe('buildUsageAnalytics', () => {
   })
 })
 
+describe('buildUsageReport', () => {
+  it('summarizes projects, files, commands, and sensitive metadata for the selected range', () => {
+    const usage = [
+      usagePoint('2026-05-31', { codex: 50 }),
+      usagePoint('2026-06-01', { codex: 250 }),
+      usagePoint('2026-06-02', { codex: 750 }),
+    ]
+    const snapshot = makeSnapshot(usage, [
+      makeSession({
+        id: 'report-session',
+        projectName: 'clean-my-agent',
+        projectPath: '/repo/clean-my-agent',
+        lastUpdated: '2026-06-02T10:00:00.000Z',
+        tokens: {
+          input: 400,
+          output: 300,
+          cached: 200,
+          total: 1000,
+          costUsd: 12,
+          estimated: false,
+        },
+        metadata: {
+          usageByDate: {
+            '2026-06-01': 250,
+            '2026-06-02': 750,
+          },
+          relayFiles: [
+            {
+              path: '/repo/clean-my-agent/src/App.tsx',
+              reason: 'Referenced by filePath',
+              lastSeenAt: '2026-06-02T09:00:00.000Z',
+            },
+            {
+              path: '/repo/clean-my-agent/.env.local',
+              reason: 'Sensitive file',
+              lastSeenAt: '2026-06-02T09:00:00.000Z',
+            },
+          ],
+          relayCommands: [
+            {
+              command: 'OPENAI_API_KEY=sk-test pnpm test -- --token secret-value',
+              cwd: '/repo/clean-my-agent',
+              createdAt: '2026-06-02T09:30:00.000Z',
+            },
+          ],
+          gitChangedFiles: ['src/features/usage/UsageView.tsx', '.env'],
+        },
+      }),
+      makeSession({
+        id: 'old-report-session',
+        projectName: 'old-project',
+        projectPath: '/repo/old-project',
+        lastUpdated: '2026-05-01T10:00:00.000Z',
+        tokens: {
+          input: 50,
+          output: 25,
+          cached: 0,
+          total: 75,
+          costUsd: 1,
+          estimated: false,
+        },
+        metadata: {
+          usageByDate: {
+            '2026-05-01': 75,
+          },
+          relayFiles: [{ path: '/repo/old-project/src/old.ts' }],
+        },
+      }),
+    ])
+
+    const report = buildUsageReport(snapshot, '7d')
+
+    expect(report.summary).toMatchObject({
+      totalTokens: 1000,
+      estimatedCost: 12,
+      activeSessions: 1,
+      projectCount: 1,
+      fileCount: 2,
+      commandCount: 1,
+    })
+    expect(report.projects[0]).toMatchObject({
+      project: 'clean-my-agent',
+      tokens: 1000,
+      fileCount: 2,
+      commandCount: 1,
+    })
+    expect(report.files.map((file) => file.path)).toEqual([
+      'src/features/usage/UsageView.tsx',
+      'src/App.tsx',
+    ])
+    expect(report.files.every((file) => !file.path.includes('.env'))).toBe(true)
+    expect(report.commands[0].command).toBe(
+      'OPENAI_API_KEY=[redacted] pnpm test -- --token [redacted]',
+    )
+    expect(report.highlights.join('\n')).toContain('clean-my-agent led')
+  })
+
+  it('renders markdown report sections', () => {
+    const report = buildUsageReport(
+      makeSnapshot(
+        [usagePoint('2026-06-06', { codex: 123 })],
+        [
+          makeSession({
+            metadata: {
+              usageByDate: { '2026-06-06': 123 },
+              gitChangedFiles: ['src/report.ts'],
+            },
+            tokens: { input: 50, output: 73, cached: 0, total: 123, estimated: false },
+          }),
+        ],
+      ),
+      '7d',
+    )
+
+    expect(report.projects[0].topFiles).toEqual(['src/report.ts'])
+  })
+
+  it('renders markdown with top files, file rows, command rows, and empty fallbacks', () => {
+    const markdown = usageReportMarkdown({
+      generatedAt: '2026-06-06T16:00:00.000Z',
+      range: '7d',
+      rangeLabel: '7D',
+      startDate: '2026-06-01',
+      endDate: '2026-06-06',
+      summary: {
+        totalTokens: 1234,
+        estimatedCost: 0.42,
+        activeSessions: 2,
+        projectCount: 1,
+        fileCount: 2,
+        commandCount: 2,
+      },
+      highlights: ['1.2K tokens across 2 sessions'],
+      projects: [
+        {
+          project: 'clean-my-agent',
+          projectPath: '/repo/clean-my-agent',
+          tokens: 1234,
+          cost: 0.42,
+          share: 100,
+          sessionCount: 2,
+          fileCount: 2,
+          commandCount: 2,
+          topFiles: ['src/App.tsx'],
+        },
+      ],
+      files: [
+        {
+          path: 'src/App.tsx',
+          projects: ['clean-my-agent'],
+          sessions: 2,
+          reason: 'Changed in git diff',
+          changed: true,
+        },
+        {
+          path: 'src/usage.ts',
+          projects: ['clean-my-agent'],
+          sessions: 1,
+          reason: 'Referenced in session',
+          changed: false,
+        },
+      ],
+      commands: [
+        { command: 'pnpm check', cwd: '/repo/clean-my-agent', sessions: 2 },
+        { command: 'pnpm lint', sessions: 1 },
+      ],
+    })
+
+    expect(markdown).toContain('Top files:')
+    expect(markdown).toContain('- [changed] src/App.tsx')
+    expect(markdown).toContain('- [referenced] src/usage.ts')
+    expect(markdown).toContain('pnpm check (cwd: /repo/clean-my-agent) · 2 sessions')
+    expect(markdown).toContain('pnpm lint · 1 session')
+
+    const emptyMarkdown = usageReportMarkdown({
+      generatedAt: '2026-06-06T16:00:00.000Z',
+      range: 'all',
+      rangeLabel: 'All',
+      summary: {
+        totalTokens: 0,
+        estimatedCost: 0,
+        activeSessions: 0,
+        projectCount: 0,
+        fileCount: 0,
+        commandCount: 0,
+      },
+      highlights: ['No token activity in this range'],
+      projects: [],
+      files: [],
+      commands: [],
+    })
+
+    expect(emptyMarkdown).toContain('Range: All (All time)')
+    expect(emptyMarkdown).toContain('- No file metadata detected.')
+    expect(emptyMarkdown).toContain('- No command metadata detected.')
+  })
+
+  it('handles all-time report metadata fallbacks and sorting tie-breakers', () => {
+    const snapshot = makeSnapshot(
+      [usagePoint('2026-06-01', { codex: 100 }), usagePoint('2026-06-02', { cursor: 200 })],
+      [
+        makeSession({
+          id: 'alpha-session',
+          projectName: 'Alpha',
+          projectPath: '/repo/alpha',
+          lastUpdated: '2026-06-01T10:00:00.000Z',
+          tokens: { input: 100, output: 0, cached: 0, total: 100, costUsd: 1, estimated: false },
+          metadata: {
+            relayFiles: [
+              { path: 'src/a.ts', reason: 'Read file' },
+              { path: 'src/b.ts', reason: 'Edited file' },
+              { path: '' },
+              'not-a-record',
+              { path: '/repo/alpha/.ssh/id_rsa' },
+            ],
+            relayCommands: [
+              { command: 'pnpm test', cwd: '/repo/alpha', createdAt: '2026-06-01T08:00:00.000Z' },
+              { command: 'pnpm test', cwd: '/repo/alpha', createdAt: '2026-06-01T09:00:00.000Z' },
+              { command: 'pnpm lint', cwd: '/repo/alpha', createdAt: '2026-06-01T09:00:00.000Z' },
+              { command: '' },
+            ],
+            gitChangedFiles: ['src/b.ts', '', 'api-key.txt'],
+          },
+        }),
+        makeSession({
+          id: 'beta-session',
+          source: 'cursor',
+          projectName: 'Beta',
+          projectPath: '/repo/beta',
+          lastUpdated: '2026-06-02T10:00:00.000Z',
+          tokens: { input: 100, output: 0, cached: 0, total: 100, costUsd: 2, estimated: false },
+          metadata: {
+            relayFiles: [{ path: './src/beta.ts', lastSeenAt: 'not-a-date' }],
+            relayCommands: [{ command: 'pnpm build' }],
+            gitChangedFiles: ['../shared.ts'],
+          },
+        }),
+        makeSession({
+          id: 'unknown-session',
+          source: 'gemini',
+          projectName: '',
+          projectPath: undefined,
+          lastUpdated: '2026-06-02T11:00:00.000Z',
+          tokens: { input: 100, output: 0, cached: 0, total: 100, costUsd: 2, estimated: false },
+          metadata: {
+            relayFiles: [{ path: 'notes.md' }],
+            relayCommands: [{ command: 'pnpm typecheck', createdAt: '2026-06-02T11:00:00.000Z' }],
+            gitChangedFiles: ['credentials.json'],
+          },
+        }),
+      ],
+    )
+
+    const report = buildUsageReport(snapshot, 'all')
+
+    expect(report.summary).toMatchObject({
+      totalTokens: 300,
+      estimatedCost: 5,
+      activeSessions: 3,
+      projectCount: 3,
+      commandCount: 4,
+    })
+    expect(report.projects.map((project) => project.project)).toEqual([
+      'Beta',
+      'Unknown project',
+      'Alpha',
+    ])
+    expect(report.files.map((file) => file.path)).toEqual([
+      '../shared.ts',
+      'src/b.ts',
+      './src/beta.ts',
+      'notes.md',
+      'src/a.ts',
+    ])
+    expect(report.files.every((file) => !/ssh|api-key|credential/i.test(file.path))).toBe(true)
+    expect(report.commands.map((command) => command.command)).toEqual([
+      'pnpm typecheck',
+      'pnpm lint',
+      'pnpm test',
+      'pnpm build',
+    ])
+    expect(report.commands.find((command) => command.command === 'pnpm test')).toMatchObject({
+      command: 'pnpm test',
+      lastRunAt: '2026-06-01T09:00:00.000Z',
+      sessions: 1,
+    })
+  })
+})
+
 describe('exportUsageCsv', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -390,5 +682,103 @@ describe('exportUsageCsv', () => {
     expect(csv).toContain('Total Tokens,0')
     expect(csv).toContain('Pricing Coverage,0.0%')
     expect(csv).toContain('Forecast Alerts,None')
+  })
+
+  it('includes forecast alert rows when usage is rising quickly', () => {
+    class FakeBlob {
+      chunks: string[]
+      constructor(chunks: string[]) {
+        this.chunks = chunks
+      }
+    }
+    const createObjectURL = vi.fn(() => 'blob:usage')
+    vi.stubGlobal('Blob', FakeBlob)
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL: vi.fn() })
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => ({ href: '', download: '', click: vi.fn() })),
+    })
+    const mayUsage = Array.from({ length: 31 }, (_, index) =>
+      usagePoint(`2026-05-${String(index + 1).padStart(2, '0')}`, { codex: 1_000 }),
+    )
+    const priorWeek = Array.from({ length: 7 }, (_, index) =>
+      usagePoint(`2026-06-${String(index + 1).padStart(2, '0')}`, { codex: 1_000 }),
+    )
+    const currentWeek = [8, 9, 10].map((day) =>
+      usagePoint(`2026-06-${String(day).padStart(2, '0')}`, { codex: 3_000 }),
+    )
+    const usage = [...mayUsage, ...priorWeek, ...currentWeek]
+    const totalTokens = usage.reduce((total, point) => total + point.total, 0)
+
+    exportUsageCsv(
+      makeSnapshot(usage, [
+        makeSession({
+          lastUpdated: '2026-06-10T12:00:00.000Z',
+          tokens: {
+            input: 0,
+            output: 0,
+            cached: 0,
+            total: totalTokens,
+            costUsd: totalTokens * 0.00002,
+            estimated: false,
+          },
+          metadata: {
+            usageByDate: Object.fromEntries(usage.map((point) => [point.date, point.total])),
+          },
+        }),
+      ]),
+      '30d',
+    )
+
+    const csv = (createObjectURL.mock.calls[0][0] as FakeBlob).chunks.join('')
+    expect(csv).toContain('Forecast Alerts,')
+    expect(csv).toContain('week tokens +200.0%')
+  })
+})
+
+describe('exportUsageReportMarkdown', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('downloads a markdown project report', () => {
+    class FakeBlob {
+      chunks: string[]
+      constructor(chunks: string[]) {
+        this.chunks = chunks
+      }
+    }
+    const anchor = { href: '', download: '', click: vi.fn() }
+    const createObjectURL = vi.fn(() => 'blob:report')
+    const revokeObjectURL = vi.fn()
+
+    vi.stubGlobal('Blob', FakeBlob)
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => anchor),
+    })
+
+    exportUsageReportMarkdown(
+      makeSnapshot(
+        [usagePoint('2026-06-06', { codex: 123 })],
+        [
+          makeSession({
+            metadata: {
+              usageByDate: { '2026-06-06': 123 },
+              relayCommands: [{ command: 'pnpm check', cwd: '/repo/clean-my-agent' }],
+            },
+            tokens: { input: 50, output: 73, cached: 0, total: 123, estimated: false },
+          }),
+        ],
+      ),
+      '7d',
+    )
+
+    expect(anchor.download).toBe('clean-my-agent-report-7d.md')
+    expect(anchor.href).toBe('blob:report')
+    expect(anchor.click).toHaveBeenCalledOnce()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:report')
+    const markdown = (createObjectURL.mock.calls[0][0] as FakeBlob).chunks.join('')
+    expect(markdown).toContain('# AI Weekly / Project Report')
+    expect(markdown).toContain('pnpm check')
   })
 })

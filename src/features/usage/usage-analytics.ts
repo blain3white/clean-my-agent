@@ -55,6 +55,50 @@ export type ProjectUsage = {
   costTrend: number[]
   trendDates: string[]
 }
+export type UsageReportProject = {
+  project: string
+  projectPath?: string
+  tokens: number
+  cost: number
+  share: number
+  sessionCount: number
+  fileCount: number
+  commandCount: number
+  topFiles: string[]
+}
+export type UsageReportFile = {
+  path: string
+  projects: string[]
+  sessions: number
+  reason: string
+  lastSeenAt?: string
+  changed: boolean
+}
+export type UsageReportCommand = {
+  command: string
+  cwd?: string
+  sessions: number
+  lastRunAt?: string
+}
+export type UsageReport = {
+  generatedAt: string
+  range: UsagePageRange
+  rangeLabel: string
+  startDate?: string
+  endDate?: string
+  summary: {
+    totalTokens: number
+    estimatedCost: number
+    activeSessions: number
+    projectCount: number
+    fileCount: number
+    commandCount: number
+  }
+  highlights: string[]
+  projects: UsageReportProject[]
+  files: UsageReportFile[]
+  commands: UsageReportCommand[]
+}
 export type PeakWindow = {
   rank: number
   startHour: number
@@ -922,8 +966,473 @@ export function buildUsageAnalytics(snapshot: DashboardSnapshot, range: UsagePag
   }
 }
 
-function downloadCsv(filename: string, rows: string[][]): void {
-  const csv = rows
+type RelayFileMetadata = {
+  path?: unknown
+  reason?: unknown
+  lastSeenAt?: unknown
+}
+
+type RelayCommandMetadata = {
+  command?: unknown
+  cwd?: unknown
+  createdAt?: unknown
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function dateKeyFromIso(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return undefined
+  return dateKeyFromTime(date.getTime())
+}
+
+function isDateInReportRange(
+  value: string | undefined,
+  dateKeys: Set<string>,
+  includeAllDates: boolean,
+): boolean {
+  if (includeAllDates) return true
+  const date = dateKeyFromIso(value)
+  return !date || dateKeys.has(date)
+}
+
+function hasSessionTokensInRange(
+  session: SessionRecord,
+  dateKeys: Set<string>,
+  includeAllDates: boolean,
+): boolean {
+  if (includeAllDates) return true
+  return sessionDateTokenEntries(session).some(([date]) => dateKeys.has(date))
+}
+
+function sessionTokensInRange(
+  session: SessionRecord,
+  dateKeys: Set<string>,
+  includeAllDates: boolean,
+): number {
+  return sessionDateTokenEntries(session).reduce((total, [date, tokens]) => {
+    if (!includeAllDates && !dateKeys.has(date)) return total
+    return total + tokens
+  }, 0)
+}
+
+function sessionCostInRange(
+  session: SessionRecord,
+  dateKeys: Set<string>,
+  includeAllDates: boolean,
+): number {
+  if (typeof session.tokens.costUsd !== 'number' || session.tokens.costUsd <= 0) return 0
+  const entries = sessionDateTokenEntries(session)
+  const entryTotal = entries.reduce((total, [, tokens]) => total + tokens, 0)
+  const tokens = entries.reduce((total, [date, value]) => {
+    if (!includeAllDates && !dateKeys.has(date)) return total
+    return total + value
+  }, 0)
+  return costForTokenShare(tokens, entryTotal, session.tokens.costUsd)
+}
+
+function relayFilesFromMetadata(metadata: Record<string, unknown>): RelayFileMetadata[] {
+  return Array.isArray(metadata.relayFiles)
+    ? metadata.relayFiles.filter(isRecord).map((item) => item as RelayFileMetadata)
+    : []
+}
+
+function relayCommandsFromMetadata(metadata: Record<string, unknown>): RelayCommandMetadata[] {
+  return Array.isArray(metadata.relayCommands)
+    ? metadata.relayCommands.filter(isRecord).map((item) => item as RelayCommandMetadata)
+    : []
+}
+
+function gitChangedFilesFromMetadata(metadata: Record<string, unknown>): string[] {
+  return Array.isArray(metadata.gitChangedFiles)
+    ? metadata.gitChangedFiles.flatMap((item) => {
+        const value = stringValue(item)
+        return value ? [value] : []
+      })
+    : []
+}
+
+function isAbsoluteReportPath(filePath: string): boolean {
+  return (
+    filePath.startsWith('/') ||
+    filePath.startsWith('~/') ||
+    filePath.startsWith('./') ||
+    filePath.startsWith('../') ||
+    /^[A-Za-z]:[\\/]/.test(filePath)
+  )
+}
+
+function joinProjectPath(projectPath: string | undefined, filePath: string): string {
+  if (isAbsoluteReportPath(filePath) || !projectPath) return filePath
+  return `${projectPath.replace(/[\\/]+$/, '')}/${filePath.replace(/^[\\/]+/, '')}`
+}
+
+function isSensitiveReportPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, '/').toLowerCase()
+  const basename = normalized.split('/').filter(Boolean).pop() ?? normalized
+  if (basename === '.env' || basename.startsWith('.env.')) return true
+  if (normalized.includes('/.ssh/') || normalized.includes('/keychain/')) return true
+  return /(^|[._/-])(token|tokens|secret|secrets|credential|credentials|oauth|api[-_]?key|apikey|private[-_]?key|password|passwd)([._/-]|$)/i.test(
+    normalized,
+  )
+}
+
+function redactSensitiveCommand(command: string): string {
+  return command
+    .replace(
+      /\b([A-Z0-9_]*(?:TOKEN|SECRET|API_KEY|PASSWORD|PASS|PRIVATE_KEY)[A-Z0-9_]*)=("[^"]*"|'[^']*'|\S+)/gi,
+      '$1=[redacted]',
+    )
+    .replace(
+      /(--?(?:token|secret|api-key|apikey|password|pass|private-key|key))(\s+|=)("[^"]*"|'[^']*'|\S+)/gi,
+      '$1$2[redacted]',
+    )
+}
+
+function formatReportDisplayPath(filePath: string, projectPath: string | undefined): string {
+  if (!projectPath) return filePath
+  const normalizedPath = filePath.replace(/\\/g, '/')
+  const normalizedProject = projectPath.replace(/\\/g, '/').replace(/\/+$/, '')
+  if (normalizedPath === normalizedProject) return '.'
+  if (normalizedPath.startsWith(`${normalizedProject}/`)) {
+    return normalizedPath.slice(normalizedProject.length + 1)
+  }
+  return filePath
+}
+
+function pushReportHighlight(highlights: string[], value: string | undefined): void {
+  if (value && highlights.length < 4) highlights.push(value)
+}
+
+export function buildUsageReport(snapshot: DashboardSnapshot, range: UsagePageRange): UsageReport {
+  const analytics = buildUsageAnalytics(snapshot, range)
+  const selectedUsage = analytics.selectedUsage
+  const selectedDateKeys = analytics.selectedDateKeys
+  const includeAllDates = range === 'all'
+  const sessions = snapshot.sessions.filter((session) =>
+    hasSessionTokensInRange(session, selectedDateKeys, includeAllDates),
+  )
+  const totalTokens = sessions.reduce(
+    (total, session) => total + sessionTokensInRange(session, selectedDateKeys, includeAllDates),
+    0,
+  )
+  const projectMap = new Map<
+    string,
+    {
+      project: string
+      projectPath?: string
+      tokens: number
+      cost: number
+      sessions: Set<string>
+      files: Set<string>
+      commands: Set<string>
+    }
+  >()
+  const fileMap = new Map<
+    string,
+    {
+      path: string
+      projects: Set<string>
+      sessions: Set<string>
+      reasons: Set<string>
+      lastSeenAt?: string
+      changed: boolean
+    }
+  >()
+  const commandMap = new Map<
+    string,
+    {
+      command: string
+      cwd?: string
+      sessions: Set<string>
+      lastRunAt?: string
+    }
+  >()
+
+  const ensureProject = (session: SessionRecord) => {
+    const key = session.projectName || session.projectPath || 'Unknown project'
+    const existing = projectMap.get(key)
+    if (existing) return existing
+    const row = {
+      project: session.projectName || 'Unknown project',
+      projectPath: session.projectPath,
+      tokens: 0,
+      cost: 0,
+      sessions: new Set<string>(),
+      files: new Set<string>(),
+      commands: new Set<string>(),
+    }
+    projectMap.set(key, row)
+    return row
+  }
+
+  for (const session of sessions) {
+    const project = ensureProject(session)
+    project.tokens += sessionTokensInRange(session, selectedDateKeys, includeAllDates)
+    project.cost += sessionCostInRange(session, selectedDateKeys, includeAllDates)
+    project.sessions.add(session.id)
+
+    for (const item of relayFilesFromMetadata(session.metadata)) {
+      const rawPath = stringValue(item.path)
+      if (!rawPath || isSensitiveReportPath(rawPath)) continue
+      if (!isDateInReportRange(stringValue(item.lastSeenAt), selectedDateKeys, includeAllDates)) {
+        continue
+      }
+      const fullPath = joinProjectPath(session.projectPath, rawPath)
+      const displayPath = formatReportDisplayPath(fullPath, session.projectPath)
+      const file = fileMap.get(fullPath) ?? {
+        path: displayPath,
+        projects: new Set<string>(),
+        sessions: new Set<string>(),
+        reasons: new Set<string>(),
+        lastSeenAt: undefined,
+        changed: false,
+      }
+      file.projects.add(project.project)
+      file.sessions.add(session.id)
+      file.reasons.add(stringValue(item.reason) ?? 'Referenced in session')
+      const lastSeenAt = stringValue(item.lastSeenAt)
+      if (lastSeenAt && (!file.lastSeenAt || lastSeenAt > file.lastSeenAt)) {
+        file.lastSeenAt = lastSeenAt
+      }
+      fileMap.set(fullPath, file)
+      project.files.add(fullPath)
+    }
+
+    for (const rawPath of gitChangedFilesFromMetadata(session.metadata)) {
+      if (isSensitiveReportPath(rawPath)) continue
+      const fullPath = joinProjectPath(session.projectPath, rawPath)
+      const displayPath = formatReportDisplayPath(fullPath, session.projectPath)
+      const file = fileMap.get(fullPath) ?? {
+        path: displayPath,
+        projects: new Set<string>(),
+        sessions: new Set<string>(),
+        reasons: new Set<string>(),
+        lastSeenAt: undefined,
+        changed: false,
+      }
+      file.projects.add(project.project)
+      file.sessions.add(session.id)
+      file.reasons.add('Changed in git diff')
+      file.lastSeenAt ??= session.lastUpdated
+      file.changed = true
+      fileMap.set(fullPath, file)
+      project.files.add(fullPath)
+    }
+
+    for (const item of relayCommandsFromMetadata(session.metadata)) {
+      const rawCommand = stringValue(item.command)
+      if (!rawCommand) continue
+      if (!isDateInReportRange(stringValue(item.createdAt), selectedDateKeys, includeAllDates)) {
+        continue
+      }
+      const command = redactSensitiveCommand(rawCommand)
+      const cwd = stringValue(item.cwd)
+      const key = `${command}\n${cwd ?? ''}`
+      const row = commandMap.get(key) ?? {
+        command,
+        cwd,
+        sessions: new Set<string>(),
+        lastRunAt: undefined,
+      }
+      row.sessions.add(session.id)
+      const createdAt = stringValue(item.createdAt)
+      if (createdAt && (!row.lastRunAt || createdAt > row.lastRunAt)) {
+        row.lastRunAt = createdAt
+      }
+      commandMap.set(key, row)
+      project.commands.add(key)
+    }
+  }
+
+  const files = Array.from(fileMap.values())
+    .map(
+      (row): UsageReportFile => ({
+        path: row.path,
+        projects: Array.from(row.projects).sort(),
+        sessions: row.sessions.size,
+        reason: Array.from(row.reasons).slice(0, 2).join(', '),
+        lastSeenAt: row.lastSeenAt,
+        changed: row.changed,
+      }),
+    )
+    .sort(
+      (a, b) =>
+        Number(b.changed) - Number(a.changed) ||
+        b.sessions - a.sessions ||
+        a.path.localeCompare(b.path),
+    )
+
+  const commands = Array.from(commandMap.values())
+    .map(
+      (row): UsageReportCommand => ({
+        command: row.command,
+        cwd: row.cwd,
+        sessions: row.sessions.size,
+        lastRunAt: row.lastRunAt,
+      }),
+    )
+    .sort(
+      (a, b) =>
+        b.sessions - a.sessions ||
+        (b.lastRunAt ?? '').localeCompare(a.lastRunAt ?? '') ||
+        a.command.localeCompare(b.command),
+    )
+
+  const projects = Array.from(projectMap.values())
+    .map(
+      (row): UsageReportProject => ({
+        project: row.project,
+        projectPath: row.projectPath,
+        tokens: row.tokens,
+        cost: row.cost,
+        share: totalTokens > 0 ? (row.tokens / totalTokens) * 100 : 0,
+        sessionCount: row.sessions.size,
+        fileCount: row.files.size,
+        commandCount: row.commands.size,
+        topFiles: files
+          .filter((file) => file.projects.includes(row.project))
+          .slice(0, 3)
+          .map((file) => file.path),
+      }),
+    )
+    .sort((a, b) => b.tokens - a.tokens || b.cost - a.cost || a.project.localeCompare(b.project))
+
+  const startDate = selectedUsage[0]?.date
+  const endDate = selectedUsage[selectedUsage.length - 1]?.date
+  const highlights: string[] = []
+  const topProject = projects[0]
+  pushReportHighlight(
+    highlights,
+    totalTokens > 0
+      ? `${formatUsageTokens(totalTokens)} tokens across ${sessions.length.toLocaleString()} sessions`
+      : 'No token activity in this range',
+  )
+  pushReportHighlight(
+    highlights,
+    topProject
+      ? `${topProject.project} led with ${formatUsageTokens(topProject.tokens)} tokens`
+      : undefined,
+  )
+  pushReportHighlight(
+    highlights,
+    files.length > 0
+      ? `${files.length.toLocaleString()} referenced or changed files detected`
+      : 'No file output metadata detected',
+  )
+  pushReportHighlight(
+    highlights,
+    commands.length > 0
+      ? `${commands.length.toLocaleString()} command patterns captured`
+      : 'No command metadata detected',
+  )
+
+  return {
+    generatedAt: new Date().toISOString(),
+    range,
+    rangeLabel: usagePageRangeLabel(range),
+    startDate,
+    endDate,
+    summary: {
+      totalTokens,
+      estimatedCost: sessions.reduce(
+        (total, session) => total + sessionCostInRange(session, selectedDateKeys, includeAllDates),
+        0,
+      ),
+      activeSessions: sessions.length,
+      projectCount: projects.length,
+      fileCount: files.length,
+      commandCount: commands.length,
+    },
+    highlights,
+    projects,
+    files,
+    commands,
+  }
+}
+
+export function usageReportMarkdown(report: UsageReport): string {
+  const dateRange =
+    report.startDate && report.endDate ? `${report.startDate} to ${report.endDate}` : 'All time'
+  const lines = [
+    `# AI Weekly / Project Report`,
+    '',
+    `Generated: ${report.generatedAt}`,
+    `Range: ${report.rangeLabel} (${dateRange})`,
+    '',
+    '## Summary',
+    '',
+    `- Tokens: ${Math.round(report.summary.totalTokens).toLocaleString()}`,
+    `- Estimated cost: $${report.summary.estimatedCost.toFixed(4)}`,
+    `- Active sessions: ${report.summary.activeSessions.toLocaleString()}`,
+    `- Projects: ${report.summary.projectCount.toLocaleString()}`,
+    `- Files: ${report.summary.fileCount.toLocaleString()}`,
+    `- Commands: ${report.summary.commandCount.toLocaleString()}`,
+    '',
+    '## Highlights',
+    '',
+    ...report.highlights.map((item) => `- ${item}`),
+    '',
+    '## Projects',
+    '',
+    ...report.projects
+      .slice(0, 10)
+      .flatMap((project) => [
+        `### ${project.project}`,
+        '',
+        `- Tokens: ${Math.round(project.tokens).toLocaleString()} (${formatUsageShare(project.share)})`,
+        `- Cost: $${project.cost.toFixed(4)}`,
+        `- Sessions: ${project.sessionCount.toLocaleString()}`,
+        `- Files: ${project.fileCount.toLocaleString()}`,
+        `- Commands: ${project.commandCount.toLocaleString()}`,
+        ...(project.topFiles.length > 0
+          ? ['', 'Top files:', ...project.topFiles.map((file) => `- ${file}`)]
+          : []),
+        '',
+      ]),
+    '## Files',
+    '',
+    ...(report.files.length > 0
+      ? report.files
+          .slice(0, 25)
+          .map((file) => `- ${file.changed ? '[changed]' : '[referenced]'} ${file.path}`)
+      : ['- No file metadata detected.']),
+    '',
+    '## Commands',
+    '',
+    ...(report.commands.length > 0
+      ? report.commands
+          .slice(0, 20)
+          .map(
+            (command) =>
+              `- ${command.command}${command.cwd ? ` (cwd: ${command.cwd})` : ''} · ${command.sessions} session${command.sessions === 1 ? '' : 's'}`,
+          )
+      : ['- No command metadata detected.']),
+    '',
+  ]
+
+  return lines.join('\n')
+}
+
+function downloadText(filename: string, contents: string, type: string): void {
+  const blob = new Blob([contents], { type })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+function csvFromRows(rows: string[][]): string {
+  return rows
     .map((row) =>
       row
         .map((cell) => {
@@ -933,42 +1442,51 @@ function downloadCsv(filename: string, rows: string[][]): void {
         .join(','),
     )
     .join('\n')
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename
-  anchor.click()
-  URL.revokeObjectURL(url)
 }
 
 export function exportUsageCsv(snapshot: DashboardSnapshot, range: UsagePageRange): void {
   const analytics = buildUsageAnalytics(snapshot, range)
-  downloadCsv(`clean-my-agent-usage-${range}.csv`, [
-    ['Range', usagePageRangeLabel(range)],
-    ['Total Tokens', String(Math.round(analytics.summary.totalTokens))],
-    ['Known or Model-Priced Cost USD', analytics.summary.estimatedCost.toFixed(4)],
-    ['Pricing Coverage', `${analytics.summary.costCoverage.toFixed(1)}%`],
-    ['Active Sessions', String(analytics.summary.activeSessions)],
-    ['Avg Tokens Per Day', String(Math.round(analytics.summary.avgTokensPerDay))],
-    ['This Week Projected Tokens', String(Math.round(analytics.forecast.week.projectedTokens))],
-    ['This Week Projected Cost USD', analytics.forecast.week.projectedCost.toFixed(4)],
-    ['This Month Projected Tokens', String(Math.round(analytics.forecast.month.projectedTokens))],
-    ['This Month Projected Cost USD', analytics.forecast.month.projectedCost.toFixed(4)],
-    [
-      'Forecast Alerts',
-      analytics.forecast.alerts.length
-        ? analytics.forecast.alerts
-            .map((alert) => `${alert.period} ${alert.metric} +${alert.deltaPercent.toFixed(1)}%`)
-            .join('; ')
-        : 'None',
-    ],
-    [],
-    ['Date', ...agentSources.map((source) => agentLabel[source]), 'Total'],
-    ...analytics.selectedUsage.map((point) => [
-      point.date,
-      ...agentSources.map((source) => String(point[source])),
-      String(point.total),
+  downloadText(
+    `clean-my-agent-usage-${range}.csv`,
+    csvFromRows([
+      ['Range', usagePageRangeLabel(range)],
+      ['Total Tokens', String(Math.round(analytics.summary.totalTokens))],
+      ['Known or Model-Priced Cost USD', analytics.summary.estimatedCost.toFixed(4)],
+      ['Pricing Coverage', `${analytics.summary.costCoverage.toFixed(1)}%`],
+      ['Active Sessions', String(analytics.summary.activeSessions)],
+      ['Avg Tokens Per Day', String(Math.round(analytics.summary.avgTokensPerDay))],
+      ['This Week Projected Tokens', String(Math.round(analytics.forecast.week.projectedTokens))],
+      ['This Week Projected Cost USD', analytics.forecast.week.projectedCost.toFixed(4)],
+      ['This Month Projected Tokens', String(Math.round(analytics.forecast.month.projectedTokens))],
+      ['This Month Projected Cost USD', analytics.forecast.month.projectedCost.toFixed(4)],
+      [
+        'Forecast Alerts',
+        analytics.forecast.alerts.length
+          ? analytics.forecast.alerts
+              .map((alert) => `${alert.period} ${alert.metric} +${alert.deltaPercent.toFixed(1)}%`)
+              .join('; ')
+          : 'None',
+      ],
+      [],
+      ['Date', ...agentSources.map((source) => agentLabel[source]), 'Total'],
+      ...analytics.selectedUsage.map((point) => [
+        point.date,
+        ...agentSources.map((source) => String(point[source])),
+        String(point.total),
+      ]),
     ]),
-  ])
+    'text/csv;charset=utf-8',
+  )
+}
+
+export function exportUsageReportMarkdown(
+  snapshot: DashboardSnapshot,
+  range: UsagePageRange,
+): void {
+  const report = buildUsageReport(snapshot, range)
+  downloadText(
+    `clean-my-agent-report-${range}.md`,
+    usageReportMarkdown(report),
+    'text/markdown;charset=utf-8',
+  )
 }

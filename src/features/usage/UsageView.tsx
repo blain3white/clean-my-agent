@@ -9,7 +9,10 @@ import {
   ChevronRight,
   Clock,
   Database,
+  Download,
+  FileText,
   Gauge,
+  Terminal,
 } from 'lucide-react'
 import {
   Area,
@@ -55,6 +58,9 @@ import {
   type UsageForecastAlert,
   type UsageForecasts,
   type UsageTokenType,
+  buildUsageReport,
+  exportUsageReportMarkdown,
+  type UsageReport,
 } from '@/features/usage/usage-analytics'
 
 const usageHeatmapMetrics: Array<{ value: UsageHeatmapMetric; label: string }> = [
@@ -119,7 +125,7 @@ function formatPeakHourRange(startHour: number, endHour: number): string {
   return `${formatPeakHourLabel(startHour)} – ${formatPeakHourLabel(endHour)}`
 }
 
-function formatProjectDisplayName(project: ProjectUsage): string {
+function formatProjectDisplayName(project: Pick<ProjectUsage, 'project' | 'projectPath'>): string {
   const value = project.projectPath || project.project
   const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '')
   return normalized.split('/').filter(Boolean).pop() || project.project
@@ -986,6 +992,169 @@ function PeakActivityWindowsCard({ windows }: { windows: PeakWindow[] }) {
   )
 }
 
+function UsageReportCard({
+  report,
+  snapshot,
+  range,
+}: {
+  report: UsageReport
+  snapshot: DashboardSnapshot
+  range: UsagePageRange
+}) {
+  const topProjects = report.projects.slice(0, 4)
+  const topFiles = report.files.slice(0, 6)
+  const topCommands = report.commands.slice(0, 4)
+
+  return (
+    <Card className="glass-panel rounded-lg py-4">
+      <UsageSectionTitle
+        title="Weekly / Project Report"
+        description="Summarized from scanned local AI sessions, token metadata, file references, commands, and git diff file paths."
+        action={
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => exportUsageReportMarkdown(snapshot, range)}
+            className="gap-1.5 text-white/65 hover:bg-white/7 hover:text-white"
+          >
+            <Download className="size-3.5" />
+            Markdown
+          </Button>
+        }
+      />
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-6 gap-2">
+          {[
+            ['Tokens', formatUsageTokens(report.summary.totalTokens)],
+            ['Sessions', report.summary.activeSessions.toLocaleString()],
+            ['Projects', report.summary.projectCount.toLocaleString()],
+            ['Files', report.summary.fileCount.toLocaleString()],
+            ['Commands', report.summary.commandCount.toLocaleString()],
+            ['Cost', formatCost(report.summary.estimatedCost)],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-md border border-white/8 bg-white/[0.03] p-2.5">
+              <div className="text-[11px] text-white/42">{label}</div>
+              <div className="mt-1 truncate text-sm font-semibold text-white/82">{value}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] gap-4">
+          <div className="min-w-0 space-y-3">
+            <div className="text-xs font-medium text-white/72">Highlights</div>
+            <div className="grid gap-2">
+              {report.highlights.map((item) => (
+                <div
+                  key={item}
+                  className="flex min-w-0 items-start gap-2 rounded-md border border-white/8 bg-white/[0.025] p-2 text-xs text-white/62"
+                >
+                  <FileText className="mt-0.5 size-3.5 shrink-0 text-blue-300" />
+                  <span className="min-w-0">{item}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="min-w-0 space-y-3">
+            <div className="text-xs font-medium text-white/72">Top Projects</div>
+            <div className="space-y-2">
+              {topProjects.map((project) => (
+                <div
+                  key={`${project.project}-${project.projectPath ?? ''}`}
+                  className="grid grid-cols-[minmax(0,1fr)_86px_54px] items-center gap-2 rounded-md border border-white/8 bg-white/[0.025] p-2 text-xs"
+                >
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="truncate font-medium text-white/76">
+                        {formatProjectDisplayName(project)}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-sm">
+                      {project.projectPath ?? project.project}
+                    </TooltipContent>
+                  </Tooltip>
+                  <span className="text-right text-white/62">
+                    {formatUsageTokens(project.tokens)}
+                  </span>
+                  <span className="text-right text-white/45">
+                    {formatUsageShare(project.share)}
+                  </span>
+                </div>
+              ))}
+              {topProjects.length === 0 && (
+                <div className="rounded-md border border-white/8 bg-white/[0.03] p-3 text-xs text-white/42">
+                  No project activity in this range
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] gap-4">
+          <div className="min-w-0 space-y-3">
+            <div className="text-xs font-medium text-white/72">Produced / Referenced Files</div>
+            <div className="grid gap-2">
+              {topFiles.map((file) => (
+                <div
+                  key={`${file.path}-${file.projects.join(',')}`}
+                  className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-2 rounded-md border border-white/8 bg-white/[0.025] p-2 text-xs"
+                >
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="truncate font-mono text-[11px] text-white/70">
+                        {file.path}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-md">
+                      {file.reason} · {file.projects.join(', ')}
+                    </TooltipContent>
+                  </Tooltip>
+                  <Badge className="justify-self-end rounded-md border-white/10 bg-white/7 text-[10px] text-white/58">
+                    {file.changed ? 'changed' : 'seen'}
+                  </Badge>
+                </div>
+              ))}
+              {topFiles.length === 0 && (
+                <div className="rounded-md border border-white/8 bg-white/[0.03] p-3 text-xs text-white/42">
+                  No file metadata detected
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="min-w-0 space-y-3">
+            <div className="text-xs font-medium text-white/72">Command Signals</div>
+            <div className="grid gap-2">
+              {topCommands.map((command) => (
+                <div
+                  key={`${command.command}-${command.cwd ?? ''}`}
+                  className="flex min-w-0 items-start gap-2 rounded-md border border-white/8 bg-white/[0.025] p-2 text-xs"
+                >
+                  <Terminal className="mt-0.5 size-3.5 shrink-0 text-emerald-300" />
+                  <div className="min-w-0">
+                    <div className="truncate font-mono text-[11px] text-white/72">
+                      {command.command}
+                    </div>
+                    <div className="mt-0.5 truncate text-[11px] text-white/36">
+                      {command.sessions} session{command.sessions === 1 ? '' : 's'}
+                      {command.cwd ? ` · ${command.cwd}` : ''}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {topCommands.length === 0 && (
+                <div className="rounded-md border border-white/8 bg-white/[0.03] p-3 text-xs text-white/42">
+                  No command metadata detected
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 function UsageEmptyView() {
   return (
     <Card className="glass-panel rounded-lg py-4">
@@ -1078,6 +1247,7 @@ export function UsageView({
   onSelectProject: (project?: ProjectUsage) => void
 }) {
   const analytics = useMemo(() => buildUsageAnalytics(snapshot, range), [snapshot, range])
+  const report = useMemo(() => buildUsageReport(snapshot, range), [snapshot, range])
 
   if (loading) return <UsageLoadingView />
   if (analytics.summary.totalTokens <= 0 && analytics.summary.activeSessions <= 0) {
@@ -1167,6 +1337,8 @@ export function UsageView({
         <PeakActivityWindowsCard windows={analytics.peakWindows} />
         <TokenMixCard mix={analytics.tokenMix} />
       </section>
+
+      <UsageReportCard report={report} snapshot={snapshot} range={range} />
     </div>
   )
 }

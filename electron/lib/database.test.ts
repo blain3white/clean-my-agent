@@ -51,6 +51,21 @@ function makeSession(overrides: Partial<SessionRecord> = {}): SessionRecord {
       sourceFormat: 'jsonl',
       usageByDate: { '2026-01-01': 10 },
       usageEvents: [{ timestamp: '2026-01-01T23:30:00.000Z', tokens: 10 }],
+      relayFiles: [
+        {
+          path: '/tmp/project/src/app.ts',
+          reason: 'Referenced by filePath',
+          lastSeenAt: '2026-01-01T23:30:00.000Z',
+        },
+      ],
+      relayCommands: [
+        {
+          command: 'pnpm test',
+          cwd: '/tmp/project',
+          createdAt: '2026-01-01T23:30:00.000Z',
+        },
+      ],
+      gitChangedFiles: ['src/app.ts'],
       extraField: 'should be stripped',
     },
     ...overrides,
@@ -243,7 +258,7 @@ describe('getSession', () => {
 // ---------------------------------------------------------------------------
 
 describe('compactSessionForStorage behavior', () => {
-  it('preserves parser, root, relativePath, sourceFormat, usageByDate, and usageEvents', () => {
+  it('preserves parser, root, usage, and report metadata', () => {
     db.replaceSessions([makeSession()])
     const stored = db.getSession('session-1')!
     expect(stored.metadata.parser).toBe('codex-v1')
@@ -254,6 +269,21 @@ describe('compactSessionForStorage behavior', () => {
     expect(stored.metadata.usageEvents).toEqual([
       { timestamp: '2026-01-01T23:30:00.000Z', tokens: 10 },
     ])
+    expect(stored.metadata.relayFiles).toEqual([
+      {
+        path: '/tmp/project/src/app.ts',
+        reason: 'Referenced by filePath',
+        lastSeenAt: '2026-01-01T23:30:00.000Z',
+      },
+    ])
+    expect(stored.metadata.relayCommands).toEqual([
+      {
+        command: 'pnpm test',
+        cwd: '/tmp/project',
+        createdAt: '2026-01-01T23:30:00.000Z',
+      },
+    ])
+    expect(stored.metadata.gitChangedFiles).toEqual(['src/app.ts'])
   })
 
   it('strips extra metadata fields', () => {
