@@ -30,6 +30,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "verify:ui-screenshots": "tsx scripts/verify-ui-screenshots.ts",
     "verify:pr-tests": "tsx scripts/verify-pr-tests.ts",
     "check": "pnpm format:check && pnpm lint && pnpm test && pnpm verify:functions && pnpm build",
     "verify:functions": "tsx scripts/verify-functions.ts"
@@ -115,6 +116,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
+    "playwright": "^1.60.0",
     "prettier": "^3.8.3",
     "tailwindcss": "^4.3.0",
     "tsx": "^4.21.0",
