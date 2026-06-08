@@ -3,7 +3,6 @@ import {
   Bot,
   CheckCircle2,
   ChevronDown,
-  Circle,
   Clock3,
   Code2,
   FileText,
@@ -16,6 +15,7 @@ import {
 import { AgentGlyph } from '@/components/agent-glyph'
 import { Badge } from '@/components/ui/badge'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { agentLabel, formatBytes, formatTokens } from '@/lib/format'
 import type { TranslationKey } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n-context'
@@ -105,44 +105,41 @@ function TimelineEventCard({ event, locale }: { event: SessionTimelineEvent; loc
   const Icon = eventIcon[event.kind]
 
   return (
-    <div className="grid grid-cols-[54px_26px_minmax(0,1fr)] gap-2">
-      <div className="pt-2 text-right text-[11px] font-medium text-white/48">
+    <article
+      className={cn(
+        'relative rounded-lg border px-3 py-2.5 pr-16 shadow-[0_10px_28px_rgb(0_0_0_/_0.12)]',
+        eventTone[event.kind],
+      )}
+    >
+      <div className="absolute right-3 top-2 text-[10px] font-medium text-current opacity-45">
         {formatClock(event.createdAt, locale)}
       </div>
-      <div className="relative flex justify-center">
-        <span className="absolute top-8 bottom-[-18px] w-px bg-white/10" />
-        <span className="relative grid size-5 place-items-center rounded-full border border-white/18 bg-[#171b1f] text-white/56">
-          <Circle className="size-2 fill-current" />
+      <div className="mb-2 flex min-w-0 items-center gap-2">
+        <span className="grid size-5 shrink-0 place-items-center rounded-md bg-black/20">
+          <Icon className="size-3.5" />
         </span>
-      </div>
-      <article className={cn('rounded-lg border px-3 py-2.5', eventTone[event.kind])}>
-        <div className="mb-2 flex min-w-0 items-center gap-2">
-          <span className="grid size-5 shrink-0 place-items-center rounded-md bg-black/20">
-            <Icon className="size-3.5" />
+        <div className="min-w-0 truncate text-xs font-semibold">{event.title}</div>
+        {event.status && (
+          <span
+            className={cn(
+              'ml-auto inline-flex h-5 shrink-0 items-center gap-1 rounded-md border px-1.5 text-[10px] font-semibold',
+              statusTone(event.status),
+            )}
+          >
+            <CheckCircle2 className="size-3" />
+            {event.status}
           </span>
-          <div className="min-w-0 truncate text-xs font-semibold">{event.title}</div>
-          {event.status && (
-            <span
-              className={cn(
-                'ml-auto inline-flex h-5 shrink-0 items-center gap-1 rounded-md border px-1.5 text-[10px] font-semibold',
-                statusTone(event.status),
-              )}
-            >
-              <CheckCircle2 className="size-3" />
-              {event.status}
-            </span>
-          )}
-        </div>
-        <p className="whitespace-pre-wrap break-words text-xs leading-5 text-current opacity-80">
-          {event.text}
-        </p>
-        {event.meta && (
-          <div className="mt-2 truncate rounded-md bg-black/18 px-2 py-1 font-mono text-[10px] text-current opacity-60">
-            {event.meta}
-          </div>
         )}
-      </article>
-    </div>
+      </div>
+      <p className="whitespace-pre-wrap break-words text-xs leading-5 text-current opacity-80">
+        {event.text}
+      </p>
+      {event.meta && (
+        <div className="mt-2 truncate rounded-md bg-black/18 px-2 py-1 font-mono text-[10px] text-current opacity-60">
+          {event.meta}
+        </div>
+      )}
+    </article>
   )
 }
 
@@ -167,7 +164,7 @@ export function SessionDetailDrawer({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="no-drag-region w-[min(720px,calc(100vw-260px))] gap-0 border-white/12 bg-[#111417]/96 p-0 text-white shadow-[-24px_0_70px_rgb(0_0_0_/_0.35)] backdrop-blur-xl sm:max-w-none"
+        className="no-drag-region !w-[60vw] !max-w-none gap-0 border-white/12 bg-[#111417]/96 p-0 text-white shadow-[-24px_0_70px_rgb(0_0_0_/_0.35)] backdrop-blur-xl"
       >
         <SheetHeader className="border-b border-white/10 px-5 py-4">
           <div className="flex min-w-0 items-start gap-3 pr-9">
@@ -213,33 +210,31 @@ export function SessionDetailDrawer({
 
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="border-b border-white/8 px-5 py-3">
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-7 gap-2">
               {sessionDetailFilters.map((item) => {
                 const Icon = filterIcon[item]
                 const active = filter === item
                 return (
-                  <button
-                    key={item}
-                    type="button"
-                    onClick={() => setFilter(item)}
-                    className={cn(
-                      'inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold transition',
-                      active
-                        ? 'border-white/24 bg-white/88 text-neutral-900'
-                        : 'border-white/10 bg-white/[0.04] text-white/58 hover:border-white/18 hover:bg-white/[0.08] hover:text-white/78',
-                    )}
-                  >
-                    <Icon className="size-3.5" />
-                    {t(filterLabelKey[item])}
-                    <span
-                      className={cn(
-                        'rounded-md px-1.5 py-0.5 text-[10px]',
-                        active ? 'bg-black/10 text-neutral-800' : 'bg-white/8 text-white/40',
-                      )}
-                    >
-                      {counts[item]}
-                    </span>
-                  </button>
+                  <Tooltip key={item}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label={`${t(filterLabelKey[item])} ${counts[item]}`}
+                        onClick={() => setFilter(item)}
+                        className={cn(
+                          'inline-flex h-10 min-w-0 items-center justify-center rounded-lg border text-xs font-semibold transition',
+                          active
+                            ? 'border-white/24 bg-white/88 text-neutral-900'
+                            : 'border-white/10 bg-white/[0.04] text-white/58 hover:border-white/18 hover:bg-white/[0.08] hover:text-white/78',
+                        )}
+                      >
+                        <Icon className="size-4 shrink-0" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {t(filterLabelKey[item])} · {counts[item]}
+                    </TooltipContent>
+                  </Tooltip>
                 )
               })}
             </div>
@@ -260,7 +255,7 @@ export function SessionDetailDrawer({
                 {error}
               </div>
             ) : visibleEvents.length > 0 ? (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {visibleEvents.map((event) => (
                   <TimelineEventCard key={event.id} event={event} locale={locale} />
                 ))}
