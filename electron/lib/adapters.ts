@@ -67,9 +67,24 @@ type CandidateDiscovery = {
 
 type RelayHints = Pick<ParsedSession, 'files' | 'commands' | 'attachments' | 'gitDiff'>
 
+type SqliteStatement = {
+  all: (...values: unknown[]) => JsonRecord[]
+}
+
+type SqliteDatabase = {
+  prepare: (sql: string) => SqliteStatement
+  close: () => void
+}
+
+type SqliteModule = {
+  DatabaseSync: new (filePath: string, options?: { readOnly?: boolean }) => SqliteDatabase
+}
+
 const maxDiagnosticsPerScan = 50
 const maxRelayItems = 500
 const maxRelayDiffLength = 200_000
+const sqliteJsonValueColumns = ['value', 'json', 'data', 'body', 'content', 'contents']
+const sqliteKeyColumns = ['key', 'id', 'name']
 
 const emptyTokens = (): TokenUsage => ({
   input: 0,
@@ -103,7 +118,7 @@ const definitions: AgentDefinition[] = [
       '~/Library/Application Support/Cursor/User/workspaceStorage',
       '~/Library/Application Support/Cursor/User/globalStorage',
     ],
-    patterns: ['**/*.json', '**/*.jsonl', '**/*.db', '**/*.sqlite', '**/*.log'],
+    patterns: ['**/*.json', '**/*.jsonl', '**/*.db', '**/*.sqlite', '**/*.vscdb', '**/*.log'],
     note: 'Read-only scan of Cursor workspace storage and chat artifacts.',
   },
   {
@@ -265,7 +280,7 @@ function extractRelayHints(
   inherited?: { cwd?: string; createdAt?: string },
   depth = 0,
 ): void {
-  if (depth > 5) return
+  if (depth > 7) return
   if (Array.isArray(value)) {
     value.forEach((item) => extractRelayHints(item, hints, inherited, depth + 1))
     return
@@ -362,6 +377,47 @@ function textFromContent(value: unknown): string {
     asString(record.input) ??
     ''
   )
+}
+
+function isLikelyMessageItem(value: unknown): boolean {
+  return extractMessage(value, '__probe__') !== undefined
+}
+
+function collectMessageItems(
+  value: unknown,
+  items: unknown[] = [],
+  seen = new WeakSet<object>(),
+  depth = 0,
+): unknown[] {
+  if (depth > 7) return items
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return items
+    seen.add(value)
+    const messageItems = value.filter(isLikelyMessageItem)
+    if (messageItems.length > 0) {
+      items.push(...messageItems)
+      return items
+    }
+    value.forEach((item) => collectMessageItems(item, items, seen, depth + 1))
+    return items
+  }
+
+  const record = toRecord(value)
+  if (!record) return items
+  if (seen.has(record)) return items
+  seen.add(record)
+
+  if (isLikelyMessageItem(record)) {
+    items.push(record)
+    return items
+  }
+
+  Object.entries(record).forEach(([key, child]) => {
+    if (key === 'raw') return
+    collectMessageItems(child, items, seen, depth + 1)
+  })
+  return items
 }
 
 function normalizeRole(value: unknown): UniversalRelayMessage['role'] {
@@ -550,6 +606,7 @@ function extractUsage(
 ): TokenUsage {
   const tokens = emptyTokens()
   const seenUsageObjects = new WeakSet<JsonRecord>()
+  const seenVisitObjects = new WeakSet<object>()
 
   function addUsage(node: unknown, parent?: JsonRecord): void {
     const record = toRecord(node)
@@ -625,14 +682,18 @@ function extractUsage(
   }
 
   function visit(node: unknown, depth = 0): void {
-    if (depth > 4) return
+    if (depth > 7) return
     if (Array.isArray(node)) {
+      if (seenVisitObjects.has(node)) return
+      seenVisitObjects.add(node)
       node.forEach((item) => visit(item, depth + 1))
       return
     }
 
     const record = toRecord(node)
     if (!record) return
+    if (seenVisitObjects.has(record)) return
+    seenVisitObjects.add(record)
 
     addUsage(record.usage, record)
     addUsage(record.token_usage, record)
@@ -675,6 +736,11 @@ function extractUsage(
       addUsage(message.last_token_usage, record)
       addUsage(message.lastTokenUsage, record)
     }
+
+    Object.entries(record).forEach(([key, child]) => {
+      if (key === 'raw') return
+      visit(child, depth + 1)
+    })
   }
 
   visit(value)
@@ -745,6 +811,108 @@ function projectNameFromPath(projectPath: string | undefined, filePath: string):
   return 'Unknown Project'
 }
 
+function isSqliteLikePath(filePath: string): boolean {
+  return /\.(db|sqlite|vscdb)$/i.test(filePath)
+}
+
+function storageKindFromPath(filePath: string): SessionRecord['storageKind'] {
+  return isSqliteLikePath(filePath) ? 'database' : 'file'
+}
+
+function addTextFallbackMessages(text: string, messages: UniversalRelayMessage[]): void {
+  text
+    .split(/\r?\n/)
+    .filter((line) => line.trim())
+    .slice(0, 200)
+    .forEach((line, index) => {
+      messages.push({ id: `${index}`, role: 'unknown', text: line.slice(0, 1000) })
+    })
+}
+
+function parseEmbeddedJson(value: string): unknown | undefined {
+  const trimmed = value.trim()
+  if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) return undefined
+  try {
+    return JSON.parse(trimmed) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+function textFromSqliteCell(value: unknown): string | undefined {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (value instanceof Uint8Array) return Buffer.from(value).toString('utf8')
+  return undefined
+}
+
+function valueFromSqliteCell(value: unknown): unknown {
+  const text = textFromSqliteCell(value)
+  if (text === undefined) return value
+  return parseEmbeddedJson(text) ?? text
+}
+
+function quoteSqlIdentifier(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`
+}
+
+async function readSqliteJsonValues(
+  filePath: string,
+): Promise<{ sourceFormat: string; values: unknown[] } | undefined> {
+  let db: SqliteDatabase | undefined
+  try {
+    const sqlite = (await import('node:sqlite')) as unknown as SqliteModule
+    db = new sqlite.DatabaseSync(filePath, { readOnly: true })
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all()
+      .map((row) => asString(row.name))
+      .filter((name): name is string => Boolean(name && !name.startsWith('sqlite_')))
+
+    const values: unknown[] = []
+    for (const table of tables.slice(0, 40)) {
+      const quotedTable = quoteSqlIdentifier(table)
+      const columns = db
+        .prepare(`PRAGMA table_info(${quotedTable})`)
+        .all()
+        .map((row) => asString(row.name))
+        .filter((name): name is string => Boolean(name))
+      const valueColumns = sqliteJsonValueColumns.filter((column) => columns.includes(column))
+      if (valueColumns.length === 0) continue
+      const keyColumn = sqliteKeyColumns.find((column) => columns.includes(column))
+      const selectedColumns = [...(keyColumn ? [keyColumn] : []), ...valueColumns]
+
+      const rows = db
+        .prepare(
+          `SELECT ${selectedColumns.map(quoteSqlIdentifier).join(', ')} FROM ${quotedTable} LIMIT 1000`,
+        )
+        .all()
+
+      rows.forEach((row) => {
+        const key = keyColumn ? asString(row[keyColumn]) : undefined
+        valueColumns.forEach((column) => {
+          const value = valueFromSqliteCell(row[column])
+          if (value === undefined || value === '') return
+          values.push(key ? { table, key, value } : value)
+        })
+      })
+    }
+
+    if (values.length === 0) return undefined
+    const sourceFormat =
+      path.basename(filePath).toLowerCase() === 'state.vscdb' ||
+      tables.includes('ItemTable') ||
+      tables.includes('cursorDiskKV')
+        ? 'cursor-state-sqlite'
+        : 'sqlite-kv-json'
+    return { sourceFormat, values }
+  } catch {
+    return undefined
+  } finally {
+    db?.close()
+  }
+}
+
 async function parseJsonLike(filePath: string): Promise<ParsedSession> {
   const messages: UniversalRelayMessage[] = []
   const metadata: JsonRecord = {}
@@ -810,29 +978,34 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
       const record = toRecord(json)
       currentModel = record ? modelHintFromRecord(record) : undefined
       extractRelayHints(json, relayHints)
-      const array =
-        (Array.isArray(json) && json) ||
-        (Array.isArray(record?.messages) && record?.messages) ||
-        (Array.isArray(record?.conversation) && record?.conversation) ||
-        (Array.isArray(record?.entries) && record?.entries) ||
-        []
-      array.slice(0, 3000).forEach((item, index) => {
-        const message = extractMessage(item, `${index}`)
-        if (message) messages.push(message)
-      })
+      collectMessageItems(json)
+        .slice(0, 3000)
+        .forEach((item, index) => {
+          const message = extractMessage(item, `${index}`)
+          if (message) messages.push(message)
+        })
       tokens = extractUsage(json, new Set<string>(), currentModel)
     } catch {
       messages.push({ id: 'raw', role: 'unknown', text: text.slice(0, 4000) })
     }
+  } else if (isSqliteLikePath(filePath)) {
+    const sqlite = await readSqliteJsonValues(filePath)
+    if (sqlite) {
+      sampleForHints = sqlite.values
+      metadata.sourceFormat = sqlite.sourceFormat
+      extractRelayHints(sqlite.values, relayHints)
+      collectMessageItems(sqlite.values)
+        .slice(0, 3000)
+        .forEach((item, index) => {
+          const message = extractMessage(item, `${index}`)
+          if (message) messages.push(message)
+        })
+      tokens = extractUsage(sqlite.values, new Set<string>(), currentModel)
+    } else {
+      addTextFallbackMessages(await safeReadText(filePath), messages)
+    }
   } else {
-    const text = await safeReadText(filePath)
-    text
-      .split(/\r?\n/)
-      .filter((line) => line.trim())
-      .slice(0, 200)
-      .forEach((line, index) => {
-        messages.push({ id: `${index}`, role: 'unknown', text: line.slice(0, 1000) })
-      })
+    addTextFallbackMessages(await safeReadText(filePath), messages)
   }
 
   return {
@@ -843,6 +1016,7 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
       'project_path',
       'workspace',
       'workspacePath',
+      'folder',
     ]),
     branch: findStringByKeys(sampleForHints, ['branch', 'gitBranch', 'git_branch']),
     messages,
@@ -1077,8 +1251,7 @@ export class AgentAdapter {
       projectPath: parsed.projectPath,
       branch: parsed.branch,
       storagePath: candidate.path,
-      storageKind:
-        candidate.path.endsWith('.db') || candidate.path.endsWith('.sqlite') ? 'database' : 'file',
+      storageKind: storageKindFromPath(candidate.path),
       storageState: 'live',
       createdAt: candidate.createdAt,
       lastUpdated: candidate.lastUpdated,
