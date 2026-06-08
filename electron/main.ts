@@ -79,6 +79,7 @@ function registerIpc(): void {
   ipcMain.handle('app:getSnapshot', () => service.getSnapshot(false))
   ipcMain.handle('app:rescan', () => service.getSnapshot(true))
   ipcMain.handle('app:refreshRecentSessions', () => service.refreshRecentSessions(10))
+  ipcMain.handle('skills:get', () => service.getSkills())
   ipcMain.handle('session:backup', (_event, sessionId: string) => service.backupSession(sessionId))
   ipcMain.handle('session:archive', (_event, sessionId: string) =>
     service.archiveSession(sessionId),

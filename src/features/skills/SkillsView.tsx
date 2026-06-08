@@ -14,7 +14,8 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { useMemo, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { toast } from 'sonner'
 import { AgentGlyph } from '@/components/agent-glyph'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -22,12 +23,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { agentLabel } from '@/lib/format'
 import type { TranslationKey } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n-context'
-import { agentSources } from '@/shared/types'
+import { agentSources, type SkillsSnapshot, type SkillsSummary } from '@/shared/types'
 import {
   categoryLabelKey,
   filterSkills,
-  managedSkills,
-  skillsSummary,
   statusLabelKey,
   summarizeVisibleSkills,
   type ManagedSkill,
@@ -57,13 +56,28 @@ const statusClasses: Record<SkillStatus, string> = {
   'backed-up': 'bg-amber-400/12 text-amber-300',
 }
 
+const emptySummary: SkillsSummary = {
+  totalSkills: 0,
+  weeklyDelta: 0,
+  linkedAgents: 0,
+  linkedAgentTotal: 0,
+  backups: 0,
+  backupPercent: 0,
+  recentlyChanged: 0,
+}
+
+const emptySnapshot = (): SkillsSnapshot => ({
+  generatedAt: new Date().toISOString(),
+  skills: [],
+  summary: emptySummary,
+})
+
 const summaryCards = [
   {
     key: 'totalSkills',
     labelKey: 'skills.summary.totalSkills',
     icon: Database,
     tone: 'violet',
-    value: skillsSummary.totalSkills,
     detailKey: 'skills.summary.totalDetail',
   },
   {
@@ -71,7 +85,6 @@ const summaryCards = [
     labelKey: 'skills.summary.linkedAgents',
     icon: ArrowRightLeft,
     tone: 'blue',
-    value: skillsSummary.linkedAgents,
     detailKey: 'skills.summary.linkedDetail',
   },
   {
@@ -79,7 +92,6 @@ const summaryCards = [
     labelKey: 'skills.summary.backups',
     icon: Archive,
     tone: 'green',
-    value: skillsSummary.backups,
     detailKey: 'skills.summary.backupsDetail',
   },
   {
@@ -87,7 +99,6 @@ const summaryCards = [
     labelKey: 'skills.summary.recentlyChanged',
     icon: RefreshCcw,
     tone: 'orange',
-    value: skillsSummary.recentlyChanged,
     detailKey: 'skills.summary.changedDetail',
   },
 ] as const satisfies Array<{
@@ -95,7 +106,6 @@ const summaryCards = [
   labelKey: TranslationKey
   icon: typeof Database
   tone: 'violet' | 'blue' | 'green' | 'orange'
-  value: number
   detailKey: TranslationKey
 }>
 
@@ -162,7 +172,18 @@ function SkillCheckbox({ checked }: { checked: boolean }) {
   )
 }
 
-function SkillsSummaryCards() {
+function summaryValue(summary: SkillsSummary, key: (typeof summaryCards)[number]['key']) {
+  return summary[key]
+}
+
+function summaryDetailCount(summary: SkillsSummary, key: (typeof summaryCards)[number]['key']) {
+  if (key === 'totalSkills') return summary.weeklyDelta
+  if (key === 'linkedAgents') return summary.linkedAgentTotal
+  if (key === 'backups') return summary.backupPercent
+  return 7
+}
+
+function SkillsSummaryCards({ summary }: { summary: SkillsSummary }) {
   const { t } = useI18n()
 
   return (
@@ -177,18 +198,11 @@ function SkillsSummaryCards() {
             <div>
               <div className="text-xs text-white/45">{t(card.labelKey)}</div>
               <div className="mt-1 text-2xl font-semibold tracking-normal text-white">
-                {card.value}
+                {summaryValue(summary, card.key)}
               </div>
               <div className="mt-3 text-xs text-white/48">
                 {t(card.detailKey, {
-                  count:
-                    card.key === 'totalSkills'
-                      ? skillsSummary.weeklyDelta
-                      : card.key === 'linkedAgents'
-                        ? skillsSummary.linkedAgentTotal
-                        : card.key === 'backups'
-                          ? skillsSummary.backupPercent
-                          : 7,
+                  count: summaryDetailCount(summary, card.key),
                 })}
               </div>
             </div>
@@ -204,11 +218,13 @@ function SkillRow({
   selected,
   active,
   onSelect,
+  updatedLabel,
 }: {
   skill: ManagedSkill
   selected: boolean
   active: boolean
   onSelect: (skill: ManagedSkill) => void
+  updatedLabel: string
 }) {
   const { t } = useI18n()
 
@@ -242,7 +258,7 @@ function SkillRow({
           {t(categoryLabelKey(skill.category))}
         </span>
       </td>
-      <td className="w-[104px] text-sm text-white/55">{skill.updatedLabel}</td>
+      <td className="w-[104px] text-sm text-white/55">{updatedLabel}</td>
       <td className="w-[86px] text-sm text-white/55">{skill.sizeKb} KB</td>
       <td className="w-[140px]">
         <StatusPill status={skill.status} />
@@ -277,8 +293,14 @@ function DetailField({ label, value }: { label: string; value: string | number }
   )
 }
 
+function formatAbsoluteDate(value: string, locale: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString(locale)
+}
+
 function SkillsDetailPanel({ skill }: { skill: ManagedSkill }) {
-  const { t } = useI18n()
+  const { locale, t, formatRelative } = useI18n()
   const extraAgents = Math.max(0, skill.linkedAgents.length - 3)
 
   return (
@@ -302,8 +324,7 @@ function SkillsDetailPanel({ skill }: { skill: ManagedSkill }) {
       </div>
 
       <div className="mt-4 flex items-center gap-2">
-        <StatusPill status="synced" />
-        <StatusPill status="backed-up" />
+        <StatusPill status={skill.status} />
       </div>
 
       <div className="mt-5 border-t border-white/8 pt-4">
@@ -329,9 +350,17 @@ function SkillsDetailPanel({ skill }: { skill: ManagedSkill }) {
 
       <dl className="mt-5 space-y-4 border-t border-white/8 pt-4">
         <DetailField label={t('skills.version')} value={skill.version} />
-        <DetailField label={t('skills.created')} value={skill.createdAt} />
-        <DetailField label={t('skills.updated')} value={skill.updatedDetail} />
-        <DetailField label={t('skills.lastBackup')} value={skill.lastBackupAt ?? t('time.never')} />
+        <DetailField
+          label={t('skills.created')}
+          value={formatAbsoluteDate(skill.createdAt, locale)}
+        />
+        <DetailField label={t('skills.updated')} value={formatRelative(skill.updatedAt)} />
+        <DetailField
+          label={t('skills.lastBackup')}
+          value={
+            skill.lastBackupAt ? formatAbsoluteDate(skill.lastBackupAt, locale) : t('time.never')
+          }
+        />
         <DetailField label={t('skills.usageCount')} value={skill.usageCount} />
         <DetailField label={t('skills.size')} value={`${skill.sizeKb} KB`} />
         <DetailField label={t('skills.category')} value={t(categoryLabelKey(skill.category))} />
@@ -364,21 +393,50 @@ function SkillsDetailPanel({ skill }: { skill: ManagedSkill }) {
 }
 
 export function SkillsView() {
-  const { t } = useI18n()
+  const { t, formatRelative } = useI18n()
   const [query, setQuery] = useState('')
   const [owner, setOwner] = useState<SkillOwnerFilter>('all')
   const [status, setStatus] = useState<SkillStatusFilter>('all')
-  const [activeSkillId, setActiveSkillId] = useState('commit-message-writer')
+  const [snapshot, setSnapshot] = useState<SkillsSnapshot>(() => emptySnapshot())
+  const [loading, setLoading] = useState(true)
+  const [activeSkillId, setActiveSkillId] = useState<string>()
+  const loadSkills = useCallback(async () => {
+    if (!window.cleanMyAgent) {
+      setSnapshot(emptySnapshot())
+      setLoading(false)
+      return
+    }
+
+    setLoading(true)
+    try {
+      const next = await window.cleanMyAgent.getSkills()
+      setSnapshot(next)
+      setActiveSkillId((current) => current ?? next.skills[0]?.id)
+    } catch (error) {
+      console.error(error)
+      toast.error(t('skills.scanError'))
+      setSnapshot(emptySnapshot())
+    } finally {
+      setLoading(false)
+    }
+  }, [t])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadSkills()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [loadSkills])
+
   const visibleSkills = useMemo(
-    () => filterSkills(managedSkills, query, owner, status),
-    [owner, query, status],
+    () => filterSkills(snapshot.skills, query, owner, status),
+    [owner, query, snapshot.skills, status],
   )
   const visibleSummary = summarizeVisibleSkills(visibleSkills)
-  const activeSkill =
-    visibleSkills.find((skill) => skill.id === activeSkillId) ??
-    visibleSkills[0] ??
-    managedSkills[0]
+  const activeSkill = visibleSkills.find((skill) => skill.id === activeSkillId) ?? visibleSkills[0]
   const selectedIds = new Set(visibleSummary.selectedIds)
+  const hasSkills = snapshot.skills.length > 0
+  const hasVisibleSkills = visibleSkills.length > 0
 
   return (
     <div className="skills-page">
@@ -428,6 +486,20 @@ export function SkillsView() {
                   variant="outline"
                   size="icon-sm"
                   className="h-10 w-10 border-white/10 bg-white/8 text-white/70 hover:bg-white/12 hover:text-white"
+                  aria-label={t('skills.refresh')}
+                  onClick={() => void loadSkills()}
+                >
+                  <RefreshCcw className={`size-5 ${loading ? 'animate-spin' : ''}`} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('skills.refresh')}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  className="h-10 w-10 border-white/10 bg-white/8 text-white/70 hover:bg-white/12 hover:text-white"
                   aria-label={t('skills.viewOptions')}
                 >
                   <ListFilter className="size-5" />
@@ -438,7 +510,7 @@ export function SkillsView() {
           </div>
         </div>
 
-        <SkillsSummaryCards />
+        <SkillsSummaryCards summary={snapshot.summary} />
 
         <div className="skills-table-panel">
           <div className="skills-bulkbar">
@@ -488,7 +560,8 @@ export function SkillsView() {
                   key={skill.id}
                   skill={skill}
                   selected={selectedIds.has(skill.id)}
-                  active={skill.id === activeSkill.id}
+                  active={skill.id === activeSkill?.id}
+                  updatedLabel={formatRelative(skill.updatedAt)}
                   onSelect={(nextSkill) => {
                     setActiveSkillId(nextSkill.id)
                   }}
@@ -497,12 +570,30 @@ export function SkillsView() {
             </tbody>
           </table>
 
+          {!loading && !hasVisibleSkills && (
+            <div className="skills-empty-state">
+              <div className="text-sm font-semibold text-white">
+                {hasSkills ? t('skills.noMatchesTitle') : t('skills.emptyTitle')}
+              </div>
+              <p className="mt-2 text-sm text-white/45">
+                {hasSkills ? t('skills.noMatchesBody') : t('skills.emptyBody')}
+              </p>
+            </div>
+          )}
+
+          {loading && (
+            <div className="skills-empty-state">
+              <div className="text-sm font-semibold text-white">{t('skills.loadingTitle')}</div>
+              <p className="mt-2 text-sm text-white/45">{t('skills.loadingBody')}</p>
+            </div>
+          )}
+
           <div className="skills-pagination">
             <span>
               {t('skills.showing', {
                 start: visibleSkills.length > 0 ? 1 : 0,
                 end: visibleSkills.length,
-                count: skillsSummary.totalSkills,
+                count: snapshot.summary.totalSkills,
               })}
             </span>
             <div className="ml-auto flex items-center gap-2">
@@ -532,7 +623,14 @@ export function SkillsView() {
         </div>
       </section>
 
-      <SkillsDetailPanel skill={activeSkill} />
+      {activeSkill ? (
+        <SkillsDetailPanel skill={activeSkill} />
+      ) : (
+        <aside className="skills-detail-panel">
+          <div className="text-sm font-semibold text-white">{t('skills.emptyDetailsTitle')}</div>
+          <p className="mt-3 text-sm leading-6 text-white/45">{t('skills.emptyDetailsBody')}</p>
+        </aside>
+      )}
     </div>
   )
 }

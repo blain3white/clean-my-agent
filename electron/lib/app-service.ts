@@ -13,10 +13,12 @@ import type {
   StorageSlice,
   TrashRecord,
   UsagePoint,
+  SkillsSnapshot,
 } from '../../src/shared/types'
 import { agentSources, appLanguages, defaultLanguage, exportFormats } from '../../src/shared/types'
 import { adapters, adapterFor, enabledProviderSources } from './adapters'
 import { LocalDatabase } from './database'
+import { scanSkills } from './skills'
 import {
   compressFileBrotli,
   copyPath,
@@ -716,6 +718,10 @@ export class AppService {
     }
 
     return purged
+  }
+
+  async getSkills(): Promise<SkillsSnapshot> {
+    return scanSkills(this.requireSettings())
   }
 
   getSettings(): AppSettings {

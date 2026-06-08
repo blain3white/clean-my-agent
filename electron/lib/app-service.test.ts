@@ -182,6 +182,15 @@ describe('init and settings', () => {
     expect(() => service.updateSettings({ exportDirectory: 'relative/path' })).toThrow(
       /exportDirectory must be an absolute local path/,
     )
+    expect(() => service.updateSettings({ exportDirectory: '' })).toThrow(
+      /exportDirectory must be an absolute local path/,
+    )
+    expect(() => service.updateSettings({ exportDirectory: `/tmp/bad\0path` })).toThrow(
+      /exportDirectory must be an absolute local path/,
+    )
+    expect(() => service.updateSettings({ exportDirectory: `/${'x'.repeat(4097)}` })).toThrow(
+      /exportDirectory must be an absolute local path/,
+    )
     expect(() =>
       service.updateSettings({ scanRoots: { codex: ['https://example.test'] } }),
     ).toThrow(/scanRoots.codex must be an absolute local path/)
@@ -1182,6 +1191,44 @@ describe('purgeExpiredTrash', () => {
     expect(snapshot.trash.find((record) => record.id === expired.id)).toBeUndefined()
     expect(snapshot.trash.find((record) => record.id === fresh.id)).toBeDefined()
   }, 20_000)
+})
+
+// ---------------------------------------------------------------------------
+// skills scanning
+// ---------------------------------------------------------------------------
+
+describe('skills scanning', () => {
+  it('requires service initialization before scanning skills', async () => {
+    const service = makeService(userDataPath)
+    await expect(service.getSkills()).rejects.toThrow(/not initialized/)
+  })
+
+  it('returns discovered local skills from configured scan roots', async () => {
+    const service = makeService(userDataPath)
+    await service.init()
+    const codexRoot = path.join(fixtureRoot, 'codex-skills')
+    const skillDir = path.join(codexRoot, 'review-helper')
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(
+      path.join(skillDir, 'SKILL.md'),
+      `---\nname: Review Helper\ndescription: Review code changes before merge.\n---`,
+    )
+    service.updateSettings({ scanRoots: { codex: [codexRoot] } })
+
+    const snapshot = await service.getSkills()
+
+    expect(snapshot.summary.totalSkills).toBeGreaterThanOrEqual(1)
+    expect(snapshot.skills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'Review Helper',
+          ownerAgent: 'codex',
+          status: 'local',
+          location: expect.stringContaining('review-helper'),
+        }),
+      ]),
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------
