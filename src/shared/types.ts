@@ -1,4 +1,4 @@
-export const agentSources = ['codex', 'claude', 'cursor', 'gemini', 'opencode'] as const
+export const agentSources = ['codex', 'claude', 'cursor', 'gemini', 'opencode', 'custom'] as const
 
 export type AgentSource = (typeof agentSources)[number]
 
@@ -15,6 +15,14 @@ export type SessionStorageState = 'live' | 'archived'
 export type RiskLevel = 'low' | 'medium' | 'high'
 
 export type TokenCostSource = 'actual' | 'model-estimate' | 'mixed'
+
+export type AgentScanDiagnostic = {
+  level: 'info' | 'warning' | 'error'
+  code: string
+  message: string
+  path?: string
+  count?: number
+}
 
 export type TokenUsage = {
   input: number
@@ -37,8 +45,11 @@ export type AgentInstallState = {
   rootPaths: string[]
   sessionCount: number
   sizeBytes: number
+  scannedFiles?: number
+  skippedFiles?: number
   lastScannedAt?: string
   note?: string
+  diagnostics?: AgentScanDiagnostic[]
 }
 
 export type SessionRecord = {
@@ -135,6 +146,7 @@ export type UsagePoint = {
   cursor: number
   gemini: number
   opencode: number
+  custom: number
   total: number
 }
 
@@ -169,6 +181,45 @@ export type DashboardSnapshot = {
   storage: StorageSlice[]
 }
 
+export type SkillStatus = 'synced' | 'local' | 'backed-up'
+
+export type SkillCategory = 'engineering' | 'docs' | 'productivity' | 'design' | 'data'
+
+export type ManagedSkill = {
+  id: string
+  name: string
+  description: string
+  ownerAgent: AgentSource
+  category: SkillCategory
+  updatedAt: string
+  sizeKb: number
+  status: SkillStatus
+  linkedAgents: AgentSource[]
+  version: string
+  createdAt: string
+  lastBackupAt?: string
+  usageCount: number
+  location: string
+  accent: 'violet' | 'orange' | 'green' | 'blue' | 'cyan' | 'pink' | 'amber'
+  icon: 'code' | 'review' | 'bug' | 'notes' | 'search' | 'image' | 'data' | 'spec'
+}
+
+export type SkillsSummary = {
+  totalSkills: number
+  weeklyDelta: number
+  linkedAgents: number
+  linkedAgentTotal: number
+  backups: number
+  backupPercent: number
+  recentlyChanged: number
+}
+
+export type SkillsSnapshot = {
+  generatedAt: string
+  skills: ManagedSkill[]
+  summary: SkillsSummary
+}
+
 export type UniversalRelayMessage = {
   id: string
   role: 'system' | 'user' | 'assistant' | 'tool' | 'unknown'
@@ -194,7 +245,9 @@ export type UniversalRelayDocument = {
   warnings: string[]
 }
 
-export type ExportFormat = 'json' | 'markdown' | 'universal-json'
+export const exportFormats = ['json', 'markdown', 'universal-json'] as const
+
+export type ExportFormat = (typeof exportFormats)[number]
 
 export type AppSettings = {
   scanRoots: Partial<Record<AgentSource, string[]>>
@@ -204,28 +257,66 @@ export type AppSettings = {
   mockDataEnabled: boolean
   language: AppLanguage
   launchAtLogin: boolean
+  enabledProviders: Partial<Record<AgentSource, boolean>>
+  scanOnLaunch: boolean
+  backgroundScan: boolean
+  confirmBeforeCleanup: boolean
+  excludedFolders: string[]
+  soundEffects: boolean
+  cleanupSound: boolean
+  scanSound: boolean
+  errorSound: boolean
+  soundVolume: number
+  checkForUpdates: boolean
   defaultRelayMode: 'full-context' | 'fit-to-window' | 'manual-select'
   exportDirectory: string
 }
 
 export type ThemePreference = 'system' | 'light' | 'dark'
 
+export type UpdateReleaseAsset = {
+  name: string
+  sizeBytes: number
+  downloadUrl: string
+}
+
+export type UpdateReleaseCheckResult = {
+  currentVersion: string
+  latestVersion: string
+  releaseName: string
+  releaseUrl: string
+  publishedAt?: string
+  available: boolean
+  asset?: UpdateReleaseAsset
+}
+
+export type UpdateDownloadResult = UpdateReleaseCheckResult & {
+  downloadedPath?: string
+  downloadedBytes?: number
+}
+
 export type CleanMyAgentApi = {
   getSnapshot: () => Promise<DashboardSnapshot>
   rescan: () => Promise<DashboardSnapshot>
   refreshRecentSessions: () => Promise<DashboardSnapshot>
+  getSessionDetail: (sessionId: string) => Promise<UniversalRelayDocument>
+  getSkills: () => Promise<SkillsSnapshot>
   backupSession: (sessionId: string) => Promise<BackupRecord>
   archiveSession: (sessionId: string) => Promise<ArchiveRecord>
   restoreArchive: (archiveId: string) => Promise<void>
   exportSession: (sessionId: string, format: ExportFormat) => Promise<string>
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<TrashRecord[]>
+  purgeExpiredTrash: () => Promise<TrashRecord[]>
   restoreTrash: (trashId: string) => Promise<void>
   exportUniversalRelay: (sessionId: string) => Promise<string>
   getSettings: () => Promise<AppSettings>
   updateSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>
+  chooseFolders: () => Promise<string[]>
   openPath: (path: string) => Promise<void>
   playSystemSound: () => Promise<void>
   getLaunchAtLogin: () => Promise<boolean>
   setLaunchAtLogin: (enabled: boolean) => Promise<boolean>
+  checkForUpdates: () => Promise<UpdateReleaseCheckResult>
+  downloadLatestUpdate: () => Promise<UpdateDownloadResult>
 }

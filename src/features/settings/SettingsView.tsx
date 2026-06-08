@@ -1,9 +1,8 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import {
   Bell,
-  ChevronDown,
-  ChevronRight,
   Clock3,
+  Download,
   Folder,
   Languages,
   Palette,
@@ -22,7 +21,7 @@ import { playCleanupSystemSound } from '@/features/cleanup/cleanup-system-sound'
 import { agentLabel, formatBytes } from '@/lib/format'
 import { languageOptions } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n-context'
-import type { ThemePreference } from '@/shared/types'
+import type { AppSettings, ThemePreference } from '@/shared/types'
 import type { TranslationKey } from '@/lib/i18n'
 import {
   agentSources,
@@ -37,44 +36,21 @@ type SettingsViewProps = {
   themePreference: ThemePreference
   launchAtLogin: boolean
   mockDataEnabled: boolean
+  settings: AppSettings
+  checkingForUpdates: boolean
   onLanguageChange: (language: AppLanguage) => Promise<void>
   onThemePreferenceChange: (preference: ThemePreference) => void
   onLaunchAtLoginChange: (enabled: boolean) => Promise<void>
   onMockDataChange: (enabled: boolean) => Promise<void>
+  onSettingsChange: (
+    patch: Partial<AppSettings>,
+    options?: { rescan?: boolean },
+  ) => Promise<AppSettings>
+  onChooseFolders: () => Promise<string[]>
+  onDownloadLatestUpdate: () => Promise<void>
   onRescan: () => Promise<void>
+  onPurgeExpiredTrash: () => Promise<void>
 }
-
-type ToggleKey =
-  | 'scanOnLaunch'
-  | 'backgroundScan'
-  | 'moveToTrash'
-  | 'confirmCleanup'
-  | 'soundEffects'
-  | 'cleanupSound'
-  | 'scanSound'
-  | 'errorSound'
-  | 'checkUpdates'
-
-const initialProviderState: Record<AgentSource, boolean> = {
-  codex: true,
-  claude: true,
-  cursor: true,
-  gemini: true,
-  opencode: true,
-}
-
-const initialToggles: Record<ToggleKey, boolean> = {
-  scanOnLaunch: true,
-  backgroundScan: true,
-  moveToTrash: true,
-  confirmCleanup: true,
-  soundEffects: true,
-  cleanupSound: true,
-  scanSound: false,
-  errorSound: true,
-  checkUpdates: true,
-}
-
 const themeOptions: Array<{ value: ThemePreference; labelKey: TranslationKey }> = [
   { value: 'system', labelKey: 'theme.system' },
   { value: 'light', labelKey: 'theme.light' },
@@ -141,10 +117,12 @@ function SwitchControl({
   checked,
   onCheckedChange,
   label,
+  disabled = false,
 }: {
   checked: boolean
   onCheckedChange: (checked: boolean) => void
   label: string
+  disabled?: boolean
 }) {
   return (
     <Switch
@@ -152,18 +130,28 @@ function SwitchControl({
       onCheckedChange={onCheckedChange}
       className="settings-switch data-checked:bg-blue-500"
       aria-label={label}
+      disabled={disabled}
     />
   )
 }
 
-function ValueButton({ children }: { children: ReactNode }) {
+function ValueButton({
+  children,
+  disabled = false,
+  onClick,
+}: {
+  children: ReactNode
+  disabled?: boolean
+  onClick?: () => void
+}) {
   return (
     <button
       type="button"
+      disabled={disabled}
+      onClick={onClick}
       className="settings-value-button inline-flex h-8 min-w-28 items-center justify-between gap-3 rounded-lg border px-3 text-sm transition"
     >
       <span>{children}</span>
-      <ChevronDown className="settings-muted-icon size-4" />
     </button>
   )
 }
@@ -195,10 +183,6 @@ function NativeSelect<T extends string>({
   )
 }
 
-function ActionChevron() {
-  return <ChevronRight className="settings-chevron size-4 transition" />
-}
-
 function ProviderStatus({
   detected,
   enabled,
@@ -228,16 +212,19 @@ export function SettingsView({
   themePreference,
   launchAtLogin,
   mockDataEnabled,
+  settings,
+  checkingForUpdates,
   onLanguageChange,
   onThemePreferenceChange,
   onLaunchAtLoginChange,
   onMockDataChange,
+  onSettingsChange,
+  onChooseFolders,
+  onDownloadLatestUpdate,
   onRescan,
+  onPurgeExpiredTrash,
 }: SettingsViewProps) {
   const { formatRelative, t } = useI18n()
-  const [providers, setProviders] = useState(initialProviderState)
-  const [toggles, setToggles] = useState(initialToggles)
-  const [volume, setVolume] = useState(35)
   const scanLabel = useMemo(
     () => formatRelative(latestScanValue(snapshot)),
     [formatRelative, snapshot],
@@ -246,14 +233,19 @@ export function SettingsView({
     () => new Map(snapshot.agents.map((agent) => [agent.source, agent])),
     [snapshot.agents],
   )
+  const providerSources = useMemo(
+    () =>
+      agentSources.filter(
+        (source) =>
+          source !== 'custom' ||
+          (settings.scanRoots.custom?.length ?? 0) > 0 ||
+          (agentBySource.get('custom')?.sessionCount ?? 0) > 0,
+      ),
+    [agentBySource, settings.scanRoots.custom],
+  )
 
-  const setProvider = (source: AgentSource, enabled: boolean) => {
-    setProviders((current) => ({ ...current, [source]: enabled }))
-  }
-
-  const setToggle = (key: ToggleKey, enabled: boolean) => {
-    setToggles((current) => ({ ...current, [key]: enabled }))
-  }
+  const setProvider = (source: AgentSource, enabled: boolean) =>
+    onSettingsChange({ enabledProviders: { [source]: enabled } }, { rescan: true })
 
   const providerStatusLabel = (detected: boolean, enabled: boolean) => {
     if (!enabled) return t('settings.providerDisabled')
@@ -272,6 +264,34 @@ export function SettingsView({
     value: option.value,
     label: t(option.labelKey),
   }))
+  const retentionOptions = ['0', '7', '14', '30', '60', '90'].map((value) => ({
+    value,
+    label: t('settings.daysValue', { days: value }),
+  }))
+  const excludedCount = settings.excludedFolders.length
+  const customProviderCount = settings.scanRoots.custom?.length ?? 0
+
+  const addCustomProvider = async () => {
+    const folders = await onChooseFolders()
+    if (folders.length === 0) return
+    const roots = Array.from(new Set([...(settings.scanRoots.custom ?? []), ...folders]))
+    await onSettingsChange(
+      {
+        scanRoots: { custom: roots },
+        enabledProviders: { custom: true },
+      },
+      { rescan: true },
+    )
+  }
+
+  const addExcludedFolders = async () => {
+    const folders = await onChooseFolders()
+    if (folders.length === 0) return
+    await onSettingsChange(
+      { excludedFolders: Array.from(new Set([...settings.excludedFolders, ...folders])) },
+      { rescan: true },
+    )
+  }
 
   return (
     <div className="mx-auto w-full max-w-[900px] space-y-5 pb-8">
@@ -313,13 +333,26 @@ export function SettingsView({
             }
           />
           <SettingsRow
+            icon={Download}
             title={t('settings.checkForUpdates')}
+            description={t('settings.checkForUpdatesDescription')}
             trailing={
-              <SwitchControl
-                checked={toggles.checkUpdates}
-                onCheckedChange={(checked) => setToggle('checkUpdates', checked)}
-                label={toggleLabel('settings.toggleUpdateChecks')}
-              />
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void onDownloadLatestUpdate()}
+                  disabled={checkingForUpdates}
+                  className="settings-ghost-button"
+                >
+                  {checkingForUpdates ? t('settings.checkingUpdates') : t('settings.checkNow')}
+                </Button>
+                <SwitchControl
+                  checked={settings.checkForUpdates}
+                  onCheckedChange={(checked) => void onSettingsChange({ checkForUpdates: checked })}
+                  label={toggleLabel('settings.toggleUpdateChecks')}
+                />
+              </>
             }
           />
           <SettingsRow
@@ -338,9 +371,9 @@ export function SettingsView({
 
       <SettingsSection title={t('settings.providers')}>
         <SettingsPanel>
-          {agentSources.map((source) => {
+          {providerSources.map((source) => {
             const agent = agentBySource.get(source)
-            const enabled = providers[source]
+            const enabled = settings.enabledProviders[source] !== false
             const detected = enabled && Boolean(agent?.readable)
 
             return (
@@ -370,7 +403,7 @@ export function SettingsView({
                 />
                 <SwitchControl
                   checked={enabled}
-                  onCheckedChange={(checked) => setProvider(source, checked)}
+                  onCheckedChange={(checked) => void setProvider(source, checked)}
                   label={providerToggleLabel(source)}
                 />
               </div>
@@ -379,7 +412,21 @@ export function SettingsView({
           <SettingsRow
             icon={Plus}
             title={t('settings.addCustomProvider')}
-            trailing={<ActionChevron />}
+            description={
+              customProviderCount > 0
+                ? t('settings.customProviderCount', { count: customProviderCount })
+                : undefined
+            }
+            trailing={
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void addCustomProvider()}
+                className="settings-ghost-button"
+              >
+                {t('settings.add')}
+              </Button>
+            }
           />
           <SettingsRow
             icon={RefreshCcw}
@@ -407,8 +454,8 @@ export function SettingsView({
             description={t('settings.scanOnLaunchDescription')}
             trailing={
               <SwitchControl
-                checked={toggles.scanOnLaunch}
-                onCheckedChange={(checked) => setToggle('scanOnLaunch', checked)}
+                checked={settings.scanOnLaunch}
+                onCheckedChange={(checked) => void onSettingsChange({ scanOnLaunch: checked })}
                 label={toggleLabel('settings.toggleScanOnLaunch')}
               />
             }
@@ -419,8 +466,8 @@ export function SettingsView({
             description={t('settings.backgroundScanDescription')}
             trailing={
               <SwitchControl
-                checked={toggles.backgroundScan}
-                onCheckedChange={(checked) => setToggle('backgroundScan', checked)}
+                checked={settings.backgroundScan}
+                onCheckedChange={(checked) => void onSettingsChange({ backgroundScan: checked })}
                 label={toggleLabel('settings.toggleBackgroundScan')}
               />
             }
@@ -453,8 +500,9 @@ export function SettingsView({
             description={t('settings.moveCleanedToTrashDescription')}
             trailing={
               <SwitchControl
-                checked={toggles.moveToTrash}
-                onCheckedChange={(checked) => setToggle('moveToTrash', checked)}
+                checked
+                disabled
+                onCheckedChange={() => undefined}
                 label={toggleLabel('settings.toggleMoveToTrash')}
               />
             }
@@ -465,23 +513,73 @@ export function SettingsView({
             description={t('settings.confirmBeforeCleanupDescription')}
             trailing={
               <SwitchControl
-                checked={toggles.confirmCleanup}
-                onCheckedChange={(checked) => setToggle('confirmCleanup', checked)}
+                checked={settings.confirmBeforeCleanup}
+                onCheckedChange={(checked) =>
+                  void onSettingsChange({ confirmBeforeCleanup: checked })
+                }
                 label={toggleLabel('settings.toggleCleanupConfirmation')}
               />
             }
           />
           <SettingsRow
             icon={Clock3}
+            title={t('settings.purgeExpiredTrash')}
+            description={t('settings.purgeExpiredTrashDescription', {
+              count: snapshot.trash.length,
+              plural: snapshot.trash.length === 1 ? '' : 's',
+            })}
+            trailing={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void onPurgeExpiredTrash()}
+                className="settings-outline-button"
+              >
+                <Trash2 className="mr-2 size-4" />
+                {t('settings.purgeExpiredTrashAction')}
+              </Button>
+            }
+          />
+          <SettingsRow
+            icon={Clock3}
             title={t('settings.protectRecentSessions')}
             description={t('settings.protectRecentSessionsDescription')}
-            trailing={<ValueButton>{t('settings.sevenDays')}</ValueButton>}
+            trailing={
+              <NativeSelect
+                label={t('settings.protectRecentSessions')}
+                value={String(settings.cleanupRetentionDays)}
+                options={retentionOptions}
+                onChange={(value) => void onSettingsChange({ cleanupRetentionDays: Number(value) })}
+              />
+            }
           />
           <SettingsRow
             icon={Folder}
             title={t('settings.excludedFolders')}
-            description={t('settings.excludedFoldersDescription')}
-            trailing={<ActionChevron />}
+            description={
+              excludedCount > 0
+                ? t('settings.excludedFolderCount', { count: excludedCount })
+                : t('settings.excludedFoldersDescription')
+            }
+            trailing={
+              <>
+                {excludedCount > 0 && (
+                  <ValueButton
+                    onClick={() => void onSettingsChange({ excludedFolders: [] }, { rescan: true })}
+                  >
+                    {t('settings.clear')}
+                  </ValueButton>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void addExcludedFolders()}
+                  className="settings-ghost-button"
+                >
+                  {t('settings.manage')}
+                </Button>
+              </>
+            }
           />
         </SettingsPanel>
       </SettingsSection>
@@ -493,8 +591,8 @@ export function SettingsView({
             title={t('settings.soundEffects')}
             trailing={
               <SwitchControl
-                checked={toggles.soundEffects}
-                onCheckedChange={(checked) => setToggle('soundEffects', checked)}
+                checked={settings.soundEffects}
+                onCheckedChange={(checked) => void onSettingsChange({ soundEffects: checked })}
                 label={toggleLabel('settings.toggleSoundEffects')}
               />
             }
@@ -509,11 +607,15 @@ export function SettingsView({
                   type="range"
                   min="0"
                   max="100"
-                  value={volume}
-                  onChange={(event) => setVolume(Number(event.target.value))}
+                  value={settings.soundVolume}
+                  onChange={(event) =>
+                    void onSettingsChange({ soundVolume: Number(event.target.value) })
+                  }
                   className="h-1.5 w-[250px] accent-blue-500"
                 />
-                <span className="settings-trailing-value w-11 text-right text-sm">{volume}%</span>
+                <span className="settings-trailing-value w-11 text-right text-sm">
+                  {settings.soundVolume}%
+                </span>
               </div>
             }
           />
@@ -521,8 +623,8 @@ export function SettingsView({
             title={t('settings.cleanupCompleteSound')}
             trailing={
               <SwitchControl
-                checked={toggles.cleanupSound}
-                onCheckedChange={(checked) => setToggle('cleanupSound', checked)}
+                checked={settings.cleanupSound}
+                onCheckedChange={(checked) => void onSettingsChange({ cleanupSound: checked })}
                 label={toggleLabel('settings.toggleCleanupCompleteSound')}
               />
             }
@@ -531,8 +633,8 @@ export function SettingsView({
             title={t('settings.scanCompleteSound')}
             trailing={
               <SwitchControl
-                checked={toggles.scanSound}
-                onCheckedChange={(checked) => setToggle('scanSound', checked)}
+                checked={settings.scanSound}
+                onCheckedChange={(checked) => void onSettingsChange({ scanSound: checked })}
                 label={toggleLabel('settings.toggleScanCompleteSound')}
               />
             }
@@ -541,8 +643,8 @@ export function SettingsView({
             title={t('settings.errorWarningSound')}
             trailing={
               <SwitchControl
-                checked={toggles.errorSound}
-                onCheckedChange={(checked) => setToggle('errorSound', checked)}
+                checked={settings.errorSound}
+                onCheckedChange={(checked) => void onSettingsChange({ errorSound: checked })}
                 label={toggleLabel('settings.toggleErrorWarningSound')}
               />
             }
@@ -554,7 +656,8 @@ export function SettingsView({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => void playCleanupSystemSound(volume / 100)}
+                disabled={!settings.soundEffects}
+                onClick={() => void playCleanupSystemSound(settings.soundVolume / 100)}
                 className="settings-outline-button"
               >
                 {t('settings.play')}

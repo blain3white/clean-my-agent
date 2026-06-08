@@ -9,7 +9,15 @@ import {
 } from 'lucide-react'
 import type { TranslationKey } from '@/lib/i18n'
 
-export type ViewId = 'overview' | 'sessions' | 'cleanup' | 'usage' | 'relay' | 'health' | 'settings'
+export type ViewId =
+  | 'overview'
+  | 'sessions'
+  | 'skills'
+  | 'cleanup'
+  | 'usage'
+  | 'relay'
+  | 'health'
+  | 'settings'
 
 export const navItems: Array<{
   id: ViewId
@@ -19,6 +27,7 @@ export const navItems: Array<{
 }> = [
   { id: 'overview', labelKey: 'nav.overview', icon: LayoutDashboard },
   { id: 'sessions', labelKey: 'nav.sessions', icon: Database },
+  { id: 'skills', labelKey: 'nav.skills', icon: Database },
   { id: 'cleanup', labelKey: 'nav.cleanup', icon: Trash2 },
   { id: 'usage', labelKey: 'nav.usage', icon: BarChart3 },
   { id: 'relay', labelKey: 'nav.relay', icon: ArrowRightLeft, hiddenInSidebar: true },

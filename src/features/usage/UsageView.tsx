@@ -114,6 +114,12 @@ function formatPeakHourRange(startHour: number, endHour: number): string {
   return `${formatPeakHourLabel(startHour)} – ${formatPeakHourLabel(endHour)}`
 }
 
+function formatProjectDisplayName(project: ProjectUsage): string {
+  const value = project.projectPath || project.project
+  const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '')
+  return normalized.split('/').filter(Boolean).pop() || project.project
+}
+
 function PeakActivityChart({ windows }: { windows: PeakWindow[] }) {
   const featuredWindows = windows.slice(0, 5)
   const strongest = Math.max(...featuredWindows.map((window) => window.tokens), 1)
@@ -728,39 +734,40 @@ function PriceRankingCard({
         }
       />
       <CardContent className="space-y-2">
-        {visibleProjects.map((project, index) => (
-          <button
-            key={`${project.project}-${project.projectPath ?? ''}`}
-            type="button"
-            onClick={() => onSelectProject(project)}
-            className="grid w-full grid-cols-[26px_minmax(0,1fr)_88px_82px] items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-xs transition hover:bg-white/[0.035]"
-          >
-            <span className="grid size-5 place-items-center rounded bg-white/8 text-[11px] font-semibold text-white/55">
-              {index + 1}
-            </span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="truncate font-medium text-white/76">
-                  {project.projectPath ?? project.project}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-sm">
-                {project.projectPath ?? project.project}
-              </TooltipContent>
-            </Tooltip>
-            <span className="text-right text-white/66">{formatCost(project.cost)}</span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="justify-self-end">
-                  <MiniSparkline data={project.costTrend} color="#60a5fa" />
-                </span>
-              </TooltipTrigger>
-              <TooltipContent className="chart-tooltip rounded-lg px-3 py-2 shadow-xl">
-                {formatUsageTokens(project.tokens)} tokens, {formatUsageShare(project.share)} share
-              </TooltipContent>
-            </Tooltip>
-          </button>
-        ))}
+        {visibleProjects.map((project, index) => {
+          const displayName = formatProjectDisplayName(project)
+          const fullName = project.projectPath ?? project.project
+          return (
+            <button
+              key={`${project.project}-${project.projectPath ?? ''}`}
+              type="button"
+              onClick={() => onSelectProject(project)}
+              className="grid w-full grid-cols-[26px_minmax(0,1fr)_88px_82px] items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-xs transition hover:bg-white/[0.035]"
+            >
+              <span className="grid size-5 place-items-center rounded bg-white/8 text-[11px] font-semibold text-white/55">
+                {index + 1}
+              </span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="truncate font-medium text-white/76">{displayName}</span>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-sm">{fullName}</TooltipContent>
+              </Tooltip>
+              <span className="text-right text-white/66">{formatCost(project.cost)}</span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="justify-self-end">
+                    <MiniSparkline data={project.trend} color="#60a5fa" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent className="chart-tooltip rounded-lg px-3 py-2 shadow-xl">
+                  {formatUsageTokens(project.tokens)} tokens, {formatUsageShare(project.share)}{' '}
+                  share
+                </TooltipContent>
+              </Tooltip>
+            </button>
+          )
+        })}
         {visibleProjects.length === 0 && (
           <div className="rounded-md border border-white/8 bg-white/[0.03] p-3 text-xs text-white/42">
             No project cost metadata available

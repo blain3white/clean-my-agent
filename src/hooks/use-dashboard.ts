@@ -10,19 +10,31 @@ import {
   type CleanupCandidate,
   type DashboardSnapshot,
   type ExportFormat,
+  type UniversalRelayDocument,
 } from '@/shared/types'
+import { loadSessionDetail } from './session-detail-api'
 
 type DashboardState = {
   snapshot: DashboardSnapshot
   loading: boolean
+  settings: AppSettings
   mockDataEnabled: boolean
   language: AppLanguage
   launchAtLogin: boolean
+  checkingForUpdates: boolean
+  updateSettings: (
+    patch: Partial<AppSettings>,
+    options?: { rescan?: boolean },
+  ) => Promise<AppSettings>
+  chooseFolders: () => Promise<string[]>
+  checkForUpdates: () => Promise<void>
   setMockDataEnabled: (enabled: boolean) => Promise<void>
   setLanguage: (language: AppLanguage) => Promise<void>
   setLaunchAtLogin: (enabled: boolean) => Promise<void>
+  downloadLatestUpdate: () => Promise<void>
   rescan: () => Promise<void>
   refreshRecentSessions: () => Promise<void>
+  getSessionDetail: (sessionId: string) => Promise<UniversalRelayDocument>
   backupSession: (sessionId: string) => Promise<void>
   archiveSession: (sessionId: string) => Promise<void>
   restoreArchive: (archiveId: string) => Promise<void>
@@ -30,6 +42,7 @@ type DashboardState = {
   exportUniversalRelay: (sessionId: string) => Promise<void>
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<void>
+  purgeExpiredTrash: () => Promise<void>
 }
 
 const agentNames: Record<AgentSource, string> = {
@@ -38,16 +51,30 @@ const agentNames: Record<AgentSource, string> = {
   cursor: 'Cursor',
   gemini: 'Gemini',
   opencode: 'OpenCode',
+  custom: 'Custom',
 }
 
 const defaultSettings = (): AppSettings => ({
   scanRoots: {},
-  cleanupRetentionDays: 30,
+  cleanupRetentionDays: 7,
   trashRetentionDays: 14,
   autoBackup: true,
   mockDataEnabled: false,
   language: defaultLanguage,
   launchAtLogin: false,
+  enabledProviders: Object.fromEntries(
+    agentSources.map((source) => [source, true]),
+  ) as AppSettings['enabledProviders'],
+  scanOnLaunch: true,
+  backgroundScan: true,
+  confirmBeforeCleanup: true,
+  excludedFolders: [],
+  soundEffects: true,
+  cleanupSound: true,
+  scanSound: false,
+  errorSound: true,
+  soundVolume: 35,
+  checkForUpdates: true,
   defaultRelayMode: 'full-context',
   exportDirectory: '',
 })
@@ -60,6 +87,15 @@ const mergeSettings = (settings?: Partial<AppSettings>): AppSettings => ({
     ...defaultSettings().scanRoots,
     ...settings?.scanRoots,
   },
+  enabledProviders: {
+    ...defaultSettings().enabledProviders,
+    ...settings?.enabledProviders,
+  },
+  excludedFolders: Array.isArray(settings?.excludedFolders) ? settings.excludedFolders : [],
+  soundVolume: Math.min(
+    100,
+    Math.max(0, Number.isFinite(settings?.soundVolume) ? Number(settings?.soundVolume) : 35),
+  ),
 })
 
 const emptySnapshot = (): DashboardSnapshot => ({
@@ -104,6 +140,7 @@ export function useDashboard(): DashboardState {
     return mergeSettings({ mockDataEnabled, language })
   })
   const [loading, setLoading] = useState(true)
+  const [checkingForUpdates, setCheckingForUpdates] = useState(false)
   const t = useCallback(
     (key: Parameters<typeof translate>[1], values?: Parameters<typeof translate>[2]) =>
       translate(settings.language, key, values),
@@ -165,8 +202,164 @@ export function useDashboard(): DashboardState {
     return () => window.clearTimeout(timer)
   }, [load])
 
+  useEffect(() => {
+    if (!settings.backgroundScan || settings.mockDataEnabled || !window.cleanMyAgent) return
+    const timer = window.setInterval(
+      () => {
+        void window.cleanMyAgent
+          ?.refreshRecentSessions()
+          .then(setSnapshot)
+          .catch((error) => {
+            console.error(error)
+            if (settings.soundEffects && settings.errorSound) {
+              void import('@/features/cleanup/cleanup-system-sound').then(
+                ({ playCleanupSystemSound }) => playCleanupSystemSound(settings.soundVolume / 100),
+              )
+            }
+          })
+      },
+      5 * 60 * 1000,
+    )
+    return () => window.clearInterval(timer)
+  }, [
+    settings.backgroundScan,
+    settings.errorSound,
+    settings.mockDataEnabled,
+    settings.soundEffects,
+    settings.soundVolume,
+  ])
+
+  useEffect(() => {
+    if (!settings.checkForUpdates || !window.cleanMyAgent) return
+    void window.cleanMyAgent.checkForUpdates().catch((error) => {
+      console.error(error)
+    })
+  }, [settings.checkForUpdates])
+
+  const runUpdateCheck = useCallback(async () => {
+    if (!window.cleanMyAgent) {
+      toast.info(t('toast.updateCheckDesktopOnly'))
+      return
+    }
+
+    setCheckingForUpdates(true)
+    try {
+      const result = await window.cleanMyAgent.checkForUpdates()
+      if (result.available) {
+        toast.success(
+          t('toast.updateAvailable', {
+            version: result.latestVersion,
+          }),
+        )
+        return
+      }
+      toast.success(
+        t('toast.noUpdateAvailable', {
+          version: result.currentVersion,
+        }),
+      )
+    } catch (error) {
+      console.error(error)
+      toast.error(t('toast.updateCheckError'))
+    } finally {
+      setCheckingForUpdates(false)
+    }
+  }, [t])
+
+  const runUpdateDownload = useCallback(async () => {
+    if (!window.cleanMyAgent) {
+      toast.info(t('toast.updateDesktopOnly'))
+      return
+    }
+
+    setCheckingForUpdates(true)
+    try {
+      const result = await window.cleanMyAgent.downloadLatestUpdate()
+      if (!result.available) {
+        toast.success(
+          t('toast.noUpdateAvailable', {
+            version: result.currentVersion,
+          }),
+        )
+        return
+      }
+
+      if (!result.downloadedPath) {
+        toast.info(
+          t('toast.updateAvailableNoAsset', {
+            version: result.latestVersion,
+          }),
+        )
+        return
+      }
+
+      toast.success(
+        t('toast.updateDownloaded', {
+          version: result.latestVersion,
+          path: result.downloadedPath,
+        }),
+      )
+      await window.cleanMyAgent.openPath(result.downloadedPath)
+    } catch (error) {
+      console.error(error)
+      toast.error(t('toast.updateCheckError'))
+    } finally {
+      setCheckingForUpdates(false)
+    }
+  }, [t])
+
   const actions = useMemo(
     () => ({
+      updateSettings: async (
+        patch: Partial<AppSettings>,
+        options: { rescan?: boolean } = {},
+      ): Promise<AppSettings> => {
+        const optimistic = mergeSettings({
+          ...settings,
+          ...patch,
+          scanRoots: {
+            ...settings.scanRoots,
+            ...patch.scanRoots,
+          },
+          enabledProviders: {
+            ...settings.enabledProviders,
+            ...patch.enabledProviders,
+          },
+        })
+        setSettings(optimistic)
+        if (patch.mockDataEnabled !== undefined) {
+          globalThis.localStorage?.setItem(
+            'clean-my-agent.mockDataEnabled',
+            String(patch.mockDataEnabled),
+          )
+        }
+        if (patch.language) {
+          globalThis.localStorage?.setItem('clean-my-agent.language', patch.language)
+        }
+
+        try {
+          const persisted = window.cleanMyAgent
+            ? await window.cleanMyAgent.updateSettings(patch)
+            : optimistic
+          const nextSettings = mergeSettings(persisted)
+          setSettings(nextSettings)
+          if (options.rescan && !nextSettings.mockDataEnabled) await load(true)
+          return nextSettings
+        } catch (error) {
+          console.error(error)
+          toast.error(t('toast.updateSettingsError'))
+          setSettings(settings)
+          throw error
+        }
+      },
+      chooseFolders: async () => {
+        if (!window.cleanMyAgent) {
+          toast.info(t('toast.folderPickerDesktopOnly'))
+          return []
+        }
+        return window.cleanMyAgent.chooseFolders()
+      },
+      checkForUpdates: runUpdateCheck,
       setMockDataEnabled: async (enabled: boolean) => {
         const nextSettings = mergeSettings({ ...settings, mockDataEnabled: enabled })
         setSettings(nextSettings)
@@ -244,8 +437,13 @@ export function useDashboard(): DashboardState {
           setSettings(settings)
         }
       },
+      downloadLatestUpdate: runUpdateDownload,
       rescan: async () => {
         await load(true)
+        if (!settings.mockDataEnabled && settings.soundEffects && settings.scanSound) {
+          const { playCleanupSystemSound } = await import('@/features/cleanup/cleanup-system-sound')
+          await playCleanupSystemSound(settings.soundVolume / 100)
+        }
         toast.success(settings.mockDataEnabled ? t('toast.demoRefreshed') : t('toast.agentScanned'))
       },
       refreshRecentSessions: async () => {
@@ -264,13 +462,31 @@ export function useDashboard(): DashboardState {
         try {
           const next = await window.cleanMyAgent.refreshRecentSessions()
           setSnapshot(next)
+          if (settings.soundEffects && settings.scanSound) {
+            const { playCleanupSystemSound } =
+              await import('@/features/cleanup/cleanup-system-sound')
+            await playCleanupSystemSound(settings.soundVolume / 100)
+          }
           toast.success(t('toast.recentRefreshed'))
         } catch (error) {
           console.error(error)
+          if (settings.soundEffects && settings.errorSound) {
+            const { playCleanupSystemSound } =
+              await import('@/features/cleanup/cleanup-system-sound')
+            await playCleanupSystemSound(settings.soundVolume / 100)
+          }
           toast.error(t('toast.refreshRecentError'))
         } finally {
           setLoading(false)
         }
+      },
+      getSessionDetail: async (sessionId: string) => {
+        return loadSessionDetail(
+          window.cleanMyAgent,
+          sessionId,
+          settings.language,
+          settings.mockDataEnabled,
+        )
       },
       backupSession: async (sessionId: string) => {
         if (!window.cleanMyAgent) {
@@ -346,16 +562,43 @@ export function useDashboard(): DashboardState {
         )
         await load(true)
       },
+      purgeExpiredTrash: async () => {
+        if (settings.mockDataEnabled) {
+          toast.info(t('toast.trashPurgeLiveOnly'))
+          return
+        }
+
+        if (!window.cleanMyAgent) {
+          toast.info(t('toast.trashDesktopOnly'))
+          return
+        }
+
+        try {
+          const records = await window.cleanMyAgent.purgeExpiredTrash()
+          toast.success(
+            t('toast.trashPurged', {
+              count: records.length,
+              plural: records.length === 1 ? '' : 's',
+            }),
+          )
+          await load(false)
+        } catch (error) {
+          console.error(error)
+          toast.error(t('toast.trashPurgeError'))
+        }
+      },
     }),
-    [load, settings, snapshot.cleanup, t],
+    [load, runUpdateCheck, runUpdateDownload, settings, snapshot.cleanup, t],
   )
 
   return {
     snapshot,
     loading,
+    settings,
     mockDataEnabled: settings.mockDataEnabled,
     language: settings.language,
     launchAtLogin: settings.launchAtLogin,
+    checkingForUpdates,
     ...actions,
   }
 }

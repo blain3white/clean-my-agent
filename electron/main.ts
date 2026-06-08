@@ -1,15 +1,17 @@
-import { app, BrowserWindow, ipcMain, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { AppSettings, ExportFormat } from '../src/shared/types'
 import { AppService } from './lib/app-service'
+import { UpdateService } from './lib/update-service'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const appName = 'Clean My Agent'
 
 let mainWindow: BrowserWindow | undefined
 let service: AppService
+let updateService: UpdateService
 
 app.setName(appName)
 app.setAboutPanelOptions({ applicationName: appName })
@@ -63,10 +65,21 @@ function createWindow(): void {
   }
 }
 
+async function openTarget(targetPath: string): Promise<void> {
+  if (/^https?:\/\//i.test(targetPath)) {
+    await shell.openExternal(targetPath)
+    return
+  }
+
+  const error = await shell.openPath(targetPath)
+  if (error) throw new Error(error)
+}
+
 function registerIpc(): void {
   ipcMain.handle('app:getSnapshot', () => service.getSnapshot(false))
   ipcMain.handle('app:rescan', () => service.getSnapshot(true))
   ipcMain.handle('app:refreshRecentSessions', () => service.refreshRecentSessions(10))
+  ipcMain.handle('skills:get', () => service.getSkills())
   ipcMain.handle('session:backup', (_event, sessionId: string) => service.backupSession(sessionId))
   ipcMain.handle('session:archive', (_event, sessionId: string) =>
     service.archiveSession(sessionId),
@@ -77,10 +90,14 @@ function registerIpc(): void {
   ipcMain.handle('session:export', (_event, sessionId: string, format: ExportFormat) =>
     service.exportSession(sessionId, format),
   )
+  ipcMain.handle('session:detail', (_event, sessionId: string) =>
+    service.getSessionDetail(sessionId),
+  )
   ipcMain.handle('cleanup:scan', () => service.scanCleanup())
   ipcMain.handle('cleanup:trash', (_event, candidateIds: string[]) =>
     service.moveCleanupToTrash(candidateIds),
   )
+  ipcMain.handle('trash:purgeExpired', () => service.purgeExpiredTrash())
   ipcMain.handle('trash:restore', (_event, trashId: string) => service.restoreTrash(trashId))
   ipcMain.handle('relay:exportUniversal', (_event, sessionId: string) =>
     service.exportUniversalRelay(sessionId),
@@ -89,6 +106,13 @@ function registerIpc(): void {
   ipcMain.handle('settings:update', (_event, settings: Partial<AppSettings>) =>
     service.updateSettings(settings),
   )
+  ipcMain.handle('settings:chooseFolders', async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      properties: ['openDirectory', 'multiSelections', 'createDirectory'],
+    })
+    if (result.canceled) return []
+    return result.filePaths
+  })
   ipcMain.handle('shell:openPath', (_event, targetPath: string) => service.openPath(targetPath))
   ipcMain.handle('shell:beep', () => {
     shell.beep()
@@ -98,11 +122,17 @@ function registerIpc(): void {
     app.setLoginItemSettings({ openAtLogin: enabled })
     return app.getLoginItemSettings().openAtLogin
   })
+  ipcMain.handle('app:checkForUpdates', () => updateService.checkForUpdates())
+  ipcMain.handle('app:downloadLatestUpdate', () => updateService.downloadLatestUpdate())
 }
 
 app.whenReady().then(async () => {
   nativeTheme.themeSource = 'system'
-  service = new AppService({ userDataPath: app.getPath('userData'), openPath: shell.openPath })
+  service = new AppService({ userDataPath: app.getPath('userData'), openPath: openTarget })
+  updateService = new UpdateService({
+    userDataPath: app.getPath('userData'),
+    currentVersion: app.getVersion(),
+  })
   await service.init()
   registerIpc()
   createWindow()

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, truncate, utimes, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -16,6 +16,17 @@ function makeSettings(scanRoot: string, source = 'codex'): AppSettings {
     mockDataEnabled: false,
     language: 'en',
     launchAtLogin: false,
+    enabledProviders: {},
+    scanOnLaunch: true,
+    backgroundScan: true,
+    confirmBeforeCleanup: true,
+    excludedFolders: [],
+    soundEffects: true,
+    cleanupSound: true,
+    scanSound: false,
+    errorSound: true,
+    soundVolume: 35,
+    checkForUpdates: true,
     defaultRelayMode: 'full-context',
     exportDirectory: '/tmp',
   }
@@ -311,6 +322,7 @@ describe('unreadable and missing roots', () => {
     expect(state.installed).toBe(false)
     expect(state.readable).toBe(false)
     expect(sessions).toHaveLength(0)
+    expect(state.diagnostics?.some((item) => item.code === 'root-not-readable')).toBe(true)
   })
 
   it('recentCandidates returns empty array for missing roots', async () => {
@@ -401,6 +413,48 @@ describe('scanCandidates skipping bad files', () => {
   })
 })
 
+// ─── scan diagnostics ────────────────────────────────────────────────────────
+
+describe('scan diagnostics', () => {
+  it('reports empty and oversized skipped files', async () => {
+    const root = await makeTmpDir('scan-diagnostics-skips')
+    const emptyPath = path.join(root, 'empty.jsonl')
+    const oversizedPath = path.join(root, 'huge.jsonl')
+    const validPath = path.join(root, 'valid.jsonl')
+    await writeFile(emptyPath, '')
+    await writeFile(oversizedPath, 'x')
+    await truncate(oversizedPath, 250_000_001)
+    await writeFile(
+      validPath,
+      JSON.stringify({ type: 'response_item', payload: { role: 'user', content: 'valid' } }) + '\n',
+    )
+
+    const adapter = makeAdapter('codex', [root])
+    const { state, sessions } = await adapter.scan(makeSettings(root))
+
+    expect(sessions).toHaveLength(1)
+    expect(state.scannedFiles).toBe(1)
+    expect(state.skippedFiles).toBe(2)
+    expect(state.diagnostics?.map((item) => item.code)).toEqual(
+      expect.arrayContaining(['empty-file-skipped', 'oversized-file-skipped']),
+    )
+  })
+
+  it('collapses excessive diagnostics into an overflow counter', async () => {
+    const missingRoots = Array.from({ length: 55 }, (_, index) =>
+      path.join(tmpBase, `missing-overflow-${index}`),
+    )
+    const adapter = makeAdapter('codex', missingRoots)
+    const { state } = await adapter.scan({
+      ...makeSettings(missingRoots[0]),
+      scanRoots: { codex: missingRoots },
+    })
+
+    const overflow = state.diagnostics?.find((item) => item.code === 'diagnostic-overflow')
+    expect(overflow?.count).toBeGreaterThan(1)
+  })
+})
+
 // ─── adapterFor error ─────────────────────────────────────────────────────────
 
 describe('adapterFor', () => {
@@ -461,6 +515,182 @@ describe('toUniversal', () => {
     expect(typeof doc.exportedAt).toBe('string')
     expect(doc.git?.branch).toBe(sessions[0].branch)
     expect(doc.git?.projectPath).toBe(sessions[0].projectPath)
+  })
+
+  it('extracts command, file, attachment, and git diff hints', async () => {
+    const root = await makeTmpDir('to-universal-hints')
+    const filePath = path.join(root, 'session.jsonl')
+    const diff = [
+      'diff --git a/src/app.ts b/src/app.ts',
+      '--- a/src/app.ts',
+      '+++ b/src/app.ts',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+    ].join('\n')
+
+    await writeFile(
+      filePath,
+      [
+        JSON.stringify({
+          role: 'user',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          content: 'Run tests and inspect files',
+          cwd: '/workspace/project',
+          command: 'pnpm test',
+          files: [{ path: '/workspace/project/src/app.ts' }],
+          attachments: [
+            { path: '/workspace/project/screenshot.png', mediaType: 'image/png', sizeBytes: 42 },
+          ],
+          gitDiff: diff,
+        }),
+        JSON.stringify({
+          role: 'assistant',
+          timestamp: '2026-01-01T00:00:01.000Z',
+          content: 'Done',
+          cwd: '/workspace/project',
+          filePath: '/workspace/project/src/result.ts',
+          shellCommand: 'pnpm lint',
+        }),
+      ].join('\n') + '\n',
+    )
+
+    const adapter = makeAdapter('codex', [root])
+    const { sessions } = await adapter.scan(makeSettings(root))
+    const doc = await adapter.toUniversal(sessions[0])
+
+    expect(doc.commands).toEqual(
+      expect.arrayContaining([
+        { command: 'pnpm test', cwd: '/workspace/project', createdAt: '2026-01-01T00:00:00.000Z' },
+        { command: 'pnpm lint', cwd: '/workspace/project', createdAt: '2026-01-01T00:00:01.000Z' },
+      ]),
+    )
+    expect(doc.files).toEqual(
+      expect.arrayContaining([
+        {
+          path: '/workspace/project/src/app.ts',
+          reason: 'Listed in files',
+          lastSeenAt: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          path: '/workspace/project/src/result.ts',
+          reason: 'Referenced by filePath',
+          lastSeenAt: '2026-01-01T00:00:01.000Z',
+        },
+      ]),
+    )
+    expect(doc.attachments).toEqual([
+      { path: '/workspace/project/screenshot.png', mediaType: 'image/png', sizeBytes: 42 },
+    ])
+    expect(doc.git?.diff).toBe(diff)
+  })
+
+  it('filters duplicate and unsafe relay hints while inferring media types', async () => {
+    const root = await makeTmpDir('to-universal-filtered-hints')
+    const filePath = path.join(root, 'session.jsonl')
+    const longCommand = 'x'.repeat(4097)
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        role: 'user',
+        content: 'relay hints',
+        cwd: '/workspace/project',
+        command: '  pnpm    test  ',
+        shellCommand: 'pnpm test',
+        path: 'https://example.test/not-local.png',
+        file: '/workspace/project/readme.md',
+        files: ['/workspace/project/readme.md', 'data:text/plain;base64,abc'],
+        attachments: [
+          '/workspace/project/screenshot.jpg',
+          '/workspace/project/screenshot.jpg',
+          { filename: '/workspace/project/vector.svg', size: '55' },
+          { file_path: 'blob:unsafe', mimeType: 'image/png' },
+        ],
+        nested: {
+          command: longCommand,
+          attachment: '/workspace/project/report.pdf',
+        },
+      }) + '\n',
+    )
+
+    const adapter = makeAdapter('codex', [root])
+    const { sessions } = await adapter.scan(makeSettings(root))
+    const doc = await adapter.toUniversal(sessions[0])
+
+    expect(doc.commands).toEqual([{ command: 'pnpm test', cwd: '/workspace/project' }])
+    expect(doc.files).toEqual(
+      expect.arrayContaining([
+        {
+          path: '/workspace/project/readme.md',
+          reason: 'Referenced by file',
+          lastSeenAt: undefined,
+        },
+        {
+          path: '/workspace/project/vector.svg',
+          reason: 'Referenced by filename',
+          lastSeenAt: undefined,
+        },
+      ]),
+    )
+    expect(doc.files.some((item) => item.path.startsWith('http'))).toBe(false)
+    expect(doc.attachments).toEqual(
+      expect.arrayContaining([
+        { path: '/workspace/project/screenshot.jpg', mediaType: 'image/jpeg' },
+        { path: '/workspace/project/vector.svg', mediaType: 'image/svg+xml', sizeBytes: 55 },
+        { path: '/workspace/project/report.pdf', mediaType: 'application/pdf' },
+      ]),
+    )
+    expect(doc.attachments.filter((item) => item.path.endsWith('screenshot.jpg'))).toHaveLength(1)
+  })
+
+  it('infers remaining media types and enforces relay hint caps', async () => {
+    const root = await makeTmpDir('to-universal-media-and-caps')
+    const filePath = path.join(root, 'session.jsonl')
+    const files = Array.from({ length: 505 }, (_, index) => `/workspace/file-${index}.txt`)
+    const commands = Array.from({ length: 505 }, (_, index) => ({
+      command: `echo ${index}`,
+      cwd: '/workspace',
+    }))
+    const attachments = [
+      '/workspace/image.png',
+      '/workspace/image.webp',
+      '/workspace/animation.gif',
+      '/workspace/data.json',
+      '/workspace/notes.md',
+      '/workspace/debug.log',
+      '/workspace/archive.bin',
+      ...Array.from({ length: 505 }, (_, index) => `/workspace/extra-${index}.txt`),
+    ]
+
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        role: 'user',
+        content: 'relay cap test',
+        files,
+        commands,
+        attachments,
+      }) + '\n',
+    )
+
+    const adapter = makeAdapter('codex', [root])
+    const { sessions } = await adapter.scan(makeSettings(root))
+    const doc = await adapter.toUniversal(sessions[0])
+
+    expect(doc.files).toHaveLength(500)
+    expect(doc.commands).toHaveLength(500)
+    expect(doc.attachments).toHaveLength(500)
+    expect(doc.attachments).toEqual(
+      expect.arrayContaining([
+        { path: '/workspace/image.png', mediaType: 'image/png' },
+        { path: '/workspace/image.webp', mediaType: 'image/webp' },
+        { path: '/workspace/animation.gif', mediaType: 'image/gif' },
+        { path: '/workspace/data.json', mediaType: 'application/json' },
+        { path: '/workspace/notes.md', mediaType: 'text/markdown' },
+        { path: '/workspace/debug.log', mediaType: 'text/plain' },
+        { path: '/workspace/archive.bin', mediaType: undefined },
+      ]),
+    )
   })
 })
 
@@ -799,6 +1029,47 @@ describe('parser edge branches', () => {
     expect(tokens.costUsd).toBeCloseTo(0.02)
   })
 
+  it('subtracts cached GPT input and records model-estimated mixed costs', async () => {
+    const root = await makeTmpDir('edge-usage-gpt-estimated')
+    const filePath = path.join(root, 'usage-gpt.jsonl')
+    await writeFile(
+      filePath,
+      [
+        JSON.stringify({
+          model: 'gpt-4o',
+          role: 'assistant',
+          content: 'cached gpt usage',
+          usage: {
+            input_tokens: 100,
+            output_tokens: 20,
+            cached_input_tokens: 30,
+            cache_read_input_tokens: 10,
+          },
+        }),
+        JSON.stringify({
+          model: 'claude-3-5-sonnet',
+          role: 'assistant',
+          content: 'estimated claude usage',
+          usage: {
+            input_tokens: 50,
+            output_tokens: 20,
+          },
+        }),
+      ].join('\n') + '\n',
+    )
+
+    const adapter = makeAdapter('codex', [root])
+    const { sessions } = await adapter.scan(makeSettings(root))
+    const tokens = sessions[0].tokens
+
+    expect(tokens.input).toBe(110)
+    expect(tokens.cached).toBe(40)
+    expect(tokens.cacheRead).toBe(40)
+    expect(tokens.costUsd).toBeGreaterThan(0)
+    expect(tokens.costSource).toBe('model-estimate')
+    expect(tokens.model).toBe('gpt-4o')
+  })
+
   it('ignores invalid timestamps and too-deep project hints', async () => {
     const root = await makeTmpDir('edge-invalid-date')
     const filePath = path.join(root, 'invalid-date.jsonl')
@@ -990,5 +1261,37 @@ describe('scan state fields', () => {
     expect(state.sessionCount).toBe(3)
     expect(state.sizeBytes).toBeGreaterThan(0)
     expect(typeof state.lastScannedAt).toBe('string')
+  })
+
+  it('filters session files under excluded folders', async () => {
+    const root = await makeTmpDir('scan-exclusions')
+    const keptPath = path.join(root, 'kept.jsonl')
+    const excludedRoot = path.join(root, 'excluded')
+    const excludedPath = path.join(excludedRoot, 'ignored.jsonl')
+    await mkdir(excludedRoot, { recursive: true })
+    await writeFile(
+      keptPath,
+      JSON.stringify({
+        type: 'response_item',
+        payload: { role: 'user', content: 'Kept adapter session' },
+      }) + '\n',
+    )
+    await writeFile(
+      excludedPath,
+      JSON.stringify({
+        type: 'response_item',
+        payload: { role: 'user', content: 'Excluded adapter session' },
+      }) + '\n',
+    )
+
+    const adapter = makeAdapter('codex', [root])
+    const { sessions } = await adapter.scan({
+      ...makeSettings(root),
+      excludedFolders: [excludedRoot],
+    })
+
+    expect(sessions).toHaveLength(1)
+    expect(sessions[0].storagePath).toBe(keptPath)
+    expect(sessions[0].searchText).toContain('Kept adapter session')
   })
 })

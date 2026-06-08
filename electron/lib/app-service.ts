@@ -2,6 +2,7 @@ import path from 'node:path'
 import type {
   AgentSource,
   AppLanguage,
+  AgentInstallState,
   ArchiveRecord,
   AppSettings,
   BackupRecord,
@@ -12,16 +13,20 @@ import type {
   StorageSlice,
   TrashRecord,
   UsagePoint,
+  UniversalRelayDocument,
+  SkillsSnapshot,
 } from '../../src/shared/types'
-import { appLanguages, defaultLanguage } from '../../src/shared/types'
-import { adapters, adapterFor } from './adapters'
+import { agentSources, appLanguages, defaultLanguage, exportFormats } from '../../src/shared/types'
+import { adapters, adapterFor, enabledProviderSources } from './adapters'
 import { LocalDatabase } from './database'
+import { scanSkills } from './skills'
 import {
   compressFileBrotli,
   copyPath,
   decompressFileBrotli,
   ensureDir,
   exists,
+  expandHome,
   hashFile,
   hashId,
   movePath,
@@ -34,12 +39,20 @@ import {
 const oneDayMs = 24 * 60 * 60 * 1000
 const usageHistoryDays = 365
 const scanSchemaVersion = 3
+const maxPathLength = 4096
+const maxRetentionDays = 36_500
+const relayModes: AppSettings['defaultRelayMode'][] = [
+  'full-context',
+  'fit-to-window',
+  'manual-select',
+]
 const agentLabels: Record<AgentSource, string> = {
   codex: 'Codex',
   claude: 'Claude Code',
   cursor: 'Cursor',
   gemini: 'Gemini',
   opencode: 'OpenCode',
+  custom: 'Custom',
 }
 
 function formatDateKey(date: Date): string {
@@ -48,6 +61,223 @@ function formatDateKey(date: Date): string {
 
 function bytesFromRecords(records: Array<{ sizeBytes: number }>): number {
   return records.reduce((total, record) => total + record.sizeBytes, 0)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isSafePathString(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > maxPathLength || trimmed.includes('\0')) return false
+  if (/^(https?|data|blob|file):/i.test(trimmed)) return false
+  return path.isAbsolute(trimmed) || trimmed.startsWith('~/') || /^[A-Za-z]:[\\/]/.test(trimmed)
+}
+
+function normalizePath(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !isSafePathString(value)) {
+    throw new Error(`${label} must be an absolute local path.`)
+  }
+  return expandHome(value.trim())
+}
+
+function validateIdentifier(value: unknown, label: string): string {
+  if (
+    typeof value !== 'string' ||
+    !value.trim() ||
+    value.length > 256 ||
+    value.includes('\0') ||
+    !/^[\w:./-]+$/.test(value)
+  ) {
+    throw new Error(`${label} must be a non-empty identifier.`)
+  }
+  return value
+}
+
+function validateIdentifierArray(value: unknown, label: string): string[] {
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array.`)
+  return Array.from(new Set(value.map((item) => validateIdentifier(item, label))))
+}
+
+function normalizeDays(value: unknown, label: string): number {
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < 0 ||
+    value > maxRetentionDays
+  ) {
+    throw new Error(`${label} must be an integer between 0 and ${maxRetentionDays}.`)
+  }
+  return value
+}
+
+function safeDays(value: unknown, fallback: number): number {
+  return typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= maxRetentionDays
+    ? value
+    : fallback
+}
+
+function safeBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
+}
+
+function safePath(value: unknown, fallback: string): string {
+  return typeof value === 'string' && isSafePathString(value) ? expandHome(value.trim()) : fallback
+}
+
+function normalizeScanRoots(value: unknown): AppSettings['scanRoots'] | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value)) throw new Error('scanRoots must be an object.')
+
+  const scanRoots: AppSettings['scanRoots'] = {}
+  Object.entries(value).forEach(([source, roots]) => {
+    if (!agentSources.includes(source as AgentSource)) {
+      throw new Error(`Unsupported scan root source: ${source}`)
+    }
+    if (!Array.isArray(roots)) throw new Error(`scanRoots.${source} must be an array.`)
+    scanRoots[source as AgentSource] = roots.map((root) =>
+      normalizePath(root, `scanRoots.${source}`),
+    )
+  })
+
+  return scanRoots
+}
+
+function normalizeEnabledProviders(value: unknown): AppSettings['enabledProviders'] | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value)) throw new Error('enabledProviders must be an object.')
+
+  const enabledProviders: AppSettings['enabledProviders'] = {}
+  Object.entries(value).forEach(([source, enabled]) => {
+    if (!agentSources.includes(source as AgentSource)) {
+      throw new Error(`Unsupported provider source: ${source}`)
+    }
+    if (typeof enabled !== 'boolean') {
+      throw new Error(`enabledProviders.${source} must be a boolean.`)
+    }
+    enabledProviders[source as AgentSource] = enabled
+  })
+
+  return enabledProviders
+}
+
+function normalizeExcludedFolders(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) throw new Error('excludedFolders must be an array.')
+  return Array.from(new Set(value.map((item) => normalizePath(item, 'excludedFolders'))))
+}
+
+function normalizeBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== 'boolean') throw new Error(`${label} must be a boolean.`)
+  return value
+}
+
+function normalizeVolume(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 100) {
+    throw new Error('soundVolume must be a number between 0 and 100.')
+  }
+  return value
+}
+
+function safeScanRoots(value: unknown): AppSettings['scanRoots'] {
+  if (!isRecord(value)) return {}
+  const scanRoots: AppSettings['scanRoots'] = {}
+  Object.entries(value).forEach(([source, roots]) => {
+    if (!agentSources.includes(source as AgentSource) || !Array.isArray(roots)) return
+    const safeRoots = roots
+      .filter((root): root is string => typeof root === 'string' && isSafePathString(root))
+      .map((root) => expandHome(root.trim()))
+    if (safeRoots.length > 0) scanRoots[source as AgentSource] = safeRoots
+  })
+  return scanRoots
+}
+
+function normalizeSettingsPatch(patch: Partial<AppSettings>): Partial<AppSettings> {
+  if (!isRecord(patch)) throw new Error('settings patch must be an object.')
+
+  const next: Partial<AppSettings> = {}
+  if ('scanRoots' in patch) next.scanRoots = normalizeScanRoots(patch.scanRoots)
+  if ('enabledProviders' in patch) {
+    next.enabledProviders = normalizeEnabledProviders(patch.enabledProviders)
+  }
+  if ('cleanupRetentionDays' in patch) {
+    next.cleanupRetentionDays = normalizeDays(patch.cleanupRetentionDays, 'cleanupRetentionDays')
+  }
+  if ('trashRetentionDays' in patch) {
+    next.trashRetentionDays = normalizeDays(patch.trashRetentionDays, 'trashRetentionDays')
+  }
+  if ('autoBackup' in patch) {
+    next.autoBackup = normalizeBoolean(patch.autoBackup, 'autoBackup')
+  }
+  if ('mockDataEnabled' in patch) {
+    next.mockDataEnabled = normalizeBoolean(patch.mockDataEnabled, 'mockDataEnabled')
+  }
+  if ('language' in patch) {
+    if (!appLanguages.includes(patch.language as AppLanguage)) {
+      throw new Error('language is not supported.')
+    }
+    next.language = patch.language as AppLanguage
+  }
+  if ('launchAtLogin' in patch) {
+    next.launchAtLogin = normalizeBoolean(patch.launchAtLogin, 'launchAtLogin')
+  }
+  if ('scanOnLaunch' in patch) {
+    next.scanOnLaunch = normalizeBoolean(patch.scanOnLaunch, 'scanOnLaunch')
+  }
+  if ('backgroundScan' in patch) {
+    next.backgroundScan = normalizeBoolean(patch.backgroundScan, 'backgroundScan')
+  }
+  if ('confirmBeforeCleanup' in patch) {
+    next.confirmBeforeCleanup = normalizeBoolean(patch.confirmBeforeCleanup, 'confirmBeforeCleanup')
+  }
+  if ('excludedFolders' in patch) {
+    next.excludedFolders = normalizeExcludedFolders(patch.excludedFolders)
+  }
+  if ('soundEffects' in patch) {
+    next.soundEffects = normalizeBoolean(patch.soundEffects, 'soundEffects')
+  }
+  if ('cleanupSound' in patch) {
+    next.cleanupSound = normalizeBoolean(patch.cleanupSound, 'cleanupSound')
+  }
+  if ('scanSound' in patch) {
+    next.scanSound = normalizeBoolean(patch.scanSound, 'scanSound')
+  }
+  if ('errorSound' in patch) {
+    next.errorSound = normalizeBoolean(patch.errorSound, 'errorSound')
+  }
+  if ('soundVolume' in patch) {
+    next.soundVolume = normalizeVolume(patch.soundVolume)
+  }
+  if ('checkForUpdates' in patch) {
+    next.checkForUpdates = normalizeBoolean(patch.checkForUpdates, 'checkForUpdates')
+  }
+  if ('defaultRelayMode' in patch) {
+    if (!relayModes.includes(patch.defaultRelayMode as AppSettings['defaultRelayMode'])) {
+      throw new Error('defaultRelayMode is not supported.')
+    }
+    next.defaultRelayMode = patch.defaultRelayMode as AppSettings['defaultRelayMode']
+  }
+  if ('exportDirectory' in patch) {
+    next.exportDirectory = normalizePath(patch.exportDirectory, 'exportDirectory')
+  }
+
+  return next
+}
+
+function usageSeed(date: string): UsagePoint {
+  return {
+    date,
+    codex: 0,
+    claude: 0,
+    cursor: 0,
+    gemini: 0,
+    opencode: 0,
+    custom: 0,
+    total: 0,
+  }
 }
 
 function archiveBytes(records: ArchiveRecord[]): number {
@@ -115,6 +345,8 @@ export class AppService {
   private readonly db: LocalDatabase
   private readonly userDataPath: string
   private readonly openPathHandler: (targetPath: string) => Promise<unknown>
+  private launchScanCompleted = false
+  private scanStates = new Map<AgentSource, AgentInstallState>()
   private settings?: AppSettings
 
   constructor(options: {
@@ -134,34 +366,49 @@ export class AppService {
   }
 
   async getSnapshot(forceRescan = false): Promise<DashboardSnapshot> {
-    if (forceRescan || this.shouldRescanCachedSessions()) {
+    const settings = this.requireSettings()
+    const shouldRunLaunchScan = settings.scanOnLaunch && !this.launchScanCompleted
+    if (forceRescan || shouldRunLaunchScan || this.shouldRescanCachedSessions()) {
+      this.launchScanCompleted = true
       await this.rescan()
     }
 
     const archives = this.db.getArchives()
-    const sessions = this.mergeBackupStatus([
+    const allSessions = this.mergeBackupStatus([
       ...this.db.getSessions(),
       ...this.sessionsFromArchives(archives),
     ])
+    const enabledSources = new Set(enabledProviderSources(settings))
+    const sessions = allSessions.filter((session) => enabledSources.has(session.source))
     const backups = this.db.getBackups()
     const trash = this.db.getTrash()
     const liveSessions = sessions.filter((session) => session.storageState === 'live')
     const cleanup = this.buildCleanupCandidates(liveSessions, backups)
+    const lastScannedAt = this.db.getSetting<string>('lastScannedAt')
     const agents = await Promise.all(
-      adapters.map(async (adapter) => {
+      adapters.map(async (adapter): Promise<AgentInstallState> => {
+        const providerEnabled = enabledSources.has(adapter.source)
         const sourceSessions = sessions.filter((session) => session.source === adapter.source)
         const liveSourceSessions = sourceSessions.filter(
           (session) => session.storageState === 'live',
         )
+        const roots = adapter.roots(settings)
+        const hasConfiguredRoots = roots.length > 0
+        const state = this.scanStates.get(adapter.source)
         return {
+          ...state,
           source: adapter.source,
           name: adapter.name,
-          installed: sourceSessions.length > 0,
-          readable: sourceSessions.length > 0,
-          rootPaths: adapter.roots(this.requireSettings()),
+          installed: providerEnabled
+            ? (state?.installed ?? sourceSessions.length > 0) ||
+              (adapter.source === 'custom' && hasConfiguredRoots)
+            : false,
+          readable: providerEnabled ? (state?.readable ?? sourceSessions.length > 0) : false,
+          rootPaths: state?.rootPaths ?? roots,
           sessionCount: sourceSessions.length,
           sizeBytes: bytesFromRecords(liveSourceSessions),
-          lastScannedAt: new Date().toISOString(),
+          lastScannedAt: providerEnabled ? (state?.lastScannedAt ?? lastScannedAt) : undefined,
+          note: providerEnabled ? (state?.note ?? adapter.name) : 'Provider disabled in Settings.',
         }
       }),
     )
@@ -191,20 +438,30 @@ export class AppService {
 
   async rescan(): Promise<DashboardSnapshot> {
     const settings = this.requireSettings()
-    const results = await Promise.all(adapters.map((adapter) => adapter.scan(settings)))
+    const enabledSources = new Set(enabledProviderSources(settings))
+    const activeAdapters = adapters.filter((adapter) => enabledSources.has(adapter.source))
+    const results = await Promise.all(activeAdapters.map((adapter) => adapter.scan(settings)))
+    this.scanStates = new Map(results.map((result) => [result.state.source, result.state]))
     const sessions = results.flatMap((result) => result.sessions)
-    this.db.replaceSessions(this.mergeBackupStatus(sessions))
+    const inactiveCachedSessions = this.db
+      .getSessions()
+      .filter((session) => !enabledSources.has(session.source))
+    this.db.replaceSessions(this.mergeBackupStatus([...inactiveCachedSessions, ...sessions]))
     this.db.setSetting('scanSchemaVersion', scanSchemaVersion)
+    this.db.setSetting('lastScannedAt', new Date().toISOString())
     return this.getSnapshot(false)
   }
 
   async refreshRecentSessions(limit = 10): Promise<DashboardSnapshot> {
     const settings = this.requireSettings()
+    const enabledSources = new Set(enabledProviderSources(settings))
     const candidateGroups = await Promise.all(
-      adapters.map(async (adapter) => ({
-        adapter,
-        candidates: await adapter.recentCandidates(settings, limit),
-      })),
+      adapters
+        .filter((adapter) => enabledSources.has(adapter.source))
+        .map(async (adapter) => ({
+          adapter,
+          candidates: await adapter.recentCandidates(settings, limit),
+        })),
     )
     const latestCandidates = candidateGroups
       .flatMap(({ adapter, candidates }) => candidates.map((candidate) => ({ adapter, candidate })))
@@ -221,7 +478,7 @@ export class AppService {
   }
 
   async backupSession(sessionId: string): Promise<BackupRecord> {
-    const session = this.requireSession(sessionId)
+    const session = this.requireSession(validateIdentifier(sessionId, 'sessionId'))
     const createdAt = new Date().toISOString()
     const backupRoot = path.join(this.userDataPath, 'Backups', session.source)
     const extension = path.extname(session.storagePath)
@@ -245,7 +502,7 @@ export class AppService {
   }
 
   async archiveSession(sessionId: string): Promise<ArchiveRecord> {
-    const session = this.requireSession(sessionId)
+    const session = this.requireSession(validateIdentifier(sessionId, 'sessionId'))
     if (session.storageState === 'archived') {
       const existing = this.db.getArchiveBySessionId(sessionId)
       if (existing) return existing
@@ -302,7 +559,7 @@ export class AppService {
   }
 
   async restoreArchive(archiveId: string): Promise<void> {
-    const record = this.db.getArchiveRecord(archiveId)
+    const record = this.db.getArchiveRecord(validateIdentifier(archiveId, 'archiveId'))
     if (!record) throw new Error(`Archive item not found: ${archiveId}`)
     if (await exists(record.originalPath)) {
       throw new Error(
@@ -322,7 +579,8 @@ export class AppService {
   }
 
   async exportSession(sessionId: string, format: ExportFormat): Promise<string> {
-    const session = this.requireSession(sessionId)
+    if (!exportFormats.includes(format)) throw new Error(`Unsupported export format: ${format}`)
+    const session = this.requireSession(validateIdentifier(sessionId, 'sessionId'))
     const exportRoot = this.requireSettings().exportDirectory
     const basename = `${sanitizeName(session.title)}-${session.id}`
 
@@ -342,30 +600,14 @@ export class AppService {
     return exportPath
   }
 
+  async getSessionDetail(sessionId: string): Promise<UniversalRelayDocument> {
+    return this.buildUniversalRelayDocument(validateIdentifier(sessionId, 'sessionId'))
+  }
+
   async exportUniversalRelay(sessionId: string): Promise<string> {
-    const session = this.requireSession(sessionId)
-    const adapter = adapterFor(session.source)
-    const archive =
-      session.storageState === 'archived' ? this.db.getArchiveBySessionId(session.id) : undefined
-    let restorePath: string | undefined
-    let document
-    try {
-      if (archive) {
-        const extension = path.extname(archive.originalPath) || '.session'
-        restorePath = path.join(
-          this.userDataPath,
-          'Temp',
-          'relay',
-          `${archive.sessionId}-${Date.now()}${extension}`,
-        )
-        await decompressFileBrotli(archive.archivePath, restorePath)
-      }
-      document = await adapter.toUniversal(
-        restorePath ? { ...session, storagePath: restorePath } : session,
-      )
-    } finally {
-      if (restorePath) await removePath(restorePath)
-    }
+    const sessionIdValue = validateIdentifier(sessionId, 'sessionId')
+    const session = this.requireSession(sessionIdValue)
+    const document = await this.buildUniversalRelayDocument(sessionIdValue)
     const exportPath = path.join(
       this.requireSettings().exportDirectory,
       `${sanitizeName(session.title)}-${session.id}.universal-session.json`,
@@ -375,15 +617,19 @@ export class AppService {
   }
 
   async scanCleanup(): Promise<CleanupCandidate[]> {
+    const enabledSources = new Set(enabledProviderSources(this.requireSettings()))
     return this.buildCleanupCandidates(
-      this.mergeBackupStatus(this.db.getSessions()),
+      this.mergeBackupStatus(this.db.getSessions()).filter((session) =>
+        enabledSources.has(session.source),
+      ),
       this.db.getBackups(),
     )
   }
 
   async moveCleanupToTrash(candidateIds: string[]): Promise<TrashRecord[]> {
+    const ids = validateIdentifierArray(candidateIds, 'candidateIds')
     const candidates = await this.scanCleanup()
-    const selected = candidates.filter((candidate) => candidateIds.includes(candidate.id))
+    const selected = candidates.filter((candidate) => ids.includes(candidate.id))
     const records: TrashRecord[] = []
 
     for (const candidate of selected) {
@@ -430,7 +676,7 @@ export class AppService {
   }
 
   async restoreTrash(trashId: string): Promise<void> {
-    const record = this.db.getTrashRecord(trashId)
+    const record = this.db.getTrashRecord(validateIdentifier(trashId, 'trashId'))
     if (!record) throw new Error(`Trash item not found: ${trashId}`)
 
     for (const originalPath of record.originalPaths) {
@@ -441,18 +687,45 @@ export class AppService {
     await this.rescan()
   }
 
+  async purgeExpiredTrash(): Promise<TrashRecord[]> {
+    const retentionMs = this.requireSettings().trashRetentionDays * oneDayMs
+    const now = Date.now()
+    const purged: TrashRecord[] = []
+
+    for (const record of this.db.getTrash()) {
+      const deletedAt = new Date(record.deletedAt).getTime()
+      if (Number.isNaN(deletedAt)) continue
+      if (now - deletedAt <= retentionMs) continue
+
+      await removePath(record.trashPath)
+      this.db.deleteTrashRecord(record.id)
+      purged.push(record)
+    }
+
+    return purged
+  }
+
+  async getSkills(): Promise<SkillsSnapshot> {
+    return scanSkills(this.requireSettings())
+  }
+
   getSettings(): AppSettings {
     return this.requireSettings()
   }
 
   updateSettings(patch: Partial<AppSettings>): AppSettings {
     const current = this.requireSettings()
+    const normalizedPatch = normalizeSettingsPatch(patch)
     const next = this.mergeSettings({
       ...current,
-      ...patch,
+      ...normalizedPatch,
       scanRoots: {
         ...current.scanRoots,
-        ...patch.scanRoots,
+        ...normalizedPatch.scanRoots,
+      },
+      enabledProviders: {
+        ...current.enabledProviders,
+        ...normalizedPatch.enabledProviders,
       },
     })
     this.settings = next
@@ -461,18 +734,31 @@ export class AppService {
   }
 
   async openPath(targetPath: string): Promise<void> {
-    await this.openPathHandler(targetPath)
+    await this.openPathHandler(normalizePath(targetPath, 'targetPath'))
   }
 
   private defaultSettings(): AppSettings {
     return {
       scanRoots: {},
-      cleanupRetentionDays: 30,
+      cleanupRetentionDays: 7,
       trashRetentionDays: 14,
       autoBackup: true,
       mockDataEnabled: false,
       language: defaultLanguage,
       launchAtLogin: false,
+      enabledProviders: Object.fromEntries(
+        agentSources.map((source) => [source, true]),
+      ) as AppSettings['enabledProviders'],
+      scanOnLaunch: true,
+      backgroundScan: true,
+      confirmBeforeCleanup: true,
+      excludedFolders: [],
+      soundEffects: true,
+      cleanupSound: true,
+      scanSound: false,
+      errorSound: true,
+      soundVolume: 35,
+      checkForUpdates: true,
       defaultRelayMode: 'full-context',
       exportDirectory: path.join(this.userDataPath, 'Exports'),
     }
@@ -480,17 +766,58 @@ export class AppService {
 
   private mergeSettings(settings?: Partial<AppSettings>): AppSettings {
     const defaults = this.defaultSettings()
+    const raw = isRecord(settings) ? settings : {}
+    const language = appLanguages.includes(raw.language as AppLanguage)
+      ? (raw.language as AppLanguage)
+      : defaults.language
+    const defaultRelayMode = relayModes.includes(
+      raw.defaultRelayMode as AppSettings['defaultRelayMode'],
+    )
+      ? (raw.defaultRelayMode as AppSettings['defaultRelayMode'])
+      : defaults.defaultRelayMode
     return {
       ...defaults,
-      ...settings,
-      language: appLanguages.includes(settings?.language as AppLanguage)
-        ? (settings?.language as AppLanguage)
-        : defaults.language,
-      scanRoots: {
-        ...defaults.scanRoots,
-        ...settings?.scanRoots,
+      cleanupRetentionDays: safeDays(raw.cleanupRetentionDays, defaults.cleanupRetentionDays),
+      trashRetentionDays: safeDays(raw.trashRetentionDays, defaults.trashRetentionDays),
+      autoBackup: safeBoolean(raw.autoBackup, defaults.autoBackup),
+      mockDataEnabled: safeBoolean(raw.mockDataEnabled, defaults.mockDataEnabled),
+      language,
+      launchAtLogin: safeBoolean(raw.launchAtLogin, defaults.launchAtLogin),
+      enabledProviders: {
+        ...defaults.enabledProviders,
+        ...(isRecord(raw.enabledProviders)
+          ? Object.fromEntries(
+              Object.entries(raw.enabledProviders).filter(
+                ([source, enabled]) =>
+                  agentSources.includes(source as AgentSource) && typeof enabled === 'boolean',
+              ),
+            )
+          : {}),
       },
-      exportDirectory: settings?.exportDirectory || defaults.exportDirectory,
+      scanOnLaunch: safeBoolean(raw.scanOnLaunch, defaults.scanOnLaunch),
+      backgroundScan: safeBoolean(raw.backgroundScan, defaults.backgroundScan),
+      confirmBeforeCleanup: safeBoolean(raw.confirmBeforeCleanup, defaults.confirmBeforeCleanup),
+      excludedFolders: Array.isArray(raw.excludedFolders)
+        ? Array.from(
+            new Set(
+              raw.excludedFolders
+                .filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+                .map((item) => item.trim()),
+            ),
+          )
+        : defaults.excludedFolders,
+      soundEffects: safeBoolean(raw.soundEffects, defaults.soundEffects),
+      cleanupSound: safeBoolean(raw.cleanupSound, defaults.cleanupSound),
+      scanSound: safeBoolean(raw.scanSound, defaults.scanSound),
+      errorSound: safeBoolean(raw.errorSound, defaults.errorSound),
+      soundVolume:
+        typeof raw.soundVolume === 'number' && Number.isFinite(raw.soundVolume)
+          ? Math.min(100, Math.max(0, raw.soundVolume))
+          : defaults.soundVolume,
+      checkForUpdates: safeBoolean(raw.checkForUpdates, defaults.checkForUpdates),
+      defaultRelayMode,
+      scanRoots: safeScanRoots(raw.scanRoots),
+      exportDirectory: safePath(raw.exportDirectory, defaults.exportDirectory),
     }
   }
 
@@ -511,6 +838,31 @@ export class AppService {
     ]).find((item) => item.id === sessionId)
     if (!session) throw new Error(`Session not found: ${sessionId}`)
     return session
+  }
+
+  private async buildUniversalRelayDocument(sessionId: string): Promise<UniversalRelayDocument> {
+    const session = this.requireSession(sessionId)
+    const adapter = adapterFor(session.source)
+    const archive =
+      session.storageState === 'archived' ? this.db.getArchiveBySessionId(session.id) : undefined
+    let restorePath: string | undefined
+
+    try {
+      if (archive) {
+        const extension = path.extname(archive.originalPath) || '.session'
+        restorePath = path.join(
+          this.userDataPath,
+          'Temp',
+          'relay',
+          `${archive.sessionId}-${Date.now()}${extension}`,
+        )
+        await decompressFileBrotli(archive.archivePath, restorePath)
+      }
+
+      return adapter.toUniversal(restorePath ? { ...session, storagePath: restorePath } : session)
+    } finally {
+      if (restorePath) await removePath(restorePath)
+    }
   }
 
   private mergeBackupStatus(sessions: SessionRecord[]): SessionRecord[] {
@@ -623,15 +975,7 @@ export class AppService {
     for (let offset = usageHistoryDays - 1; offset >= 0; offset -= 1) {
       const date = new Date(Date.now() - offset * oneDayMs)
       const key = formatDateKey(date)
-      points.set(key, {
-        date: key,
-        codex: 0,
-        claude: 0,
-        cursor: 0,
-        gemini: 0,
-        opencode: 0,
-        total: 0,
-      })
+      points.set(key, usageSeed(key))
     }
 
     sessions.forEach((session) => {

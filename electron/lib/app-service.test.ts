@@ -97,12 +97,25 @@ describe('init and settings', () => {
     const service = makeService(userDataPath)
     await service.init()
     const settings = service.getSettings()
-    expect(settings.cleanupRetentionDays).toBe(30)
+    expect(settings.cleanupRetentionDays).toBe(7)
     expect(settings.trashRetentionDays).toBe(14)
     expect(settings.autoBackup).toBe(true)
     expect(settings.mockDataEnabled).toBe(false)
     expect(settings.language).toBe('en')
     expect(settings.launchAtLogin).toBe(false)
+    expect(settings.enabledProviders).toEqual(
+      Object.fromEntries(agentSources.map((source) => [source, true])),
+    )
+    expect(settings.scanOnLaunch).toBe(true)
+    expect(settings.backgroundScan).toBe(true)
+    expect(settings.confirmBeforeCleanup).toBe(true)
+    expect(settings.excludedFolders).toEqual([])
+    expect(settings.soundEffects).toBe(true)
+    expect(settings.cleanupSound).toBe(true)
+    expect(settings.scanSound).toBe(false)
+    expect(settings.errorSound).toBe(true)
+    expect(settings.soundVolume).toBe(35)
+    expect(settings.checkForUpdates).toBe(true)
     expect(settings.defaultRelayMode).toBe('full-context')
     expect(settings.exportDirectory).toContain(userDataPath)
     expect(settings.scanRoots).toEqual({})
@@ -136,12 +149,201 @@ describe('init and settings', () => {
     expect(settings.scanRoots.claude).toEqual(['/b'])
   })
 
+  it('updateSettings merges provider toggles deeply instead of replacing', async () => {
+    const service = makeService(userDataPath)
+    await service.init()
+    service.updateSettings({ enabledProviders: { codex: false } })
+    service.updateSettings({ enabledProviders: { claude: false } })
+    const settings = service.getSettings()
+    expect(settings.enabledProviders.codex).toBe(false)
+    expect(settings.enabledProviders.claude).toBe(false)
+    expect(settings.enabledProviders.cursor).toBe(true)
+  })
+
   it('updateSettings returns the merged settings object', async () => {
     const service = makeService(userDataPath)
     await service.init()
     const returned = service.updateSettings({ cleanupRetentionDays: 7 })
     expect(returned.cleanupRetentionDays).toBe(7)
     expect(returned.autoBackup).toBe(true) // unchanged default
+  })
+
+  it('rejects unsafe or unsupported settings patches', async () => {
+    const service = makeService(userDataPath)
+    await service.init()
+
+    expect(() => service.updateSettings(null as never)).toThrow(/settings patch must be an object/)
+    expect(() => service.updateSettings({ scanRoots: [] as never })).toThrow(
+      /scanRoots must be an object/,
+    )
+    expect(() => service.updateSettings({ scanRoots: { codex: '/tmp' } as never })).toThrow(
+      /scanRoots.codex must be an array/,
+    )
+    expect(() => service.updateSettings({ exportDirectory: 'relative/path' })).toThrow(
+      /exportDirectory must be an absolute local path/,
+    )
+    expect(() => service.updateSettings({ exportDirectory: '' })).toThrow(
+      /exportDirectory must be an absolute local path/,
+    )
+    expect(() => service.updateSettings({ exportDirectory: `/tmp/bad\0path` })).toThrow(
+      /exportDirectory must be an absolute local path/,
+    )
+    expect(() => service.updateSettings({ exportDirectory: `/${'x'.repeat(4097)}` })).toThrow(
+      /exportDirectory must be an absolute local path/,
+    )
+    expect(() =>
+      service.updateSettings({ scanRoots: { codex: ['https://example.test'] } }),
+    ).toThrow(/scanRoots.codex must be an absolute local path/)
+    expect(() => service.updateSettings({ scanRoots: { unknown: ['/tmp'] } as never })).toThrow(
+      /Unsupported scan root source/,
+    )
+    expect(() => service.updateSettings({ enabledProviders: [] as never })).toThrow(
+      /enabledProviders must be an object/,
+    )
+    expect(() => service.updateSettings({ enabledProviders: { unknown: true } as never })).toThrow(
+      /Unsupported provider source/,
+    )
+    expect(() => service.updateSettings({ enabledProviders: { codex: 'yes' } as never })).toThrow(
+      /enabledProviders.codex must be a boolean/,
+    )
+    expect(() => service.updateSettings({ trashRetentionDays: -1 })).toThrow(
+      /trashRetentionDays must be an integer/,
+    )
+    expect(() => service.updateSettings({ cleanupRetentionDays: 1.5 })).toThrow(
+      /cleanupRetentionDays must be an integer/,
+    )
+    expect(() => service.updateSettings({ autoBackup: 'yes' as never })).toThrow(
+      /autoBackup must be a boolean/,
+    )
+    expect(() => service.updateSettings({ mockDataEnabled: 'yes' as never })).toThrow(
+      /mockDataEnabled must be a boolean/,
+    )
+    expect(() => service.updateSettings({ language: 'xx' as never })).toThrow(
+      /language is not supported/,
+    )
+    expect(() => service.updateSettings({ launchAtLogin: 'yes' as never })).toThrow(
+      /launchAtLogin must be a boolean/,
+    )
+    expect(() => service.updateSettings({ scanOnLaunch: 'yes' as never })).toThrow(
+      /scanOnLaunch must be a boolean/,
+    )
+    expect(() => service.updateSettings({ backgroundScan: 'yes' as never })).toThrow(
+      /backgroundScan must be a boolean/,
+    )
+    expect(() => service.updateSettings({ confirmBeforeCleanup: 'yes' as never })).toThrow(
+      /confirmBeforeCleanup must be a boolean/,
+    )
+    expect(() => service.updateSettings({ excludedFolders: 'nope' as never })).toThrow(
+      /excludedFolders must be an array/,
+    )
+    expect(() => service.updateSettings({ excludedFolders: ['relative/path'] })).toThrow(
+      /excludedFolders must be an absolute local path/,
+    )
+    expect(() => service.updateSettings({ soundEffects: 'yes' as never })).toThrow(
+      /soundEffects must be a boolean/,
+    )
+    expect(() => service.updateSettings({ cleanupSound: 'yes' as never })).toThrow(
+      /cleanupSound must be a boolean/,
+    )
+    expect(() => service.updateSettings({ scanSound: 'yes' as never })).toThrow(
+      /scanSound must be a boolean/,
+    )
+    expect(() => service.updateSettings({ errorSound: 'yes' as never })).toThrow(
+      /errorSound must be a boolean/,
+    )
+    expect(() => service.updateSettings({ soundVolume: 101 })).toThrow(
+      /soundVolume must be a number between 0 and 100/,
+    )
+    expect(() => service.updateSettings({ checkForUpdates: 'yes' as never })).toThrow(
+      /checkForUpdates must be a boolean/,
+    )
+    expect(() => service.updateSettings({ defaultRelayMode: 'unsupported' as never })).toThrow(
+      /defaultRelayMode is not supported/,
+    )
+  })
+
+  it('accepts every validated settings field in one patch', async () => {
+    const service = makeService(userDataPath)
+    await service.init()
+    const exportDirectory = path.join(userDataPath, 'Custom Exports')
+    const excludedFolder = path.join(fixtureRoot, 'excluded')
+    const settings = service.updateSettings({
+      scanRoots: { codex: [path.join(fixtureRoot, 'codex')] },
+      enabledProviders: { codex: false, claude: true },
+      cleanupRetentionDays: 30,
+      trashRetentionDays: 60,
+      autoBackup: false,
+      mockDataEnabled: true,
+      language: 'zh-CN',
+      launchAtLogin: true,
+      scanOnLaunch: false,
+      backgroundScan: false,
+      confirmBeforeCleanup: false,
+      excludedFolders: [excludedFolder, excludedFolder],
+      soundEffects: false,
+      cleanupSound: false,
+      scanSound: true,
+      errorSound: false,
+      soundVolume: 0,
+      checkForUpdates: false,
+      defaultRelayMode: 'manual-select',
+      exportDirectory,
+    })
+
+    expect(settings.scanRoots.codex).toEqual([path.join(fixtureRoot, 'codex')])
+    expect(settings.enabledProviders.codex).toBe(false)
+    expect(settings.enabledProviders.claude).toBe(true)
+    expect(settings.cleanupRetentionDays).toBe(30)
+    expect(settings.trashRetentionDays).toBe(60)
+    expect(settings.autoBackup).toBe(false)
+    expect(settings.mockDataEnabled).toBe(true)
+    expect(settings.language).toBe('zh-CN')
+    expect(settings.launchAtLogin).toBe(true)
+    expect(settings.scanOnLaunch).toBe(false)
+    expect(settings.backgroundScan).toBe(false)
+    expect(settings.confirmBeforeCleanup).toBe(false)
+    expect(settings.excludedFolders).toEqual([excludedFolder])
+    expect(settings.soundEffects).toBe(false)
+    expect(settings.cleanupSound).toBe(false)
+    expect(settings.scanSound).toBe(true)
+    expect(settings.errorSound).toBe(false)
+    expect(settings.soundVolume).toBe(0)
+    expect(settings.checkForUpdates).toBe(false)
+    expect(settings.defaultRelayMode).toBe('manual-select')
+    expect(settings.exportDirectory).toBe(exportDirectory)
+  })
+
+  it('falls back to defaults when persisted settings are invalid', async () => {
+    const service = makeService(userDataPath)
+    await service.init()
+    service['db'].setSetting('settings', {
+      cleanupRetentionDays: -1,
+      trashRetentionDays: 100_000,
+      autoBackup: 'yes',
+      mockDataEnabled: 'yes',
+      language: 'xx',
+      launchAtLogin: 'yes',
+      defaultRelayMode: 'unsupported',
+      exportDirectory: 'https://example.test/export',
+      scanRoots: {
+        codex: ['relative/path'],
+        claude: ['/safe/claude'],
+        unknown: ['/tmp/unknown'],
+      },
+    })
+
+    const restored = makeService(userDataPath)
+    await restored.init()
+    const settings = restored.getSettings()
+    expect(settings.cleanupRetentionDays).toBe(7)
+    expect(settings.trashRetentionDays).toBe(14)
+    expect(settings.autoBackup).toBe(true)
+    expect(settings.mockDataEnabled).toBe(false)
+    expect(settings.language).toBe('en')
+    expect(settings.launchAtLogin).toBe(false)
+    expect(settings.defaultRelayMode).toBe('full-context')
+    expect(settings.exportDirectory).toContain(userDataPath)
+    expect(settings.scanRoots).toEqual({ claude: ['/safe/claude'] })
   })
 })
 
@@ -198,6 +400,102 @@ describe('getSnapshot and rescan', () => {
     expect(snapshot.overview.totalTokens).toBe(
       snapshot.sessions.reduce((s, x) => s + x.tokens.total, 0),
     )
+  })
+
+  it('disabled providers are not scanned, shown, or suggested for cleanup', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({
+      cleanupRetentionDays: 0,
+      enabledProviders: { codex: false },
+    })
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await writeJsonlSession(fixtureRoot, 'claude', { filename: 'claude-session.jsonl' })
+
+    const snapshot = await service.rescan()
+    expect(snapshot.sessions.some((session) => session.source === 'codex')).toBe(false)
+    expect(snapshot.sessions.some((session) => session.source === 'claude')).toBe(true)
+    expect(snapshot.agents.find((agent) => agent.source === 'codex')?.readable).toBe(false)
+    expect(snapshot.agents.find((agent) => agent.source === 'codex')?.note).toBe(
+      'Provider disabled in Settings.',
+    )
+
+    const candidates = await service.scanCleanup()
+    expect(candidates.some((candidate) => candidate.source === 'codex')).toBe(false)
+    expect(candidates.some((candidate) => candidate.source === 'claude')).toBe(true)
+  })
+
+  it('rescan keeps disabled provider cache and reveals it after re-enabling', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await writeJsonlSession(fixtureRoot, 'codex')
+    const initial = await service.rescan()
+    const codexSession = initial.sessions.find((session) => session.source === 'codex')
+    assert.ok(codexSession)
+
+    service.updateSettings({ enabledProviders: { codex: false } })
+    const disabled = await service.rescan()
+    expect(disabled.sessions.some((session) => session.id === codexSession.id)).toBe(false)
+    expect(service['db'].getSessions().some((session) => session.id === codexSession.id)).toBe(true)
+
+    service.updateSettings({ enabledProviders: { codex: true } })
+    const reenabled = await service.getSnapshot(false)
+    expect(reenabled.sessions.some((session) => session.id === codexSession.id)).toBe(true)
+  })
+
+  it('scans custom provider roots when configured', async () => {
+    const service = makeService(userDataPath)
+    await service.init()
+    const customRoot = path.join(fixtureRoot, 'custom-root')
+    await mkdir(customRoot, { recursive: true })
+    await writeFile(
+      path.join(customRoot, 'custom-session.jsonl'),
+      JSON.stringify({
+        role: 'user',
+        timestamp: '2026-02-01T12:00:00.000Z',
+        content: 'Custom provider session text',
+      }) + '\n',
+    )
+    service.updateSettings({
+      scanRoots: { custom: [customRoot] },
+      enabledProviders: {
+        codex: false,
+        claude: false,
+        cursor: false,
+        gemini: false,
+        opencode: false,
+        custom: true,
+      },
+      exportDirectory: path.join(userDataPath, 'Exports'),
+    })
+
+    const snapshot = await service.rescan()
+    expect(snapshot.sessions).toHaveLength(1)
+    expect(snapshot.sessions[0].source).toBe('custom')
+    expect(snapshot.sessions[0].searchText).toContain('Custom provider session text')
+    expect(snapshot.agents.find((agent) => agent.source === 'custom')?.installed).toBe(true)
+  })
+
+  it('excludes configured folders from provider scans', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const keptPath = await writeJsonlSession(fixtureRoot, 'codex', {
+      filename: 'kept-session.jsonl',
+      contentExtra: ' keep-this-session',
+    })
+    const excludedDir = path.join(fixtureRoot, 'codex', 'excluded')
+    await mkdir(excludedDir, { recursive: true })
+    const excludedPath = path.join(excludedDir, 'ignored-session.jsonl')
+    await writeFile(
+      excludedPath,
+      JSON.stringify({
+        role: 'user',
+        timestamp: '2026-02-01T12:00:00.000Z',
+        content: 'Ignore this excluded session',
+      }) + '\n',
+    )
+    service.updateSettings({ excludedFolders: [excludedDir] })
+
+    const snapshot = await service.rescan()
+    expect(snapshot.sessions.some((session) => session.storagePath === keptPath)).toBe(true)
+    expect(snapshot.sessions.some((session) => session.storagePath === excludedPath)).toBe(false)
   })
 })
 
@@ -356,6 +654,52 @@ describe('exportUniversalRelay', () => {
     }
     expect(relay.schema).toBe('clean-my-agent.universal-session.v1')
     expect(relay.messages.some((m) => m.text.includes('rare migration needle'))).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getSessionDetail
+// ---------------------------------------------------------------------------
+
+describe('getSessionDetail', () => {
+  it('returns universal relay detail for a live session without writing an export file', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await writeJsonlSession(fixtureRoot, 'codex')
+    const snapshot = await service.rescan()
+    const session = snapshot.sessions.find((s) => s.source === 'codex')
+    assert.ok(session)
+
+    const detail = await service.getSessionDetail(session.id)
+
+    expect(detail.schema).toBe('clean-my-agent.universal-session.v1')
+    expect(detail.session.id).toBe(session.id)
+    expect(detail.messages.some((message) => message.text.includes('rare migration needle'))).toBe(
+      true,
+    )
+    await expect(stat(path.join(userDataPath, 'Exports'))).rejects.toThrow()
+  })
+
+  it('returns detail for an archived session by temporarily restoring the archive', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await writeJsonlSession(fixtureRoot, 'codex')
+    const snapshot = await service.rescan()
+    const session = snapshot.sessions.find((s) => s.source === 'codex')
+    assert.ok(session)
+
+    await service.archiveSession(session.id)
+    const detail = await service.getSessionDetail(session.id)
+
+    expect(detail.session.storageState).toBe('archived')
+    expect(detail.messages.some((message) => message.text.includes('rare migration needle'))).toBe(
+      true,
+    )
+  })
+
+  it('throws when session detail is requested for an unknown session', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await service.rescan()
+    await expect(service.getSessionDetail('missing-session')).rejects.toThrow(/Session not found/)
   })
 })
 
@@ -854,6 +1198,86 @@ describe('restoreTrash', () => {
 })
 
 // ---------------------------------------------------------------------------
+// purgeExpiredTrash
+// ---------------------------------------------------------------------------
+
+describe('purgeExpiredTrash', () => {
+  it('removes only expired trash records and keeps fresh records recoverable', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ cleanupRetentionDays: 0, trashRetentionDays: 1 })
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await writeJsonlSession(fixtureRoot, 'claude', { filename: 'claude-session.jsonl' })
+    await writeJsonlSession(fixtureRoot, 'gemini', { filename: 'gemini-session.jsonl' })
+    await service.rescan()
+    const candidates = await service.scanCleanup()
+    const selected = candidates
+      .filter((candidate) => candidate.source === 'codex' || candidate.source === 'claude')
+      .map((candidate) => candidate.id)
+
+    const trashRecords = await service.moveCleanupToTrash(selected)
+    expect(trashRecords).toHaveLength(2)
+    const [expired, fresh] = trashRecords
+    const expiredRecord = {
+      ...expired,
+      deletedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    }
+    const freshRecord = {
+      ...fresh,
+      deletedAt: new Date().toISOString(),
+    }
+    service['db'].insertTrash(expiredRecord)
+    service['db'].insertTrash(freshRecord)
+
+    const purged = await service.purgeExpiredTrash()
+
+    expect(purged.map((record) => record.id)).toEqual([expired.id])
+    await expect(stat(expired.trashPath)).rejects.toThrow()
+    await expect(stat(fresh.trashPath)).resolves.toBeDefined()
+    const snapshot = await service.getSnapshot(false)
+    expect(snapshot.trash.find((record) => record.id === expired.id)).toBeUndefined()
+    expect(snapshot.trash.find((record) => record.id === fresh.id)).toBeDefined()
+  }, 20_000)
+})
+
+// ---------------------------------------------------------------------------
+// skills scanning
+// ---------------------------------------------------------------------------
+
+describe('skills scanning', () => {
+  it('requires service initialization before scanning skills', async () => {
+    const service = makeService(userDataPath)
+    await expect(service.getSkills()).rejects.toThrow(/not initialized/)
+  })
+
+  it('returns discovered local skills from configured scan roots', async () => {
+    const service = makeService(userDataPath)
+    await service.init()
+    const codexRoot = path.join(fixtureRoot, 'codex-skills')
+    const skillDir = path.join(codexRoot, 'review-helper')
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(
+      path.join(skillDir, 'SKILL.md'),
+      `---\nname: Review Helper\ndescription: Review code changes before merge.\n---`,
+    )
+    service.updateSettings({ scanRoots: { codex: [codexRoot] } })
+
+    const snapshot = await service.getSkills()
+
+    expect(snapshot.summary.totalSkills).toBeGreaterThanOrEqual(1)
+    expect(snapshot.skills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'Review Helper',
+          ownerAgent: 'codex',
+          status: 'local',
+          location: expect.stringContaining('review-helper'),
+        }),
+      ]),
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
 // openPath
 // ---------------------------------------------------------------------------
 
@@ -874,6 +1298,28 @@ describe('openPath', () => {
     await service.init()
     // Should not throw
     await expect(service.openPath('/anything')).resolves.toBeUndefined()
+  })
+
+  it('rejects non-local or relative paths', async () => {
+    const calls: string[] = []
+    const service = new AppService({
+      userDataPath,
+      openPath: async (targetPath) => {
+        calls.push(targetPath)
+      },
+    })
+    await service.init()
+
+    await expect(service.openPath('relative/path')).rejects.toThrow(
+      /targetPath must be an absolute local path/,
+    )
+    await expect(service.openPath('https://example.test/file')).rejects.toThrow(
+      /targetPath must be an absolute local path/,
+    )
+    await expect(service.openPath('file:///tmp/example')).rejects.toThrow(
+      /targetPath must be an absolute local path/,
+    )
+    expect(calls).toEqual([])
   })
 })
 
