@@ -5,6 +5,7 @@ const api: CleanMyAgentApi = {
   getSnapshot: () => ipcRenderer.invoke('app:getSnapshot'),
   rescan: () => ipcRenderer.invoke('app:rescan'),
   refreshRecentSessions: () => ipcRenderer.invoke('app:refreshRecentSessions'),
+  getSkills: () => ipcRenderer.invoke('skills:get'),
   backupSession: (sessionId: string) => ipcRenderer.invoke('session:backup', sessionId),
   archiveSession: (sessionId: string) => ipcRenderer.invoke('session:archive', sessionId),
   restoreArchive: (archiveId: string) => ipcRenderer.invoke('archive:restore', archiveId),

@@ -181,6 +181,45 @@ export type DashboardSnapshot = {
   storage: StorageSlice[]
 }
 
+export type SkillStatus = 'synced' | 'local' | 'backed-up'
+
+export type SkillCategory = 'engineering' | 'docs' | 'productivity' | 'design' | 'data'
+
+export type ManagedSkill = {
+  id: string
+  name: string
+  description: string
+  ownerAgent: AgentSource
+  category: SkillCategory
+  updatedAt: string
+  sizeKb: number
+  status: SkillStatus
+  linkedAgents: AgentSource[]
+  version: string
+  createdAt: string
+  lastBackupAt?: string
+  usageCount: number
+  location: string
+  accent: 'violet' | 'orange' | 'green' | 'blue' | 'cyan' | 'pink' | 'amber'
+  icon: 'code' | 'review' | 'bug' | 'notes' | 'search' | 'image' | 'data' | 'spec'
+}
+
+export type SkillsSummary = {
+  totalSkills: number
+  weeklyDelta: number
+  linkedAgents: number
+  linkedAgentTotal: number
+  backups: number
+  backupPercent: number
+  recentlyChanged: number
+}
+
+export type SkillsSnapshot = {
+  generatedAt: string
+  skills: ManagedSkill[]
+  summary: SkillsSummary
+}
+
 export type UniversalRelayMessage = {
   id: string
   role: 'system' | 'user' | 'assistant' | 'tool' | 'unknown'
@@ -261,6 +300,7 @@ export type CleanMyAgentApi = {
   rescan: () => Promise<DashboardSnapshot>
   refreshRecentSessions: () => Promise<DashboardSnapshot>
   getSessionDetail: (sessionId: string) => Promise<UniversalRelayDocument>
+  getSkills: () => Promise<SkillsSnapshot>
   backupSession: (sessionId: string) => Promise<BackupRecord>
   archiveSession: (sessionId: string) => Promise<ArchiveRecord>
   restoreArchive: (archiveId: string) => Promise<void>

@@ -2815,6 +2815,16 @@ select option {
   background: rgb(255 255 255 / 3.5%);
 }
 
+.skills-empty-state {
+  display: grid;
+  min-height: 170px;
+  place-items: center;
+  align-content: center;
+  border-top: 1px solid rgb(255 255 255 / 7%);
+  padding: 28px;
+  text-align: center;
+}
+
 .skill-icon-box {
   display: grid;
   width: 32px;
