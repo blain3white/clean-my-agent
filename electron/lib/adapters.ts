@@ -13,7 +13,6 @@ import type {
   UniversalRelayDocument,
   UniversalRelayMessage,
 } from '../../src/shared/types'
-import { agentSources } from '../../src/shared/types'
 import { calculateUsageModelCost } from '../../src/shared/usage-pricing'
 import {
   asString,
@@ -25,39 +24,16 @@ import {
   type JsonRecord,
 } from './agent-storage-formats'
 import { expandHome, hashId, listFiles, pathSize, readable, safeReadText } from './files'
+import { scannerProviders } from './scanner-providers'
+import type {
+  AgentScannerProvider,
+  ScannerProviderCandidate,
+  ScannerProviderParsedSession,
+} from './scanner-providers'
 
-type AgentDefinition = {
-  source: AgentSource
-  name: string
-  roots: string[]
-  patterns: string[]
-  note: string
-}
+type ParsedSession = ScannerProviderParsedSession
 
-type ParsedSession = {
-  title?: string
-  projectPath?: string
-  branch?: string
-  messages: UniversalRelayMessage[]
-  files: UniversalRelayDocument['files']
-  commands: UniversalRelayDocument['commands']
-  attachments: UniversalRelayDocument['attachments']
-  gitDiff?: string
-  tokens: TokenUsage
-  usageByDate: Record<string, number>
-  usageEvents: Array<{ timestamp: string; tokens: number }>
-  metadata: JsonRecord
-}
-
-type SessionFileCandidate = {
-  path: string
-  root?: string
-  relativePath?: string
-  sizeBytes: number
-  createdAt: string
-  lastUpdated: string
-  mtimeMs: number
-}
+type SessionFileCandidate = ScannerProviderCandidate
 
 type CandidateDiscovery = {
   candidates: SessionFileCandidate[]
@@ -81,54 +57,6 @@ const emptyTokens = (): TokenUsage => ({
   estimated: true,
 })
 
-const definitions: AgentDefinition[] = [
-  {
-    source: 'codex',
-    name: 'Codex',
-    roots: ['~/.codex/sessions', '~/.codex/tasks', '~/.codex/archived_sessions'],
-    patterns: ['**/*.jsonl', '**/*.json'],
-    note: 'Scans Codex CLI/App session JSONL data.',
-  },
-  {
-    source: 'claude',
-    name: 'Claude Code',
-    roots: ['~/.claude/projects', '~/.claude/transcripts'],
-    patterns: ['**/*.jsonl', '**/*.json'],
-    note: 'Scans Claude Code project transcripts.',
-  },
-  {
-    source: 'cursor',
-    name: 'Cursor',
-    roots: [
-      '~/Library/Application Support/Cursor/User/workspaceStorage',
-      '~/Library/Application Support/Cursor/User/globalStorage',
-    ],
-    patterns: ['**/*.json', '**/*.jsonl', '**/*.db', '**/*.sqlite', '**/*.log'],
-    note: 'Read-only scan of Cursor workspace storage and chat artifacts.',
-  },
-  {
-    source: 'gemini',
-    name: 'Gemini',
-    roots: ['~/.gemini', '~/.config/gemini', '~/Library/Application Support/Gemini'],
-    patterns: ['**/*.json', '**/*.jsonl', '**/*.md', '**/*.log'],
-    note: 'Scans configurable Gemini CLI/session storage roots.',
-  },
-  {
-    source: 'opencode',
-    name: 'OpenCode',
-    roots: ['~/.local/share/opencode', '~/Library/Application Support/opencode', '~/.opencode'],
-    patterns: ['**/*.json', '**/*.jsonl', '**/*.db', '**/*.sqlite', '**/*.md', '**/*.log'],
-    note: 'Scans OpenCode data roots using a generic session parser.',
-  },
-  {
-    source: 'custom',
-    name: 'Custom',
-    roots: [],
-    patterns: ['**/*.json', '**/*.jsonl', '**/*.db', '**/*.sqlite', '**/*.md', '**/*.log'],
-    note: 'Scans user-selected custom session folders with the generic parser.',
-  },
-]
-
 function normalizePathForCompare(value: string): string {
   return path.resolve(expandHome(value)).replace(/[\\/]+$/, '')
 }
@@ -140,7 +68,9 @@ function isInsidePath(filePath: string, parentPath: string): boolean {
 }
 
 export function enabledProviderSources(settings: AppSettings): AgentSource[] {
-  return agentSources.filter((source) => settings.enabledProviders[source] !== false)
+  return scannerProviders
+    .map((provider) => provider.source)
+    .filter((source) => settings.enabledProviders[source] !== false)
 }
 
 function pushDiagnostic(diagnostics: AgentScanDiagnostic[], diagnostic: AgentScanDiagnostic): void {
@@ -864,23 +794,23 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
 }
 
 export class AgentAdapter {
-  private readonly definition: AgentDefinition
+  private readonly provider: AgentScannerProvider
 
-  constructor(definition: AgentDefinition) {
-    this.definition = definition
+  constructor(provider: AgentScannerProvider) {
+    this.provider = provider
   }
 
   get source(): AgentSource {
-    return this.definition.source
+    return this.provider.source
   }
 
   get name(): string {
-    return this.definition.name
+    return this.provider.name
   }
 
   roots(settings: AppSettings): string[] {
-    const configured = settings.scanRoots[this.definition.source]
-    return (configured?.length ? configured : this.definition.roots).map(expandHome)
+    const configured = settings.scanRoots[this.provider.source]
+    return (configured?.length ? configured : this.provider.roots).map(expandHome)
   }
 
   async recentCandidates(settings: AppSettings, limit: number): Promise<SessionFileCandidate[]> {
@@ -940,8 +870,8 @@ export class AgentAdapter {
 
     return {
       state: {
-        source: this.definition.source,
-        name: this.definition.name,
+        source: this.provider.source,
+        name: this.provider.name,
         installed: readableRoots.length > 0,
         readable: readableRoots.length > 0,
         rootPaths: roots,
@@ -950,7 +880,7 @@ export class AgentAdapter {
         scannedFiles: files.length,
         skippedFiles,
         lastScannedAt: new Date().toISOString(),
-        note: this.definition.note,
+        note: this.provider.note,
         diagnostics,
       },
       sessions,
@@ -970,7 +900,7 @@ export class AgentAdapter {
   }
 
   async toUniversal(session: SessionRecord): Promise<UniversalRelayDocument> {
-    const parsed = await parseJsonLike(session.storagePath)
+    const parsed = await this.parseSessionFile(session.storagePath)
     return {
       schema: 'clean-my-agent.universal-session.v1',
       exportedAt: new Date().toISOString(),
@@ -1007,7 +937,7 @@ export class AgentAdapter {
     const filesByRoot = await Promise.all(
       roots.map(async (root) => ({
         root,
-        files: await listFiles(root, this.definition.patterns),
+        files: await listFiles(root, this.provider.patterns),
       })),
     )
     const exclusions = excludedFolders.map(normalizePathForCompare)
@@ -1067,11 +997,11 @@ export class AgentAdapter {
   }
 
   private async parseCandidate(candidate: SessionFileCandidate): Promise<SessionRecord> {
-    const parsed = await parseJsonLike(candidate.path)
-    const id = hashId([this.definition.source, candidate.path])
+    const parsed = await this.parseSessionFile(candidate.path)
+    const id = hashId([this.provider.source, candidate.path])
     return {
       id,
-      source: this.definition.source,
+      source: this.provider.source,
       title: parsed.title ?? path.basename(candidate.path),
       projectName: projectNameFromPath(parsed.projectPath, candidate.path),
       projectPath: parsed.projectPath,
@@ -1086,19 +1016,25 @@ export class AgentAdapter {
       tokens: parsed.tokens,
       sizeBytes: candidate.sizeBytes,
       backupStatus: 'pending',
-      tags: [this.definition.source],
+      tags: [this.provider.source],
       searchText: searchTextFromParsed(parsed),
       metadata: {
         ...parsed.metadata,
-        parser: 'generic-json-session-parser',
+        parser: this.provider.parserName ?? 'generic-json-session-parser',
         root: candidate.root,
         relativePath: candidate.relativePath,
       },
     }
   }
+
+  private async parseSessionFile(filePath: string): Promise<ParsedSession> {
+    return this.provider.parseSession
+      ? this.provider.parseSession(filePath)
+      : parseJsonLike(filePath)
+  }
 }
 
-export const adapters = definitions.map((definition) => new AgentAdapter(definition))
+export const adapters = scannerProviders.map((provider) => new AgentAdapter(provider))
 
 export function adapterFor(source: AgentSource): AgentAdapter {
   const adapter = adapters.find((item) => item.source === source)
