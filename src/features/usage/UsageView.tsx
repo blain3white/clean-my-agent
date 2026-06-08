@@ -1,7 +1,9 @@
 import { type ReactNode, useMemo, useState } from 'react'
 import {
   Activity,
+  AlertTriangle,
   Bot,
+  CalendarClock,
   ChartNoAxesColumn,
   ChevronDown,
   ChevronRight,
@@ -49,6 +51,9 @@ import {
   type TokenMix,
   type UsageHeatmapCell,
   type UsageHeatmapRow,
+  type UsageForecast,
+  type UsageForecastAlert,
+  type UsageForecasts,
   type UsageTokenType,
 } from '@/features/usage/usage-analytics'
 
@@ -308,6 +313,108 @@ function UsageSectionTitle({
         {action}
       </div>
     </CardHeader>
+  )
+}
+
+function formatForecastDelta(value: number | null): string {
+  if (value === null) return 'No baseline'
+  const sign = value >= 0 ? '+' : ''
+  return `${sign}${value.toFixed(1)}%`
+}
+
+function forecastConfidenceLabel(forecast: UsageForecast): string {
+  if (forecast.confidence === 'high') return 'High confidence'
+  if (forecast.confidence === 'medium') return 'Medium confidence'
+  return 'Low confidence'
+}
+
+function UsageForecastPanel({ forecast }: { forecast: UsageForecast }) {
+  const progress = Math.min(100, Math.max(0, (forecast.elapsedDays / forecast.totalDays) * 100))
+
+  return (
+    <div className="usage-forecast-panel">
+      <div className="usage-forecast-panel-header">
+        <span className="usage-forecast-period">{forecast.label}</span>
+        <Badge className="usage-forecast-confidence">{forecastConfidenceLabel(forecast)}</Badge>
+      </div>
+      <div className="usage-forecast-values">
+        <div>
+          <span>Projected tokens</span>
+          <strong>{formatUsageTokens(forecast.projectedTokens)}</strong>
+        </div>
+        <div>
+          <span>Projected cost</span>
+          <strong>{formatCost(forecast.projectedCost)}</strong>
+        </div>
+      </div>
+      <div className="usage-forecast-progress" aria-hidden="true">
+        <span style={{ width: `${progress}%` }} />
+      </div>
+      <div className="usage-forecast-meta">
+        <span>
+          {forecast.elapsedDays}/{forecast.totalDays} days
+        </span>
+        <span>{formatUsageTokens(forecast.observedTokens)} observed</span>
+      </div>
+      <div className="usage-forecast-deltas">
+        <span>{formatForecastDelta(forecast.tokenChangePercent)} tokens</span>
+        <span>{formatForecastDelta(forecast.costChangePercent)} cost</span>
+      </div>
+    </div>
+  )
+}
+
+function UsageForecastAlertRow({ alert }: { alert: UsageForecastAlert }) {
+  const period = alert.period === 'week' ? 'Week' : 'Month'
+  const metric = alert.metric === 'cost' ? 'cost' : 'tokens'
+  const projected =
+    alert.metric === 'cost'
+      ? formatCost(alert.projectedValue)
+      : formatUsageTokens(alert.projectedValue)
+  const baseline =
+    alert.metric === 'cost'
+      ? formatCost(alert.baselineValue)
+      : formatUsageTokens(alert.baselineValue)
+
+  return (
+    <div className="usage-forecast-alert" data-severity={alert.severity}>
+      <AlertTriangle className="size-4" />
+      <span className="min-w-0">
+        <span className="block truncate font-semibold text-white/82">
+          {period} {metric} +{alert.deltaPercent.toFixed(1)}%
+        </span>
+        <span className="block truncate text-white/46">
+          {projected} projected vs {baseline} baseline
+        </span>
+      </span>
+    </div>
+  )
+}
+
+function UsageForecastCard({ forecast }: { forecast: UsageForecasts }) {
+  return (
+    <Card className="glass-panel rounded-lg py-4">
+      <UsageSectionTitle
+        title="AI Spend Forecast"
+        description="Projected usage for the current week and month."
+      />
+      <CardContent className="space-y-3">
+        <UsageForecastPanel forecast={forecast.week} />
+        <UsageForecastPanel forecast={forecast.month} />
+        <div className="usage-forecast-alert-list">
+          {forecast.alerts.length > 0 ? (
+            forecast.alerts
+              .slice(0, 3)
+              .map((alert) => <UsageForecastAlertRow key={alert.id} alert={alert} />)
+          ) : (
+            <div className="usage-forecast-clear">
+              <CalendarClock className="size-4" />
+              <span>No unusual increases detected</span>
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -1051,6 +1158,7 @@ export function UsageView({
         </div>
         <div className="space-y-4">
           <ByAgentCard rows={analytics.agentRows} />
+          <UsageForecastCard forecast={analytics.forecast} />
           <PriceRankingCard projects={analytics.projectRows} onSelectProject={onSelectProject} />
         </div>
       </section>

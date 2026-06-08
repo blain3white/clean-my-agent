@@ -72,6 +72,40 @@ export type DailyUsageTrendPoint = {
   total: number
   cost: number
 }
+export type UsageForecastPeriod = 'week' | 'month'
+export type UsageForecastConfidence = 'low' | 'medium' | 'high'
+export type UsageForecastMetric = 'tokens' | 'cost'
+export type UsageForecastAlert = {
+  id: string
+  period: UsageForecastPeriod
+  metric: UsageForecastMetric
+  severity: 'warning' | 'critical'
+  deltaPercent: number
+  projectedValue: number
+  baselineValue: number
+}
+export type UsageForecast = {
+  period: UsageForecastPeriod
+  label: string
+  startDate: string
+  endDate: string
+  elapsedDays: number
+  totalDays: number
+  observedTokens: number
+  observedCost: number
+  projectedTokens: number
+  projectedCost: number
+  baselineTokens: number
+  baselineCost: number
+  tokenChangePercent: number | null
+  costChangePercent: number | null
+  confidence: UsageForecastConfidence
+}
+export type UsageForecasts = {
+  week: UsageForecast
+  month: UsageForecast
+  alerts: UsageForecastAlert[]
+}
 
 export type DailyUsageTooltipPayload = {
   dataKey?: string
@@ -229,6 +263,268 @@ function costForDates(costByDate: Map<string, number>, dates: Iterable<string>):
     total += costByDate.get(date) ?? 0
   }
   return total
+}
+
+type UsageDailyRecord = {
+  date: string
+  tokens: number
+  cost: number
+}
+
+const usageMsPerDay = 24 * 60 * 60 * 1000
+
+function parseUsageDate(date: string): Date | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+  if (!match) return undefined
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const parsed = new Date(Date.UTC(year, month - 1, day))
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return undefined
+  }
+
+  return parsed
+}
+
+function dateKeyFromUsageDate(date: Date): string {
+  return date.toISOString().slice(0, 10)
+}
+
+function addUsageDays(date: Date, days: number): Date {
+  return new Date(date.getTime() + days * usageMsPerDay)
+}
+
+function usageDaysBetweenInclusive(start: Date, end: Date): number {
+  return Math.max(1, Math.floor((end.getTime() - start.getTime()) / usageMsPerDay) + 1)
+}
+
+function startOfUsageWeek(date: Date): Date {
+  const weekday = date.getUTCDay()
+  const offset = weekday === 0 ? -6 : 1 - weekday
+  return addUsageDays(date, offset)
+}
+
+function startOfUsageMonth(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1))
+}
+
+function endOfUsageMonth(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0))
+}
+
+function fallbackForecastDate(generatedAt: string): Date {
+  const parsed = new Date(generatedAt)
+  if (!Number.isNaN(parsed.getTime())) {
+    return new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()))
+  }
+  return new Date(Date.UTC(1970, 0, 1))
+}
+
+function dailyRecordsFromUsage(
+  usage: UsagePoint[],
+  costByDate: Map<string, number>,
+): UsageDailyRecord[] {
+  const records = new Map<string, UsageDailyRecord>()
+
+  for (const point of usage) {
+    if (!parseUsageDate(point.date)) continue
+    const existing = records.get(point.date)
+    records.set(point.date, {
+      date: point.date,
+      tokens: (existing?.tokens ?? 0) + point.total,
+      cost: (existing?.cost ?? 0) + (costByDate.get(point.date) ?? 0),
+    })
+  }
+
+  return Array.from(records.values()).sort((a, b) => a.date.localeCompare(b.date))
+}
+
+function sumDailyRecordMetric(
+  records: UsageDailyRecord[],
+  start: Date,
+  end: Date,
+  metric: 'tokens' | 'cost',
+): number {
+  const startKey = dateKeyFromUsageDate(start)
+  const endKey = dateKeyFromUsageDate(end)
+  return records.reduce((total, record) => {
+    if (record.date < startKey || record.date > endKey) return total
+    return total + record[metric]
+  }, 0)
+}
+
+function trailingDailyMetric(
+  records: UsageDailyRecord[],
+  periodStart: Date,
+  days: number,
+  metric: 'tokens' | 'cost',
+): number {
+  const end = addUsageDays(periodStart, -1)
+  const start = addUsageDays(periodStart, -days)
+  return sumDailyRecordMetric(records, start, end, metric)
+}
+
+function latestUsageRecordDate(records: UsageDailyRecord[], generatedAt: string): Date {
+  const lastRecord = records.at(-1)
+  return lastRecord
+    ? (parseUsageDate(lastRecord.date) ?? fallbackForecastDate(generatedAt))
+    : fallbackForecastDate(generatedAt)
+}
+
+function historicalCostPerToken(records: UsageDailyRecord[]): number {
+  const priced = records.filter((record) => record.tokens > 0 && record.cost > 0)
+  const tokens = priced.reduce((total, record) => total + record.tokens, 0)
+  const cost = priced.reduce((total, record) => total + record.cost, 0)
+  return tokens > 0 ? cost / tokens : 0
+}
+
+function percentChange(current: number, baseline: number): number | null {
+  if (baseline <= 0) return null
+  return ((current - baseline) / baseline) * 100
+}
+
+function usageForecastConfidence(
+  records: UsageDailyRecord[],
+  periodStart: Date,
+  elapsedDays: number,
+  totalDays: number,
+  observedTokens: number,
+): UsageForecastConfidence {
+  if (observedTokens <= 0) return 'low'
+  const startKey = dateKeyFromUsageDate(periodStart)
+  const historyDays = records.filter(
+    (record) => record.date < startKey && (record.tokens > 0 || record.cost > 0),
+  ).length
+
+  if (elapsedDays >= Math.ceil(totalDays * 0.5) && historyDays >= totalDays) return 'high'
+  if (elapsedDays >= 2 && historyDays >= Math.min(7, totalDays)) return 'medium'
+  return 'low'
+}
+
+function buildPeriodForecast(
+  period: UsageForecastPeriod,
+  label: string,
+  latestDate: Date,
+  records: UsageDailyRecord[],
+  costPerToken: number,
+): UsageForecast {
+  const start = period === 'week' ? startOfUsageWeek(latestDate) : startOfUsageMonth(latestDate)
+  const end = period === 'week' ? addUsageDays(start, 6) : endOfUsageMonth(latestDate)
+  const previousStart =
+    period === 'week'
+      ? addUsageDays(start, -7)
+      : new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() - 1, 1))
+  const previousEnd = period === 'week' ? addUsageDays(start, -1) : endOfUsageMonth(previousStart)
+  const totalDays = usageDaysBetweenInclusive(start, end)
+  const elapsedDays = Math.min(totalDays, usageDaysBetweenInclusive(start, latestDate))
+  const observedEnd = latestDate > end ? end : latestDate
+  const observedTokens = sumDailyRecordMetric(records, start, observedEnd, 'tokens')
+  const observedCost = sumDailyRecordMetric(records, start, observedEnd, 'cost')
+  const projectedTokens = observedTokens > 0 ? (observedTokens / elapsedDays) * totalDays : 0
+  const projectedObservedCost = observedCost > 0 ? (observedCost / elapsedDays) * totalDays : 0
+  const projectedRateCost = costPerToken > 0 ? projectedTokens * costPerToken : 0
+  const projectedCost = projectedObservedCost || projectedRateCost
+  const previousTokens = sumDailyRecordMetric(records, previousStart, previousEnd, 'tokens')
+  const previousCost = sumDailyRecordMetric(records, previousStart, previousEnd, 'cost')
+  const baselineTokens = previousTokens || trailingDailyMetric(records, start, totalDays, 'tokens')
+  const baselineCost =
+    previousCost ||
+    (costPerToken > 0
+      ? baselineTokens * costPerToken
+      : trailingDailyMetric(records, start, totalDays, 'cost'))
+
+  return {
+    period,
+    label,
+    startDate: dateKeyFromUsageDate(start),
+    endDate: dateKeyFromUsageDate(end),
+    elapsedDays,
+    totalDays,
+    observedTokens,
+    observedCost,
+    projectedTokens,
+    projectedCost,
+    baselineTokens,
+    baselineCost,
+    tokenChangePercent: percentChange(projectedTokens, baselineTokens),
+    costChangePercent: percentChange(projectedCost, baselineCost),
+    confidence: usageForecastConfidence(records, start, elapsedDays, totalDays, observedTokens),
+  }
+}
+
+function buildUsageForecastAlerts(forecasts: UsageForecast[]): UsageForecastAlert[] {
+  return forecasts
+    .flatMap((forecast) => {
+      const alerts: UsageForecastAlert[] = []
+      const tokenDelta = forecast.tokenChangePercent
+      const costDelta = forecast.costChangePercent
+      const confidenceAllowsAlert =
+        forecast.confidence !== 'low' || Math.max(tokenDelta ?? 0, costDelta ?? 0) >= 100
+
+      if (!confidenceAllowsAlert) return alerts
+
+      if (
+        tokenDelta !== null &&
+        tokenDelta >= 35 &&
+        forecast.projectedTokens - forecast.baselineTokens >= 1_000
+      ) {
+        alerts.push({
+          id: `${forecast.period}-tokens`,
+          period: forecast.period,
+          metric: 'tokens',
+          severity: tokenDelta >= 100 ? 'critical' : 'warning',
+          deltaPercent: tokenDelta,
+          projectedValue: forecast.projectedTokens,
+          baselineValue: forecast.baselineTokens,
+        })
+      }
+
+      if (
+        costDelta !== null &&
+        costDelta >= 35 &&
+        forecast.projectedCost - forecast.baselineCost >= 0.01
+      ) {
+        alerts.push({
+          id: `${forecast.period}-cost`,
+          period: forecast.period,
+          metric: 'cost',
+          severity: costDelta >= 100 ? 'critical' : 'warning',
+          deltaPercent: costDelta,
+          projectedValue: forecast.projectedCost,
+          baselineValue: forecast.baselineCost,
+        })
+      }
+
+      return alerts
+    })
+    .sort((a, b) => {
+      if (a.severity !== b.severity) return a.severity === 'critical' ? -1 : 1
+      return b.deltaPercent - a.deltaPercent
+    })
+}
+
+function buildUsageForecasts(
+  usage: UsagePoint[],
+  costByDate: Map<string, number>,
+  generatedAt: string,
+): UsageForecasts {
+  const records = dailyRecordsFromUsage(usage, costByDate)
+  const latestDate = latestUsageRecordDate(records, generatedAt)
+  const costPerToken = historicalCostPerToken(records)
+  const week = buildPeriodForecast('week', 'This week', latestDate, records, costPerToken)
+  const month = buildPeriodForecast('month', 'This month', latestDate, records, costPerToken)
+
+  return {
+    week,
+    month,
+    alerts: buildUsageForecastAlerts([week, month]),
+  }
 }
 
 function rangeSessionsForUsage(
@@ -571,6 +867,7 @@ export function buildUsageAnalytics(snapshot: DashboardSnapshot, range: UsagePag
   const dailyTrend = attachDailyCosts(buildDailyUsageTrend(selectedUsage, tokenMix), allCostByDate)
   const heatmap = buildUsageHeatmapData(selectedUsage, range, rangeSessions, allCostByDate)
   const peakWindows = buildPeakWindows(heatmap.cells, totalTokens)
+  const forecast = buildUsageForecasts(snapshot.usage, allCostByDate, snapshot.generatedAt)
   const peakHour = peakWindows[0] ?? {
     rank: 1,
     startHour: 15,
@@ -608,6 +905,7 @@ export function buildUsageAnalytics(snapshot: DashboardSnapshot, range: UsagePag
     dailyTrend,
     heatmap,
     peakWindows,
+    forecast,
     agentRows,
     projectRows,
     trends: {
@@ -653,6 +951,18 @@ export function exportUsageCsv(snapshot: DashboardSnapshot, range: UsagePageRang
     ['Pricing Coverage', `${analytics.summary.costCoverage.toFixed(1)}%`],
     ['Active Sessions', String(analytics.summary.activeSessions)],
     ['Avg Tokens Per Day', String(Math.round(analytics.summary.avgTokensPerDay))],
+    ['This Week Projected Tokens', String(Math.round(analytics.forecast.week.projectedTokens))],
+    ['This Week Projected Cost USD', analytics.forecast.week.projectedCost.toFixed(4)],
+    ['This Month Projected Tokens', String(Math.round(analytics.forecast.month.projectedTokens))],
+    ['This Month Projected Cost USD', analytics.forecast.month.projectedCost.toFixed(4)],
+    [
+      'Forecast Alerts',
+      analytics.forecast.alerts.length
+        ? analytics.forecast.alerts
+            .map((alert) => `${alert.period} ${alert.metric} +${alert.deltaPercent.toFixed(1)}%`)
+            .join('; ')
+        : 'None',
+    ],
     [],
     ['Date', ...agentSources.map((source) => agentLabel[source]), 'Total'],
     ...analytics.selectedUsage.map((point) => [

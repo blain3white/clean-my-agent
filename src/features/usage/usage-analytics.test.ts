@@ -26,6 +26,7 @@ function usagePoint(date: string, values: Partial<Record<AgentSource, number>> =
   const cursor = values.cursor ?? 0
   const gemini = values.gemini ?? 0
   const opencode = values.opencode ?? 0
+  const custom = values.custom ?? 0
   return {
     date,
     codex,
@@ -33,7 +34,8 @@ function usagePoint(date: string, values: Partial<Record<AgentSource, number>> =
     cursor,
     gemini,
     opencode,
-    total: codex + claude + cursor + gemini + opencode,
+    custom,
+    total: codex + claude + cursor + gemini + opencode + custom,
   }
 }
 
@@ -217,6 +219,59 @@ describe('buildUsageAnalytics', () => {
     expect(analytics.trends.totalTokens).toContain('vs prior period')
   })
 
+  it('forecasts current week and month usage and flags abnormal increases', () => {
+    const mayUsage = Array.from({ length: 31 }, (_, index) =>
+      usagePoint(`2026-05-${String(index + 1).padStart(2, '0')}`, { codex: 1_000 }),
+    )
+    const priorWeek = Array.from({ length: 7 }, (_, index) =>
+      usagePoint(`2026-06-${String(index + 1).padStart(2, '0')}`, { codex: 1_000 }),
+    )
+    const currentWeek = [8, 9, 10].map((day) =>
+      usagePoint(`2026-06-${String(day).padStart(2, '0')}`, { codex: 3_000 }),
+    )
+    const usage = [...mayUsage, ...priorWeek, ...currentWeek]
+    const usageByDate = Object.fromEntries(usage.map((point) => [point.date, point.total]))
+    const totalTokens = usage.reduce((total, point) => total + point.total, 0)
+    const snapshot = makeSnapshot(usage, [
+      makeSession({
+        id: 'priced-history',
+        lastUpdated: '2026-06-10T12:00:00.000Z',
+        tokens: {
+          input: 0,
+          output: 0,
+          cached: 0,
+          total: totalTokens,
+          costUsd: totalTokens * 0.00002,
+          estimated: false,
+        },
+        metadata: { usageByDate },
+      }),
+    ])
+
+    const analytics = buildUsageAnalytics(snapshot, '30d')
+
+    expect(analytics.forecast.week).toMatchObject({
+      startDate: '2026-06-08',
+      endDate: '2026-06-14',
+      elapsedDays: 3,
+      totalDays: 7,
+      confidence: 'medium',
+    })
+    expect(analytics.forecast.week.projectedTokens).toBeCloseTo(21_000)
+    expect(analytics.forecast.week.projectedCost).toBeCloseTo(0.42)
+    expect(analytics.forecast.week.tokenChangePercent).toBeCloseTo(200)
+    expect(analytics.forecast.month).toMatchObject({
+      startDate: '2026-06-01',
+      endDate: '2026-06-30',
+      elapsedDays: 10,
+      totalDays: 30,
+    })
+    expect(analytics.forecast.month.projectedTokens).toBeCloseTo(48_000)
+    expect(analytics.forecast.alerts.map((alert) => alert.id)).toEqual(
+      expect.arrayContaining(['week-tokens', 'week-cost', 'month-tokens', 'month-cost']),
+    )
+  })
+
   it('groups longer ranges into weekly heatmap rows and keeps session metadata fallback', () => {
     const usage = Array.from({ length: 30 }, (_, index) =>
       usagePoint(`2026-05-${String(index + 1).padStart(2, '0')}`, {
@@ -334,5 +389,6 @@ describe('exportUsageCsv', () => {
     expect(csv).toContain('Range,All')
     expect(csv).toContain('Total Tokens,0')
     expect(csv).toContain('Pricing Coverage,0.0%')
+    expect(csv).toContain('Forecast Alerts,None')
   })
 })
