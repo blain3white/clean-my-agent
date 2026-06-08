@@ -31,6 +31,7 @@ import { AgentGlyph } from '@/components/agent-glyph'
 import { MetricCard } from '@/components/metric-card'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { sourceColors } from '@/lib/agent-colors'
 import { dateKeyFromTime } from '@/lib/date-key'
@@ -939,6 +940,204 @@ function StoragePieView({
   )
 }
 
+function OverviewMetricSkeleton({ icon: Icon, accent }: { icon: typeof Database; accent: string }) {
+  return (
+    <Card className="metric-card rounded-lg py-4">
+      <CardContent className="flex items-center gap-3 px-4">
+        <div className={`grid size-10 shrink-0 place-items-center rounded-lg ${accent}`}>
+          <Icon className="size-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <Skeleton className="h-3 w-24 bg-white/10" />
+          <Skeleton className="mt-3 h-7 w-28 bg-white/12" />
+          <Skeleton className="mt-2 h-3 w-36 bg-white/8" />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function OverviewTokenActivitySkeleton() {
+  return (
+    <Card className="glass-panel token-activity-card rounded-lg py-4">
+      <CardHeader className="pb-0">
+        <div className="flex items-center justify-between gap-3">
+          <Skeleton className="h-4 w-28 bg-white/10" />
+          <div className="range-control flex items-center rounded-lg border border-white/10 bg-white/[0.035] p-0.5">
+            {Array.from({ length: 3 }, (_, index) => (
+              <Skeleton key={index} className="size-6 rounded-md bg-white/8" />
+            ))}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="h-[230px]">
+        <div className="flex h-full items-end gap-3 border-b border-white/8 px-3 pb-4">
+          {Array.from({ length: 18 }, (_, index) => (
+            <Skeleton
+              key={index}
+              className="w-full rounded-t-sm bg-white/8"
+              style={{ height: `${38 + ((index * 31) % 150)}px` }}
+            />
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function OverviewStorageSkeleton() {
+  return (
+    <Card className="glass-panel flex h-[318px] flex-col overflow-hidden rounded-lg py-4">
+      <CardHeader className="pb-0">
+        <div className="flex items-center justify-between gap-3">
+          <Skeleton className="h-4 w-36 bg-white/10" />
+          <div className="range-control flex items-center rounded-lg border border-white/10 bg-white/[0.035] p-0.5">
+            {Array.from({ length: 3 }, (_, index) => (
+              <Skeleton key={index} className="size-6 rounded-md bg-white/8" />
+            ))}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="grid min-h-0 flex-1 grid-cols-[150px_1fr] items-center gap-3">
+        <div className="grid place-items-center">
+          <div className="relative size-[150px]">
+            <Skeleton className="absolute inset-0 rounded-full bg-white/10" />
+            <div className="absolute inset-[42px] rounded-full bg-[hsl(var(--card))]" />
+          </div>
+        </div>
+        <div className="space-y-3">
+          {Array.from({ length: 5 }, (_, index) => (
+            <div key={index} className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <Skeleton className="size-2.5 shrink-0 rounded-full bg-white/10" />
+                <Skeleton className="h-3 w-28 bg-white/8" />
+              </div>
+              <Skeleton className="h-3 w-14 bg-white/8" />
+            </div>
+          ))}
+          <Skeleton className="h-px w-full bg-white/8" />
+          <Skeleton className="h-3 w-36 bg-white/8" />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function OverviewRecentSessionsSkeleton({
+  loading,
+  onRefresh,
+}: {
+  loading: boolean
+  onRefresh: () => Promise<void>
+}) {
+  return (
+    <Card className="glass-panel rounded-lg py-4">
+      <CardHeader className="pb-0">
+        <div className="flex w-full items-center justify-between">
+          <CardTitle className="text-sm text-white">Recent Sessions</CardTitle>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void onRefresh()}
+            disabled={loading}
+            className="text-blue-300 hover:bg-blue-400/10 hover:text-blue-200"
+          >
+            {loading ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <RefreshCcw className="size-3.5" />
+            )}
+            Refresh
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="divide-y divide-white/7">
+          {Array.from({ length: 6 }, (_, index) => (
+            <div
+              key={index}
+              className="grid grid-cols-[28px_1fr_120px_80px_80px] items-center gap-3 py-2.5"
+            >
+              <Skeleton className="size-7 rounded-lg bg-white/10" />
+              <div className="min-w-0">
+                <Skeleton className="h-3.5 w-full max-w-[360px] bg-white/10" />
+                <Skeleton className="mt-2 h-3 w-32 bg-white/8" />
+              </div>
+              <Skeleton className="h-3 w-20 bg-white/8" />
+              <Skeleton className="h-3 w-16 bg-white/8" />
+              <Skeleton className="ml-auto h-3 w-12 bg-white/8" />
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function OverviewCleanupSkeleton() {
+  return (
+    <Card className="glass-panel rounded-lg py-4">
+      <CardHeader className="pb-0">
+        <div className="flex w-full items-center justify-between">
+          <CardTitle className="text-sm text-white">Smart Cleanup</CardTitle>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled
+            className="text-blue-300 hover:bg-blue-400/10 hover:text-blue-200"
+          >
+            Review
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-2">
+          {Array.from({ length: 4 }, (_, index) => (
+            <div
+              key={index}
+              className="flex items-center gap-3 rounded-md border border-white/7 bg-white/[0.03] p-3"
+            >
+              <Skeleton className="size-8 shrink-0 rounded-md bg-white/10" />
+              <div className="min-w-0 flex-1">
+                <Skeleton className="h-3.5 w-full bg-white/10" />
+                <Skeleton className="mt-2 h-3 w-44 bg-white/8" />
+              </div>
+              <Skeleton className="h-3.5 w-12 bg-white/10" />
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function OverviewSkeletonView({
+  loading,
+  onRefresh,
+}: {
+  loading: boolean
+  onRefresh: () => Promise<void>
+}) {
+  return (
+    <div className="space-y-4">
+      <section className="grid grid-cols-4 gap-3">
+        <OverviewMetricSkeleton icon={Database} accent="bg-emerald-400/12 text-emerald-300" />
+        <OverviewMetricSkeleton icon={Archive} accent="bg-blue-400/12 text-blue-300" />
+        <OverviewMetricSkeleton icon={HardDrive} accent="bg-amber-400/12 text-amber-300" />
+        <OverviewMetricSkeleton icon={Gauge} accent="bg-violet-400/12 text-violet-300" />
+      </section>
+      <section className="grid grid-cols-[1fr_400px] gap-4">
+        <OverviewTokenActivitySkeleton />
+        <OverviewStorageSkeleton />
+      </section>
+      <section className="grid grid-cols-[1fr_400px] gap-4">
+        <OverviewRecentSessionsSkeleton loading={loading} onRefresh={onRefresh} />
+        <OverviewCleanupSkeleton />
+      </section>
+    </div>
+  )
+}
+
 export function OverviewView({
   snapshot,
   usageRange,
@@ -990,6 +1189,19 @@ export function OverviewView({
     .filter((slice) => slice.value > 0)
     .sort((a, b) => b.value - a.value)
   const storageTotal = storageData.reduce((total, slice) => total + slice.value, 0)
+  const hasOverviewData =
+    snapshot.overview.totalSessions > 0 ||
+    snapshot.overview.backedUpSessions > 0 ||
+    snapshot.overview.reclaimableBytes > 0 ||
+    snapshot.overview.totalTokens > 0 ||
+    snapshot.sessions.length > 0 ||
+    snapshot.cleanup.length > 0 ||
+    snapshot.usage.some((point) => point.total > 0) ||
+    storageTotal > 0
+
+  if (loading || !hasOverviewData) {
+    return <OverviewSkeletonView loading={loading} onRefresh={onRefresh} />
+  }
 
   return (
     <div className="space-y-4">
