@@ -29,11 +29,8 @@ export function filterSkills(
 }
 
 export function summarizeVisibleSkills(skills: ManagedSkill[]) {
-  const selectedDefaults = skills.slice(0, 3)
-
   return {
     visibleCount: skills.length,
-    selectedIds: selectedDefaults.map((skill) => skill.id),
     totalSizeKb: skills.reduce((total, skill) => total + skill.sizeKb, 0),
   }
 }

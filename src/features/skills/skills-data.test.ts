@@ -11,6 +11,7 @@ const skill = (overrides: Partial<ManagedSkill> = {}): ManagedSkill => ({
   id: 'codex-review',
   name: 'PR Review',
   description: 'Review pull requests before merge.',
+  content: '# PR Review\n\nReview pull requests before merge.',
   ownerAgent: 'codex',
   category: 'engineering',
   updatedAt: '2026-06-01T12:00:00.000Z',
@@ -73,11 +74,10 @@ describe('skills data model', () => {
     ])
   })
 
-  it('returns selected rows and aggregate size for the visible table', () => {
+  it('returns aggregate data for the visible table', () => {
     const summary = summarizeVisibleSkills(skills)
 
     expect(summary.visibleCount).toBe(4)
-    expect(summary.selectedIds).toEqual(['codex-review', 'claude-docs', 'cursor-data'])
     expect(summary.totalSizeKb).toBe(102)
   })
 

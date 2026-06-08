@@ -151,6 +151,7 @@ describe('skill scanner', () => {
 
     const review = snapshot.skills.find((skill) => skill.name === 'PR Review')
     expect(review?.status).toBe('synced')
+    expect(review?.content).toContain('# PR Review')
     expect(review?.linkedAgents.sort().join(',')).toBe('claude,codex')
 
     const releaseNotes = snapshot.skills.find((skill) => skill.name === 'Release Notes')
@@ -188,6 +189,7 @@ describe('skill scanner', () => {
           description: 'A',
           ownerAgent: 'codex',
           category: 'engineering',
+          content: '# A',
           updatedAt: '2026-06-07T00:00:00.000Z',
           sizeKb: 1,
           status: 'backed-up',
@@ -205,6 +207,7 @@ describe('skill scanner', () => {
           description: 'B',
           ownerAgent: 'claude',
           category: 'docs',
+          content: '# B',
           updatedAt: '2026-05-01T00:00:00.000Z',
           sizeKb: 1,
           status: 'synced',
@@ -222,6 +225,7 @@ describe('skill scanner', () => {
           description: 'C',
           ownerAgent: 'cursor',
           category: 'data',
+          content: '# C',
           updatedAt: 'not-a-date',
           sizeKb: 1,
           status: 'local',

@@ -189,6 +189,7 @@ export type ManagedSkill = {
   id: string
   name: string
   description: string
+  content: string
   ownerAgent: AgentSource
   category: SkillCategory
   updatedAt: string
@@ -256,6 +257,7 @@ export type AppSettings = {
   autoBackup: boolean
   mockDataEnabled: boolean
   language: AppLanguage
+  usageTimezone: string
   launchAtLogin: boolean
   enabledProviders: Partial<Record<AgentSource, boolean>>
   scanOnLaunch: boolean

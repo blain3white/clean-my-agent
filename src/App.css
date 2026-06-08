@@ -2637,15 +2637,10 @@ select option {
 }
 
 .skills-page {
-  display: grid;
-  grid-template-columns: minmax(880px, 1fr) 276px;
-  gap: 14px;
-  min-width: 1168px;
-  align-items: stretch;
+  min-width: 960px;
 }
 
-.skills-workbench,
-.skills-detail-panel {
+.skills-workbench {
   border: 1px solid rgb(255 255 255 / 10%);
   border-radius: 12px;
   background:
@@ -2658,11 +2653,6 @@ select option {
 .skills-workbench {
   min-width: 0;
   padding: 16px;
-}
-
-.skills-detail-panel {
-  min-height: calc(100vh - 120px);
-  padding: 24px 16px 18px;
 }
 
 .skills-toolbar {
@@ -2803,6 +2793,15 @@ select option {
   color: white;
 }
 
+.skills-bulk-button:disabled {
+  color: rgb(255 255 255 / 26%);
+}
+
+.skills-bulk-button:disabled:hover {
+  background: transparent;
+  color: rgb(255 255 255 / 26%);
+}
+
 .skills-table-row {
   height: 64px;
   cursor: pointer;
@@ -2813,6 +2812,21 @@ select option {
 
 .skills-table-row:hover {
   background: rgb(255 255 255 / 3.5%);
+}
+
+.skills-agent-icons {
+  display: flex;
+  max-width: 210px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.skills-agent-icon {
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
 }
 
 .skills-empty-state {
@@ -2936,6 +2950,37 @@ select option {
 .skills-detail-action:hover {
   background: rgb(255 255 255 / 8%);
   color: white;
+}
+
+.skills-detail-action:disabled,
+.skills-detail-action:disabled:hover {
+  border-color: rgb(255 255 255 / 8%);
+  background: rgb(255 255 255 / 2%);
+  color: rgb(255 255 255 / 32%);
+}
+
+.skills-detail-drawer {
+  border-left: 1px solid rgb(255 255 255 / 12%);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 7%), rgb(255 255 255 / 3.5%)), rgb(15 17 19 / 96%);
+  color: white;
+  box-shadow:
+    inset 1px 0 0 rgb(255 255 255 / 8%),
+    -28px 0 72px rgb(0 0 0 / 36%);
+}
+
+.skills-content-preview {
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-radius: 10px;
+  background: rgb(0 0 0 / 22%);
+  padding: 14px;
+  color: rgb(255 255 255 / 66%);
+  font-size: 12px;
+  line-height: 1.65;
 }
 
 .theme-light {
