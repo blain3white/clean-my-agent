@@ -136,6 +136,8 @@ function App() {
             onRescan={dashboard.rescan}
             onRestoreTrash={dashboard.restoreTrash}
             onPurgeExpiredTrash={dashboard.purgeExpiredTrash}
+            onDiagnoseRecovery={dashboard.diagnoseRecovery}
+            onUndoRecovery={dashboard.undoRecovery}
           />
         )
       default:

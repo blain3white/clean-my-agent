@@ -13,12 +13,15 @@ import type {
   DiagnosticPerformanceMetric,
   DiagnosticReport,
   ExportFormat,
+  RecoveryDiagnostic,
   SessionRecord,
   StorageSlice,
   TrashRecord,
   UsagePoint,
   UniversalRelayDocument,
   SkillsSnapshot,
+  RecoveryRecord,
+  RecoveryStep,
 } from '../../src/shared/types'
 import { agentSources, appLanguages, defaultLanguage, exportFormats } from '../../src/shared/types'
 import { adapters, adapterFor, enabledProviderSources } from './adapters'
@@ -518,6 +521,25 @@ function sessionSearchText(session: SessionRecord): string {
     .slice(0, 16_000)
 }
 
+function recoveryStep(
+  label: string,
+  status: RecoveryStep['status'],
+  detail?: string,
+): RecoveryStep {
+  return {
+    label,
+    status,
+    at: new Date().toISOString(),
+    ...(detail ? { detail } : {}),
+  }
+}
+
+type RecoveryStart = Pick<
+  RecoveryRecord,
+  'operation' | 'title' | 'explanation' | 'targetId' | 'targetTitle' | 'source' | 'risk'
+> &
+  Partial<Pick<RecoveryRecord, 'paths' | 'steps' | 'metadata' | 'undo'>>
+
 export class AppService {
   private readonly db: LocalDatabase
   private readonly userDataPath: string
@@ -566,6 +588,7 @@ export class AppService {
       const sessions = allSessions.filter((session) => enabledSources.has(session.source))
       const backups = this.db.getBackups()
       const trash = this.db.getTrash()
+      const recovery = this.db.getRecoveryRecords()
       const liveSessions = sessions.filter((session) => session.storageState === 'live')
       const cleanup = this.buildCleanupCandidates(liveSessions, backups)
       const lastScannedAt = this.db.getSetting<string>('lastScannedAt')
@@ -621,6 +644,7 @@ export class AppService {
         archives,
         backups,
         trash,
+        recovery,
         usage: this.buildUsage(sessions),
         storage: this.buildStorage(sessions, archives, backups, trash),
       }
@@ -683,20 +707,49 @@ export class AppService {
       const filename = `${sanitizeName(session.title)}-${session.id}${extension || '.backup'}`
       const backupPath = path.join(backupRoot, filename)
 
-      await copyPath(session.storagePath, backupPath)
-      const record: BackupRecord = {
-        id: hashId([session.id, backupPath, createdAt]),
-        sessionId: session.id,
+      const recovery = this.startRecovery({
+        operation: 'backup',
+        title: `Backup ${session.title}`,
+        explanation:
+          'Copies the live session into the app Backups folder before any cleanup or manual safety action.',
+        targetId: session.id,
+        targetTitle: session.title,
         source: session.source,
-        title: session.title,
-        createdAt,
-        sizeBytes: await pathSize(backupPath),
-        backupPath,
-        originalPath: session.storagePath,
-        format: 'raw-copy',
+        risk: 'low',
+        paths: [
+          { label: 'Original session', path: session.storagePath, role: 'source' },
+          { label: 'Backup copy', path: backupPath, role: 'backup' },
+        ],
+      })
+
+      try {
+        await copyPath(session.storagePath, backupPath)
+        const record: BackupRecord = {
+          id: hashId([session.id, backupPath, createdAt]),
+          sessionId: session.id,
+          source: session.source,
+          title: session.title,
+          createdAt,
+          sizeBytes: await pathSize(backupPath),
+          backupPath,
+          originalPath: session.storagePath,
+          format: 'raw-copy',
+        }
+        this.db.insertBackup(record)
+        this.completeRecovery(recovery, {
+          undo: {
+            kind: 'remove-created-paths',
+            available: true,
+            label: 'Remove this backup',
+          },
+          metadata: { backupId: record.id, sessionId: session.id },
+        })
+        return record
+      } catch (error) {
+        await removePath(backupPath)
+        this.failRecovery(recovery, error)
+        throw error
       }
-      this.db.insertBackup(record)
-      return record
     })
   }
 
@@ -708,12 +761,6 @@ export class AppService {
         if (existing) return existing
         throw new Error(`Archived session record not found: ${sessionId}`)
       }
-      if (session.storageKind === 'directory') {
-        throw new Error('Vault archive currently supports single-file sessions.')
-      }
-      if (!(await exists(session.storagePath))) {
-        throw new Error(`Session file not found: ${session.storagePath}`)
-      }
 
       const archivedAt = new Date().toISOString()
       const archiveRoot = path.join(this.userDataPath, 'Vault', session.source)
@@ -721,41 +768,99 @@ export class AppService {
         archiveRoot,
         `${sanitizeName(session.title)}-${session.id}${path.extname(session.storagePath) || '.session'}.br`,
       )
-      const originalBytes = await pathSize(session.storagePath)
-      const contentHash = await hashFile(session.storagePath)
-      await compressFileBrotli(session.storagePath, archivePath)
-      const compressedBytes = await pathSize(archivePath)
+      const recovery = this.startRecovery({
+        operation: 'archive',
+        title: `Archive ${session.title}`,
+        explanation:
+          'Compresses the live session into the Vault and removes the original live file after the archive is written.',
+        targetId: session.id,
+        targetTitle: session.title,
+        source: session.source,
+        risk: 'medium',
+        paths: [
+          { label: 'Original session', path: session.storagePath, role: 'source' },
+          { label: 'Vault archive', path: archivePath, role: 'destination' },
+        ],
+      })
 
-      const archivedSession: SessionRecord = {
-        ...session,
-        storageState: 'archived',
-        searchText: sessionSearchText(session),
-        metadata: {
-          ...session.metadata,
+      let archiveRecordId: string | undefined
+      let originalRemoved = false
+      let completedRecovery: RecoveryRecord | undefined
+      try {
+        if (session.storageKind === 'directory') {
+          throw new Error('Vault archive currently supports single-file sessions.')
+        }
+        if (!(await exists(session.storagePath))) {
+          throw new Error(`Session file not found: ${session.storagePath}`)
+        }
+
+        const originalBytes = await pathSize(session.storagePath)
+        const contentHash = await hashFile(session.storagePath)
+        await compressFileBrotli(session.storagePath, archivePath)
+        const compressedBytes = await pathSize(archivePath)
+
+        const archivedSession: SessionRecord = {
+          ...session,
+          storageState: 'archived',
+          searchText: sessionSearchText(session),
+          metadata: {
+            ...session.metadata,
+            archivedAt,
+            originalPath: session.storagePath,
+          },
+        }
+        const record: ArchiveRecord = {
+          id: hashId([session.id, archivePath, archivedAt]),
+          sessionId: session.id,
+          source: session.source,
+          title: session.title,
+          createdAt: session.createdAt ?? archivedAt,
           archivedAt,
           originalPath: session.storagePath,
-        },
+          archivePath,
+          originalBytes,
+          compressedBytes,
+          contentHash,
+          compression: 'brotli',
+          restorable: true,
+          session: archivedSession,
+        }
+        this.db.insertArchive(record)
+        archiveRecordId = record.id
+        await removePath(session.storagePath)
+        originalRemoved = true
+        completedRecovery = this.completeRecovery(recovery, {
+          undo: {
+            kind: 'restore-archive',
+            available: true,
+            label: 'Restore this archive',
+          },
+          metadata: { archiveId: record.id, sessionId: session.id },
+        })
+        await this.rescan()
+        return record
+      } catch (error) {
+        if (originalRemoved) {
+          if (completedRecovery) {
+            this.saveRecovery({
+              ...completedRecovery,
+              diagnostics: [
+                ...completedRecovery.diagnostics,
+                {
+                  level: 'warning',
+                  code: 'rescan.failed',
+                  message: errorMessage(error),
+                },
+              ],
+            })
+          }
+          throw error
+        }
+        if (archiveRecordId) this.db.deleteArchiveRecord(archiveRecordId)
+        await removePath(archivePath)
+        this.failRecovery(recovery, error)
+        throw error
       }
-      const record: ArchiveRecord = {
-        id: hashId([session.id, archivePath, archivedAt]),
-        sessionId: session.id,
-        source: session.source,
-        title: session.title,
-        createdAt: session.createdAt ?? archivedAt,
-        archivedAt,
-        originalPath: session.storagePath,
-        archivePath,
-        originalBytes,
-        compressedBytes,
-        contentHash,
-        compression: 'brotli',
-        restorable: true,
-        session: archivedSession,
-      }
-      this.db.insertArchive(record)
-      await removePath(session.storagePath)
-      await this.rescan()
-      return record
     })
   }
 
@@ -763,21 +868,49 @@ export class AppService {
     return this.trackAsync('archive.restore', async () => {
       const record = this.db.getArchiveRecord(validateIdentifier(archiveId, 'archiveId'))
       if (!record) throw new Error(`Archive item not found: ${archiveId}`)
-      if (await exists(record.originalPath)) {
-        throw new Error(
-          `Cannot restore archive because the original path already exists: ${record.originalPath}`,
-        )
-      }
+      const checkpointPath = path.join(
+        this.userDataPath,
+        'Recovery',
+        'restore-archive',
+        `${record.id}-${Date.now()}${path.extname(record.archivePath) || '.br'}`,
+      )
+      const recovery = this.startRecovery({
+        operation: 'restore',
+        title: `Restore ${record.title}`,
+        explanation:
+          'Restores the Vault archive to its original live path and keeps a recovery checkpoint so the restore can be undone.',
+        targetId: record.id,
+        targetTitle: record.title,
+        source: record.source,
+        risk: 'medium',
+        paths: [
+          { label: 'Vault archive', path: record.archivePath, role: 'source' },
+          { label: 'Original restore path', path: record.originalPath, role: 'restored' },
+          { label: 'Restore checkpoint', path: checkpointPath, role: 'checkpoint' },
+        ],
+      })
 
-      await decompressFileBrotli(record.archivePath, record.originalPath)
-      const restoredHash = await hashFile(record.originalPath)
-      if (restoredHash !== record.contentHash) {
-        await removePath(record.originalPath)
-        throw new Error('Restored archive checksum did not match the original session.')
+      try {
+        await copyPath(record.archivePath, checkpointPath)
+        await this.restoreArchiveRecord(record)
+        this.completeRecovery(recovery, {
+          undo: {
+            kind: 'restore-pre-restore-archive',
+            available: true,
+            label: 'Move restored session back to Vault',
+          },
+          metadata: {
+            archiveRecord: record,
+            archiveId: record.id,
+            checkpointPath,
+            restoredPath: record.originalPath,
+          },
+        })
+      } catch (error) {
+        await removePath(checkpointPath)
+        this.failRecovery(recovery, error)
+        throw error
       }
-      this.db.deleteArchiveRecord(archiveId)
-      await removePath(record.archivePath)
-      await this.rescan()
     })
   }
 
@@ -796,17 +929,45 @@ export class AppService {
       }
 
       const exportPath = path.join(exportRoot, `${basename}.${format === 'json' ? 'json' : 'md'}`)
-      await ensureDir(path.dirname(exportPath))
+      const recovery = this.startRecovery({
+        operation: 'export',
+        title: `Export ${session.title}`,
+        explanation:
+          'Writes a copy of the selected session to the configured export folder without changing the live session.',
+        targetId: session.id,
+        targetTitle: session.title,
+        source: session.source,
+        risk: 'low',
+        paths: [
+          { label: 'Source session', path: session.storagePath, role: 'source' },
+          { label: 'Export file', path: exportPath, role: 'export' },
+        ],
+        metadata: { format },
+      })
 
-      if (format === 'json') {
-        await writeJson(exportPath, session)
-      } else {
-        await import('node:fs/promises').then(({ writeFile }) =>
-          writeFile(exportPath, markdownForSession(session)),
-        )
+      try {
+        await ensureDir(path.dirname(exportPath))
+        if (format === 'json') {
+          await writeJson(exportPath, session)
+        } else {
+          await import('node:fs/promises').then(({ writeFile }) =>
+            writeFile(exportPath, markdownForSession(session)),
+          )
+        }
+        this.completeRecovery(recovery, {
+          undo: {
+            kind: 'remove-created-paths',
+            available: true,
+            label: 'Remove this export',
+          },
+          metadata: { format, exportPath, sessionId: session.id },
+        })
+        return exportPath
+      } catch (error) {
+        await removePath(exportPath)
+        this.failRecovery(recovery, error)
+        throw error
       }
-
-      return exportPath
     })
   }
 
@@ -820,13 +981,44 @@ export class AppService {
     return this.trackAsync('relay.exportUniversal', async () => {
       const sessionIdValue = validateIdentifier(sessionId, 'sessionId')
       const session = this.requireSession(sessionIdValue)
-      const document = await this.buildUniversalRelayDocument(sessionIdValue)
       const exportPath = path.join(
         this.requireSettings().exportDirectory,
         `${sanitizeName(session.title)}-${session.id}.universal-session.json`,
       )
-      await writeJson(exportPath, document)
-      return exportPath
+
+      const recovery = this.startRecovery({
+        operation: 'export',
+        title: `Export relay ${session.title}`,
+        explanation:
+          'Writes a universal relay JSON copy of the selected session for portable recovery or migration.',
+        targetId: session.id,
+        targetTitle: session.title,
+        source: session.source,
+        risk: 'low',
+        paths: [
+          { label: 'Source session', path: session.storagePath, role: 'source' },
+          { label: 'Universal relay export', path: exportPath, role: 'export' },
+        ],
+        metadata: { format: 'universal-json' },
+      })
+
+      try {
+        const document = await this.buildUniversalRelayDocument(sessionIdValue)
+        await writeJson(exportPath, document)
+        this.completeRecovery(recovery, {
+          undo: {
+            kind: 'remove-created-paths',
+            available: true,
+            label: 'Remove this relay export',
+          },
+          metadata: { format: 'universal-json', exportPath, sessionId: session.id },
+        })
+        return exportPath
+      } catch (error) {
+        await removePath(exportPath)
+        this.failRecovery(recovery, error)
+        throw error
+      }
     })
   }
 
@@ -861,47 +1053,131 @@ export class AppService {
       const candidates = await this.scanCleanup()
       const selected = candidates.filter((candidate) => ids.includes(candidate.id))
       const records: TrashRecord[] = []
+      if (selected.length === 0) return records
+
+      const recoveryPaths: RecoveryRecord['paths'] = selected.flatMap((candidate) =>
+        candidate.paths.map((candidatePath) => ({
+          label: `Cleanup source: ${candidate.title}`,
+          path: candidatePath,
+          role: 'source' as const,
+        })),
+      )
+      const recovery = this.startRecovery({
+        operation: 'trash',
+        title: `Move ${selected.length} cleanup item${selected.length === 1 ? '' : 's'} to Trash`,
+        explanation:
+          'Backs up any unprotected sessions first, then moves cleanup candidate files into the app Trash instead of permanently deleting them.',
+        risk: selected.some((candidate) => candidate.risk === 'high')
+          ? 'high'
+          : selected.some((candidate) => candidate.risk === 'medium')
+            ? 'medium'
+            : 'low',
+        paths: recoveryPaths,
+        metadata: { candidateIds: ids },
+      })
+      const movedPaths: Array<{ from: string; to: string }> = []
+      const createdTrashIds: string[] = []
+      const createdTrashPaths: string[] = []
 
       for (const candidate of selected) {
-        if (!candidate.backedUp && candidate.sessionIds.length > 0) {
-          for (const sessionId of candidate.sessionIds) {
-            await this.backupSession(sessionId)
+        try {
+          if (!candidate.backedUp && candidate.sessionIds.length > 0) {
+            for (const sessionId of candidate.sessionIds) {
+              await this.backupSession(sessionId)
+            }
           }
-        }
 
-        const deletedAt = new Date().toISOString()
-        const trashPath = path.join(
-          this.userDataPath,
-          'Trash',
-          `${sanitizeName(candidate.title)}-${candidate.id}`,
-        )
-        await ensureDir(trashPath)
+          const deletedAt = new Date().toISOString()
+          const trashPath = path.join(
+            this.userDataPath,
+            'Trash',
+            `${sanitizeName(candidate.title)}-${candidate.id}`,
+          )
+          await ensureDir(trashPath)
+          createdTrashPaths.push(trashPath)
+          recoveryPaths.push({
+            label: `App Trash: ${candidate.title}`,
+            path: trashPath,
+            role: 'trash',
+          })
 
-        const movedPaths: string[] = []
-        for (const originalPath of candidate.paths) {
-          if (!(await exists(originalPath))) continue
-          const target = path.join(trashPath, sanitizeName(path.basename(originalPath)))
-          await movePath(originalPath, target)
-          movedPaths.push(originalPath)
-        }
+          const originalPaths: string[] = []
+          for (const originalPath of candidate.paths) {
+            if (!(await exists(originalPath))) continue
+            const target = path.join(trashPath, sanitizeName(path.basename(originalPath)))
+            await movePath(originalPath, target)
+            movedPaths.push({ from: originalPath, to: target })
+            originalPaths.push(originalPath)
+            recoveryPaths.push({
+              label: `Moved copy: ${candidate.title}`,
+              path: target,
+              role: 'trash',
+            })
+          }
 
-        const record: TrashRecord = {
-          id: hashId([candidate.id, deletedAt]),
-          candidateId: candidate.id,
-          title: candidate.title,
-          source: candidate.source,
-          originalPaths: movedPaths,
-          trashPath,
-          sizeBytes: await pathSize(trashPath),
-          deletedAt,
-          risk: candidate.risk,
-          recoverable: true,
+          const record: TrashRecord = {
+            id: hashId([candidate.id, deletedAt]),
+            candidateId: candidate.id,
+            title: candidate.title,
+            source: candidate.source,
+            originalPaths,
+            trashPath,
+            sizeBytes: await pathSize(trashPath),
+            deletedAt,
+            risk: candidate.risk,
+            recoverable: true,
+          }
+          this.db.insertTrash(record)
+          createdTrashIds.push(record.id)
+          records.push(record)
+        } catch (error) {
+          for (const movedPath of movedPaths.slice().reverse()) {
+            if ((await exists(movedPath.to)) && !(await exists(movedPath.from))) {
+              await movePath(movedPath.to, movedPath.from)
+            }
+          }
+          createdTrashIds.forEach((trashId) => this.db.deleteTrashRecord(trashId))
+          for (const trashPath of createdTrashPaths) {
+            await removePath(trashPath)
+          }
+          this.failRecovery(recovery, error, {
+            paths: recoveryPaths,
+            metadata: { candidateIds: ids, movedPaths },
+          })
+          throw error
         }
-        this.db.insertTrash(record)
-        records.push(record)
       }
 
-      await this.rescan()
+      const completedRecovery = this.completeRecovery(recovery, {
+        paths: recoveryPaths,
+        undo: {
+          kind: 'restore-trash',
+          available: records.length > 0,
+          label: 'Restore moved cleanup items',
+          ...(records.length === 0 ? { reason: 'No files were moved to Trash.' } : {}),
+        },
+        metadata: {
+          candidateIds: ids,
+          trashIds: records.map((record) => record.id),
+          movedPaths,
+        },
+      })
+      try {
+        await this.rescan()
+      } catch (error) {
+        this.saveRecovery({
+          ...completedRecovery,
+          diagnostics: [
+            ...completedRecovery.diagnostics,
+            {
+              level: 'warning',
+              code: 'rescan.failed',
+              message: errorMessage(error),
+            },
+          ],
+        })
+        throw error
+      }
       return records
     })
   }
@@ -911,12 +1187,39 @@ export class AppService {
       const record = this.db.getTrashRecord(validateIdentifier(trashId, 'trashId'))
       if (!record) throw new Error(`Trash item not found: ${trashId}`)
 
-      for (const originalPath of record.originalPaths) {
-        const source = path.join(record.trashPath, sanitizeName(path.basename(originalPath)))
-        if (await exists(source)) await movePath(source, originalPath)
+      const recovery = this.startRecovery({
+        operation: 'restore',
+        title: `Restore ${record.title}`,
+        explanation:
+          'Moves an item from app Trash back to its original paths and records enough state to move it back to Trash if needed.',
+        targetId: record.id,
+        targetTitle: record.title,
+        source: record.source,
+        risk: record.risk,
+        paths: [
+          { label: 'App Trash folder', path: record.trashPath, role: 'trash' },
+          ...record.originalPaths.map((originalPath) => ({
+            label: 'Original restore path',
+            path: originalPath,
+            role: 'restored' as const,
+          })),
+        ],
+      })
+
+      try {
+        await this.restoreTrashRecord(record)
+        this.completeRecovery(recovery, {
+          undo: {
+            kind: 'restore-pre-restore-trash',
+            available: true,
+            label: 'Move restored item back to Trash',
+          },
+          metadata: { trashRecord: record, trashId: record.id },
+        })
+      } catch (error) {
+        this.failRecovery(recovery, error)
+        throw error
       }
-      this.db.deleteTrashRecord(trashId)
-      await this.rescan()
     })
   }
 
@@ -925,19 +1228,143 @@ export class AppService {
       const retentionMs = this.requireSettings().trashRetentionDays * oneDayMs
       const now = Date.now()
       const purged: TrashRecord[] = []
-
-      for (const record of this.db.getTrash()) {
+      const expired = this.db.getTrash().filter((record) => {
         const deletedAt = new Date(record.deletedAt).getTime()
-        if (Number.isNaN(deletedAt)) continue
-        if (now - deletedAt <= retentionMs) continue
+        return !Number.isNaN(deletedAt) && now - deletedAt > retentionMs
+      })
+      if (expired.length === 0) return purged
 
-        await removePath(record.trashPath)
-        this.db.deleteTrashRecord(record.id)
-        purged.push(record)
+      const recovery = this.startRecovery({
+        operation: 'purge-trash',
+        title: `Purge ${expired.length} expired Trash item${expired.length === 1 ? '' : 's'}`,
+        explanation:
+          'Moves expired app Trash entries out of the active Trash list and keeps recovery checkpoints for paths that still exist.',
+        risk: 'high',
+        paths: expired.map((record) => ({
+          label: `Expired Trash: ${record.title}`,
+          path: record.trashPath,
+          role: 'trash' as const,
+        })),
+        metadata: { trashIds: expired.map((record) => record.id) },
+      })
+      const checkpoints: Array<{ record: TrashRecord; checkpointPath: string }> = []
+      const deletedRecords: TrashRecord[] = []
+
+      try {
+        for (const record of expired) {
+          const checkpointPath = path.join(
+            this.userDataPath,
+            'Recovery',
+            'purge-trash',
+            recovery.id,
+            record.id,
+          )
+          if (await exists(record.trashPath)) {
+            await copyPath(record.trashPath, checkpointPath)
+            checkpoints.push({ record, checkpointPath })
+          }
+          await removePath(record.trashPath)
+          this.db.deleteTrashRecord(record.id)
+          deletedRecords.push(record)
+          purged.push(record)
+        }
+
+        this.completeRecovery(recovery, {
+          paths: [
+            ...recovery.paths,
+            ...checkpoints.map((checkpoint) => ({
+              label: `Purge checkpoint: ${checkpoint.record.title}`,
+              path: checkpoint.checkpointPath,
+              role: 'checkpoint' as const,
+            })),
+          ],
+          undo: {
+            kind: 'restore-purged-trash',
+            available: checkpoints.length > 0,
+            label: 'Recover purged items to app Trash',
+            ...(checkpoints.length === 0
+              ? { reason: 'No on-disk Trash paths existed when purge ran.' }
+              : {}),
+          },
+          metadata: {
+            trashIds: expired.map((record) => record.id),
+            purgedTrash: checkpoints,
+          },
+        })
+      } catch (error) {
+        for (const { record, checkpointPath } of checkpoints) {
+          if (!(await exists(record.trashPath)) && (await exists(checkpointPath))) {
+            await copyPath(checkpointPath, record.trashPath)
+          }
+        }
+        deletedRecords.forEach((record) => this.db.insertTrash(record))
+        this.failRecovery(recovery, error, {
+          metadata: {
+            trashIds: expired.map((record) => record.id),
+            purgedTrash: checkpoints,
+          },
+        })
+        throw error
       }
-
       return purged
     })
+  }
+
+  getRecoveryRecords(): RecoveryRecord[] {
+    return this.db.getRecoveryRecords()
+  }
+
+  async diagnoseRecovery(recoveryId: string): Promise<RecoveryRecord> {
+    const record = this.requireRecoveryRecord(validateIdentifier(recoveryId, 'recoveryId'))
+    return this.saveRecovery({
+      ...record,
+      diagnostics: await this.buildRecoveryDiagnostics(record),
+    })
+  }
+
+  async undoRecovery(recoveryId: string): Promise<RecoveryRecord> {
+    const record = this.requireRecoveryRecord(validateIdentifier(recoveryId, 'recoveryId'))
+    if (record.status === 'undone') throw new Error(`Recovery already undone: ${recoveryId}`)
+    if (!record.undo.available || record.undo.kind === 'none') {
+      throw new Error(record.undo.reason ?? `Recovery cannot be undone: ${recoveryId}`)
+    }
+
+    const running = this.saveRecovery({
+      ...record,
+      status: 'running',
+      steps: [...record.steps, recoveryStep(`Undo ${record.undo.label}`, 'pending')],
+    })
+
+    try {
+      await this.performRecoveryUndo(running)
+      const undone = {
+        ...running,
+        status: 'undone' as const,
+        finishedAt: new Date().toISOString(),
+        steps: [...running.steps, recoveryStep(`Undo ${record.undo.label}`, 'completed')],
+      }
+      return this.saveRecovery({
+        ...undone,
+        diagnostics: await this.buildRecoveryDiagnostics(undone),
+      })
+    } catch (error) {
+      this.saveRecovery({
+        ...running,
+        status: 'failed',
+        finishedAt: new Date().toISOString(),
+        error: errorMessage(error),
+        steps: [...running.steps, recoveryStep(`Undo ${record.undo.label}`, 'failed')],
+        diagnostics: [
+          ...running.diagnostics,
+          {
+            level: 'error',
+            code: 'undo.failed',
+            message: errorMessage(error),
+          },
+        ],
+      })
+      throw error
+    }
   }
 
   async getSkills(): Promise<SkillsSnapshot> {
@@ -974,6 +1401,283 @@ export class AppService {
     return this.trackAsync('shell.openPath', async () => {
       await this.openPathHandler(normalizePath(targetPath, 'targetPath'))
     })
+  }
+
+  private startRecovery(input: RecoveryStart): RecoveryRecord {
+    const startedAt = new Date().toISOString()
+    const record: RecoveryRecord = {
+      id: hashId([
+        'recovery',
+        input.operation,
+        input.targetId,
+        input.title,
+        startedAt,
+        Math.random(),
+      ]),
+      operation: input.operation,
+      status: 'running',
+      title: input.title,
+      explanation: input.explanation,
+      startedAt,
+      targetId: input.targetId,
+      targetTitle: input.targetTitle,
+      source: input.source,
+      risk: input.risk,
+      steps: input.steps ?? [recoveryStep('Started', 'completed')],
+      paths: input.paths ?? [],
+      undo: input.undo ?? {
+        kind: 'none',
+        available: false,
+        label: 'No undo available',
+        reason: 'This operation has not completed yet.',
+      },
+      diagnostics: [],
+      metadata: input.metadata ?? {},
+    }
+    return this.saveRecovery(record)
+  }
+
+  private completeRecovery(
+    record: RecoveryRecord,
+    patch: Partial<Pick<RecoveryRecord, 'paths' | 'metadata' | 'undo' | 'steps'>> = {},
+  ): RecoveryRecord {
+    return this.saveRecovery({
+      ...record,
+      ...patch,
+      status: 'completed',
+      finishedAt: new Date().toISOString(),
+      steps: [...(patch.steps ?? record.steps), recoveryStep('Completed', 'completed')],
+    })
+  }
+
+  private failRecovery(
+    record: RecoveryRecord,
+    error: unknown,
+    patch: Partial<Pick<RecoveryRecord, 'paths' | 'metadata' | 'steps'>> = {},
+  ): void {
+    this.saveRecovery({
+      ...record,
+      ...patch,
+      status: 'failed',
+      finishedAt: new Date().toISOString(),
+      error: errorMessage(error),
+      steps: [
+        ...(patch.steps ?? record.steps),
+        recoveryStep('Failed', 'failed', errorMessage(error)),
+      ],
+      diagnostics: [
+        ...record.diagnostics,
+        {
+          level: 'error',
+          code: 'operation.failed',
+          message: errorMessage(error),
+        },
+      ],
+    })
+  }
+
+  private saveRecovery(record: RecoveryRecord): RecoveryRecord {
+    this.db.upsertRecovery(record)
+    return record
+  }
+
+  private requireRecoveryRecord(recoveryId: string): RecoveryRecord {
+    const record = this.db.getRecoveryRecord(recoveryId)
+    if (!record) throw new Error(`Recovery record not found: ${recoveryId}`)
+    return record
+  }
+
+  private async buildRecoveryDiagnostics(record: RecoveryRecord): Promise<RecoveryDiagnostic[]> {
+    const diagnostics: RecoveryDiagnostic[] = []
+
+    for (const item of record.paths) {
+      if (await exists(item.path)) {
+        let sizeLabel: string
+        try {
+          sizeLabel = ` (${await pathSize(item.path)} bytes)`
+        } catch {
+          sizeLabel = ''
+        }
+        diagnostics.push({
+          level: 'info',
+          code: 'path.exists',
+          message: `${item.label} exists${sizeLabel}.`,
+          path: item.path,
+        })
+      } else {
+        diagnostics.push({
+          level: item.optional ? 'info' : 'warning',
+          code: 'path.missing',
+          message: `${item.label} is missing.`,
+          path: item.path,
+        })
+      }
+    }
+
+    if (record.error) {
+      diagnostics.push({
+        level: 'error',
+        code: 'operation.error',
+        message: record.error,
+      })
+    }
+
+    diagnostics.push({
+      level: record.undo.available ? 'info' : 'warning',
+      code: record.undo.available ? 'undo.available' : 'undo.unavailable',
+      message: record.undo.available
+        ? `Undo available: ${record.undo.label}.`
+        : (record.undo.reason ?? 'Undo is not available for this operation.'),
+    })
+
+    return diagnostics
+  }
+
+  private metadataString(record: RecoveryRecord, key: string): string {
+    const value = record.metadata[key]
+    if (typeof value !== 'string' || !value) {
+      throw new Error(`Recovery metadata is missing ${key}.`)
+    }
+    return value
+  }
+
+  private metadataRecord(record: RecoveryRecord, key: string): Record<string, unknown> {
+    const value = record.metadata[key]
+    if (!isRecord(value)) throw new Error(`Recovery metadata is missing ${key}.`)
+    return value
+  }
+
+  private async performRecoveryUndo(record: RecoveryRecord): Promise<void> {
+    switch (record.undo.kind) {
+      case 'remove-created-paths': {
+        const backupId =
+          typeof record.metadata.backupId === 'string' ? record.metadata.backupId : undefined
+        const removableRoles = new Set(['backup', 'export', 'destination', 'restored'])
+        for (const item of record.paths.filter((pathItem) => removableRoles.has(pathItem.role))) {
+          await removePath(item.path)
+        }
+        if (backupId) this.db.deleteBackupRecord(backupId)
+        return
+      }
+      case 'restore-trash': {
+        const trashIds = Array.isArray(record.metadata.trashIds)
+          ? record.metadata.trashIds.filter((value): value is string => typeof value === 'string')
+          : [this.metadataString(record, 'trashId')]
+        let restored = 0
+        for (const trashId of trashIds) {
+          const trashRecord = this.db.getTrashRecord(trashId)
+          if (!trashRecord) continue
+          await this.restoreTrashRecord(trashRecord, false)
+          restored += 1
+        }
+        if (restored === 0) throw new Error('No matching Trash records are available to restore.')
+        await this.rescan()
+        return
+      }
+      case 'restore-archive': {
+        const archive = this.db.getArchiveRecord(this.metadataString(record, 'archiveId'))
+        if (!archive) throw new Error('No matching archive record is available to restore.')
+        await this.restoreArchiveRecord(archive)
+        return
+      }
+      case 'restore-purged-trash': {
+        const purgedTrash = record.metadata.purgedTrash
+        if (!Array.isArray(purgedTrash)) {
+          throw new Error('Recovery metadata is missing purged Trash records.')
+        }
+        for (const item of purgedTrash) {
+          if (
+            !isRecord(item) ||
+            !isRecord(item.record) ||
+            typeof item.checkpointPath !== 'string'
+          ) {
+            throw new Error('Recovery metadata has an invalid purged Trash checkpoint.')
+          }
+          const trashRecord = item.record as TrashRecord
+          if (await exists(trashRecord.trashPath)) {
+            throw new Error(
+              `Cannot recover purged Trash because path exists: ${trashRecord.trashPath}`,
+            )
+          }
+          await copyPath(item.checkpointPath, trashRecord.trashPath)
+          this.db.insertTrash(trashRecord)
+          await removePath(item.checkpointPath)
+        }
+        return
+      }
+      case 'restore-pre-restore-archive': {
+        const archiveRecord = this.metadataRecord(record, 'archiveRecord') as ArchiveRecord
+        const checkpointPath = this.metadataString(record, 'checkpointPath')
+        if (await exists(archiveRecord.originalPath)) {
+          const restoredHash = await hashFile(archiveRecord.originalPath)
+          if (restoredHash !== archiveRecord.contentHash) {
+            throw new Error(
+              `Cannot undo restore because the restored file changed: ${archiveRecord.originalPath}`,
+            )
+          }
+          await removePath(archiveRecord.originalPath)
+        }
+        if (await exists(archiveRecord.archivePath)) {
+          throw new Error(
+            `Cannot undo restore because archive path exists: ${archiveRecord.archivePath}`,
+          )
+        }
+        await copyPath(checkpointPath, archiveRecord.archivePath)
+        this.db.insertArchive(archiveRecord)
+        await removePath(checkpointPath)
+        await this.rescan()
+        return
+      }
+      case 'restore-pre-restore-trash': {
+        const trashRecord = this.metadataRecord(record, 'trashRecord') as TrashRecord
+        if (await exists(trashRecord.trashPath)) {
+          throw new Error(`Cannot undo restore because Trash path exists: ${trashRecord.trashPath}`)
+        }
+        await ensureDir(trashRecord.trashPath)
+        for (const originalPath of trashRecord.originalPaths) {
+          const target = path.join(trashRecord.trashPath, sanitizeName(path.basename(originalPath)))
+          if (await exists(originalPath)) await movePath(originalPath, target)
+        }
+        this.db.insertTrash(trashRecord)
+        await this.rescan()
+        return
+      }
+      case 'none':
+        throw new Error('Recovery has no undo action.')
+      default:
+        throw new Error(`Unsupported recovery undo action: ${record.undo.kind}`)
+    }
+  }
+
+  private async restoreArchiveRecord(record: ArchiveRecord): Promise<void> {
+    if (await exists(record.originalPath)) {
+      throw new Error(
+        `Cannot restore archive because the original path already exists: ${record.originalPath}`,
+      )
+    }
+
+    await decompressFileBrotli(record.archivePath, record.originalPath)
+    const restoredHash = await hashFile(record.originalPath)
+    if (restoredHash !== record.contentHash) {
+      await removePath(record.originalPath)
+      throw new Error('Restored archive checksum did not match the original session.')
+    }
+    this.db.deleteArchiveRecord(record.id)
+    await removePath(record.archivePath)
+    await this.rescan()
+  }
+
+  private async restoreTrashRecord(record: TrashRecord, rescan = true): Promise<void> {
+    for (const originalPath of record.originalPaths) {
+      const source = path.join(record.trashPath, sanitizeName(path.basename(originalPath)))
+      if (!(await exists(source))) continue
+      if (await exists(originalPath)) {
+        throw new Error(`Cannot restore Trash because the original path exists: ${originalPath}`)
+      }
+      await movePath(source, originalPath)
+    }
+    this.db.deleteTrashRecord(record.id)
+    if (rescan) await this.rescan()
   }
 
   private defaultSettings(): AppSettings {

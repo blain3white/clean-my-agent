@@ -139,6 +139,84 @@ export type TrashRecord = {
   recoverable: boolean
 }
 
+export type RecoveryOperation =
+  | 'backup'
+  | 'archive'
+  | 'restore'
+  | 'export'
+  | 'trash'
+  | 'purge-trash'
+
+export type RecoveryStatus = 'running' | 'completed' | 'failed' | 'undone'
+
+export type RecoveryStepStatus = 'pending' | 'completed' | 'failed' | 'skipped'
+
+export type RecoveryStep = {
+  label: string
+  status: RecoveryStepStatus
+  at?: string
+  detail?: string
+}
+
+export type RecoveryPathRole =
+  | 'source'
+  | 'destination'
+  | 'checkpoint'
+  | 'backup'
+  | 'export'
+  | 'trash'
+  | 'restored'
+
+export type RecoveryPath = {
+  label: string
+  path: string
+  role: RecoveryPathRole
+  optional?: boolean
+}
+
+export type RecoveryDiagnostic = {
+  level: 'info' | 'warning' | 'error'
+  code: string
+  message: string
+  path?: string
+}
+
+export type RecoveryUndoKind =
+  | 'none'
+  | 'remove-created-paths'
+  | 'restore-trash'
+  | 'restore-archive'
+  | 'restore-purged-trash'
+  | 'restore-pre-restore-archive'
+  | 'restore-pre-restore-trash'
+
+export type RecoveryUndo = {
+  kind: RecoveryUndoKind
+  available: boolean
+  label: string
+  reason?: string
+}
+
+export type RecoveryRecord = {
+  id: string
+  operation: RecoveryOperation
+  status: RecoveryStatus
+  title: string
+  explanation: string
+  startedAt: string
+  finishedAt?: string
+  targetId?: string
+  targetTitle?: string
+  source?: AgentSource
+  risk?: RiskLevel
+  steps: RecoveryStep[]
+  paths: RecoveryPath[]
+  undo: RecoveryUndo
+  diagnostics: RecoveryDiagnostic[]
+  error?: string
+  metadata: Record<string, unknown>
+}
+
 export type UsagePoint = {
   date: string
   codex: number
@@ -177,6 +255,7 @@ export type DashboardSnapshot = {
   archives: ArchiveRecord[]
   backups: BackupRecord[]
   trash: TrashRecord[]
+  recovery: RecoveryRecord[]
   usage: UsagePoint[]
   storage: StorageSlice[]
 }
@@ -403,6 +482,9 @@ export type CleanMyAgentApi = {
   moveCleanupToTrash: (candidateIds: string[]) => Promise<TrashRecord[]>
   purgeExpiredTrash: () => Promise<TrashRecord[]>
   restoreTrash: (trashId: string) => Promise<void>
+  getRecoveryRecords: () => Promise<RecoveryRecord[]>
+  diagnoseRecovery: (recoveryId: string) => Promise<RecoveryRecord>
+  undoRecovery: (recoveryId: string) => Promise<RecoveryRecord>
   exportUniversalRelay: (sessionId: string) => Promise<string>
   getSettings: () => Promise<AppSettings>
   updateSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>

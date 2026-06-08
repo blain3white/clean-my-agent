@@ -10,6 +10,7 @@ import {
   type CleanupCandidate,
   type DashboardSnapshot,
   type ExportFormat,
+  type RecoveryRecord,
   type UniversalRelayDocument,
 } from '@/shared/types'
 import { loadSessionDetail } from './session-detail-api'
@@ -58,6 +59,8 @@ type DashboardState = {
   moveCleanupToTrash: (candidateIds: string[]) => Promise<void>
   restoreTrash: (trashId: string) => Promise<void>
   purgeExpiredTrash: () => Promise<void>
+  diagnoseRecovery: (recoveryId: string) => Promise<RecoveryRecord | undefined>
+  undoRecovery: (recoveryId: string) => Promise<void>
 }
 
 const agentNames: Record<AgentSource, string> = {
@@ -147,6 +150,7 @@ const emptySnapshot = (): DashboardSnapshot => ({
   archives: [],
   backups: [],
   trash: [],
+  recovery: [],
   usage: [],
   storage: [],
 })
@@ -722,6 +726,41 @@ export function useDashboard(): DashboardState {
         } catch (error) {
           console.error(error)
           toast.error(t('toast.trashPurgeError'))
+        }
+      },
+      diagnoseRecovery: async (recoveryId: string) => {
+        if (!window.cleanMyAgent) {
+          toast.info(t('toast.recoveryDesktopOnly'))
+          return undefined
+        }
+
+        try {
+          const record = await window.cleanMyAgent.diagnoseRecovery(recoveryId)
+          setSnapshot((current) => ({
+            ...current,
+            recovery: current.recovery.map((item) => (item.id === record.id ? record : item)),
+          }))
+          toast.success(t('toast.recoveryDiagnosed'))
+          return record
+        } catch (error) {
+          console.error(error)
+          toast.error(t('toast.recoveryDiagnoseError'))
+          return undefined
+        }
+      },
+      undoRecovery: async (recoveryId: string) => {
+        if (!window.cleanMyAgent) {
+          toast.info(t('toast.recoveryDesktopOnly'))
+          return
+        }
+
+        try {
+          await window.cleanMyAgent.undoRecovery(recoveryId)
+          toast.success(t('toast.recoveryUndoComplete'))
+          await load(true)
+        } catch (error) {
+          console.error(error)
+          toast.error(t('toast.recoveryUndoError'))
         }
       },
     }),

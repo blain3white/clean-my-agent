@@ -27,7 +27,7 @@ import { trashPrimaryPath, usageTimezoneSelectOptions } from '@/features/setting
 import { agentLabel, formatBytes } from '@/lib/format'
 import { languageOptions } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n-context'
-import type { AppSettings, ThemePreference } from '@/shared/types'
+import type { AppSettings, RecoveryRecord, ThemePreference } from '@/shared/types'
 import type { TranslationKey } from '@/lib/i18n'
 import type { DashboardIssue } from '@/hooks/use-dashboard'
 import {
@@ -60,12 +60,28 @@ type SettingsViewProps = {
   onRescan: () => Promise<void>
   onRestoreTrash: (trashId: string) => Promise<void>
   onPurgeExpiredTrash: () => Promise<void>
+  onDiagnoseRecovery: (recoveryId: string) => Promise<RecoveryRecord | undefined>
+  onUndoRecovery: (recoveryId: string) => Promise<void>
 }
 const themeOptions: Array<{ value: ThemePreference; labelKey: TranslationKey }> = [
   { value: 'system', labelKey: 'theme.system' },
   { value: 'light', labelKey: 'theme.light' },
   { value: 'dark', labelKey: 'theme.dark' },
 ]
+const recoveryOperationKeys: Record<RecoveryRecord['operation'], TranslationKey> = {
+  backup: 'recovery.operation.backup',
+  archive: 'recovery.operation.archive',
+  restore: 'recovery.operation.restore',
+  export: 'recovery.operation.export',
+  trash: 'recovery.operation.trash',
+  'purge-trash': 'recovery.operation.purge-trash',
+}
+const recoveryStatusKeys: Record<RecoveryRecord['status'], TranslationKey> = {
+  running: 'recovery.status.running',
+  completed: 'recovery.status.completed',
+  failed: 'recovery.status.failed',
+  undone: 'recovery.status.undone',
+}
 function latestScanValue(snapshot: DashboardSnapshot): string | undefined {
   const latest = snapshot.agents
     .map((agent) => agent.lastScannedAt)
@@ -289,6 +305,13 @@ function SettingsIssueBanner({
   )
 }
 
+function recoveryStatusTone(status: RecoveryRecord['status']): string {
+  if (status === 'failed') return 'text-red-300'
+  if (status === 'undone') return 'text-amber-300'
+  if (status === 'running') return 'text-blue-300'
+  return 'text-emerald-300'
+}
+
 export function SettingsView({
   snapshot,
   language,
@@ -309,6 +332,8 @@ export function SettingsView({
   onRescan,
   onRestoreTrash,
   onPurgeExpiredTrash,
+  onDiagnoseRecovery,
+  onUndoRecovery,
 }: SettingsViewProps) {
   const { formatRelative, t } = useI18n()
   const scanLabel = useMemo(
@@ -357,6 +382,7 @@ export function SettingsView({
   }))
   const excludedCount = settings.excludedFolders.length
   const customProviderCount = settings.scanRoots.custom?.length ?? 0
+  const recentRecovery = snapshot.recovery.slice(0, 5)
 
   const addCustomProvider = async () => {
     const folders = await onChooseFolders()
@@ -780,6 +806,71 @@ export function SettingsView({
                 </Button>
               </div>
             ))
+          )}
+        </SettingsPanel>
+      </SettingsSection>
+
+      <SettingsSection title={t('settings.recovery')}>
+        <SettingsPanel>
+          {recentRecovery.length === 0 ? (
+            <SettingsRow
+              icon={ShieldCheck}
+              title={t('settings.recoveryEmpty')}
+              description={t('settings.recoveryEmptyDescription')}
+            />
+          ) : (
+            recentRecovery.map((record) => {
+              const primaryDiagnostic =
+                record.diagnostics.find((item) => item.level === 'error') ??
+                record.diagnostics.find((item) => item.level === 'warning') ??
+                record.diagnostics[0]
+              return (
+                <div
+                  key={record.id}
+                  className="settings-row flex min-h-[104px] items-center gap-4 border-b px-5 py-4 last:border-b-0"
+                >
+                  <div className="settings-row-icon grid size-6 shrink-0 place-items-center">
+                    <ShieldCheck className="size-[19px]" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="settings-row-title truncate text-[15px] font-semibold">
+                      {record.title}
+                    </div>
+                    <div className="settings-row-description mt-1 flex flex-wrap items-center gap-2 text-sm">
+                      <span>{t(recoveryOperationKeys[record.operation])}</span>
+                      <span className="settings-row-separator">•</span>
+                      <span className={recoveryStatusTone(record.status)}>
+                        {t(recoveryStatusKeys[record.status])}
+                      </span>
+                      <span className="settings-row-separator">•</span>
+                      <span>{formatRelative(record.startedAt)}</span>
+                    </div>
+                    <div className="settings-row-description mt-1 line-clamp-2 text-xs">
+                      {primaryDiagnostic?.message ?? record.explanation}
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void onDiagnoseRecovery(record.id)}
+                    className="settings-ghost-button"
+                  >
+                    <ShieldCheck className="mr-2 size-4" />
+                    {t('settings.diagnoseRecoveryAction')}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!record.undo.available || record.status === 'undone'}
+                    onClick={() => void onUndoRecovery(record.id)}
+                    className="settings-outline-button"
+                  >
+                    <RefreshCcw className="mr-2 size-4" />
+                    {t('settings.undoRecoveryAction')}
+                  </Button>
+                </div>
+              )
+            })
           )}
         </SettingsPanel>
       </SettingsSection>

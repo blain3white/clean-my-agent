@@ -1458,6 +1458,127 @@ describe('purgeExpiredTrash', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Recovery records, diagnostics, and undo
+// ---------------------------------------------------------------------------
+
+describe('recovery system', () => {
+  it('records and diagnoses backup operations, then undoes the created backup', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await writeJsonlSession(fixtureRoot, 'codex')
+    const snapshot = await service.rescan()
+    const session = snapshot.sessions.find((s) => s.source === 'codex')
+    assert.ok(session)
+
+    const backup = await service.backupSession(session.id)
+    const recovery = service.getRecoveryRecords().find((record) => record.operation === 'backup')
+    assert.ok(recovery)
+    expect(recovery.status).toBe('completed')
+    expect(recovery.explanation).toContain('Copies')
+    expect(recovery.undo.available).toBe(true)
+
+    const diagnosed = await service.diagnoseRecovery(recovery.id)
+    expect(diagnosed.diagnostics.some((item) => item.code === 'path.exists')).toBe(true)
+
+    await service.undoRecovery(recovery.id)
+    await expect(stat(backup.backupPath)).rejects.toThrow()
+    expect((await service.getSnapshot(false)).backups.find((item) => item.id === backup.id)).toBe(
+      undefined,
+    )
+    expect(service.getRecoveryRecords().find((record) => record.id === recovery.id)?.status).toBe(
+      'undone',
+    )
+  })
+
+  it('records and undoes export operations by removing the exported file', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await writeJsonlSession(fixtureRoot, 'codex')
+    const snapshot = await service.rescan()
+    const session = snapshot.sessions.find((s) => s.source === 'codex')
+    assert.ok(session)
+
+    const exportPath = await service.exportSession(session.id, 'markdown')
+    await expect(stat(exportPath)).resolves.toBeDefined()
+    const recovery = service.getRecoveryRecords().find((record) => record.operation === 'export')
+    assert.ok(recovery)
+
+    await service.undoRecovery(recovery.id)
+    await expect(stat(exportPath)).rejects.toThrow()
+  })
+
+  it('undoes a Trash move by restoring all moved files', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ cleanupRetentionDays: 0 })
+    const filePath = await writeJsonlSession(fixtureRoot, 'codex')
+    await writeJsonlSession(fixtureRoot, 'claude', { filename: 'claude-session.jsonl' })
+    await service.rescan()
+    const candidate = (await service.scanCleanup()).find((item) => item.source === 'codex')
+    assert.ok(candidate)
+
+    const [trashRecord] = await service.moveCleanupToTrash([candidate.id])
+    assert.ok(trashRecord)
+    await expect(stat(filePath)).rejects.toThrow()
+    const recovery = service
+      .getRecoveryRecords()
+      .find((record) => record.operation === 'trash' && record.metadata.trashIds)
+    assert.ok(recovery)
+
+    await service.undoRecovery(recovery.id)
+    expect(await readFile(filePath, 'utf8')).toContain('rare migration needle')
+    expect(
+      (await service.getSnapshot(true)).trash.find((record) => record.id === trashRecord.id),
+    ).toBe(undefined)
+  }, 20_000)
+
+  it('keeps purge checkpoints recoverable through undo', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ cleanupRetentionDays: 0, trashRetentionDays: 1 })
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await writeJsonlSession(fixtureRoot, 'claude', { filename: 'claude-session.jsonl' })
+    await service.rescan()
+    const candidate = (await service.scanCleanup()).find((item) => item.source === 'codex')
+    assert.ok(candidate)
+
+    const [trashRecord] = await service.moveCleanupToTrash([candidate.id])
+    assert.ok(trashRecord)
+    const expiredRecord = {
+      ...trashRecord,
+      deletedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    }
+    service['db'].insertTrash(expiredRecord)
+
+    const purged = await service.purgeExpiredTrash()
+    expect(purged.map((record) => record.id)).toEqual([trashRecord.id])
+    await expect(stat(trashRecord.trashPath)).rejects.toThrow()
+    const recovery = service
+      .getRecoveryRecords()
+      .find((record) => record.operation === 'purge-trash')
+    assert.ok(recovery)
+    expect(recovery.undo.available).toBe(true)
+
+    await service.undoRecovery(recovery.id)
+    await expect(stat(trashRecord.trashPath)).resolves.toBeDefined()
+    expect(
+      (await service.getSnapshot(false)).trash.find((record) => record.id === trashRecord.id),
+    ).toBeDefined()
+  }, 20_000)
+
+  it('records failed export diagnostics when the source session cannot be decoded', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const filePath = await writeJsonlSession(fixtureRoot, 'codex')
+    const snapshot = await service.rescan()
+    const session = snapshot.sessions.find((s) => s.source === 'codex')
+    assert.ok(session)
+    await rm(filePath)
+
+    await expect(service.exportUniversalRelay(session.id)).rejects.toThrow()
+    const recovery = service.getRecoveryRecords().find((record) => record.operation === 'export')
+    assert.ok(recovery)
+    expect(recovery.status).toBe('failed')
+    expect(recovery.diagnostics.some((item) => item.level === 'error')).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // skills scanning
 // ---------------------------------------------------------------------------
 

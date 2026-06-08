@@ -456,6 +456,7 @@ export const mockSnapshot: DashboardSnapshot = {
       session,
     })),
   trash: [],
+  recovery: [],
   usage,
   storage: [
     { source: 'claude', label: 'Claude Code', sizeBytes: 19.8 * GB, sessions: 38 },
