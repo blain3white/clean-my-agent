@@ -2829,6 +2829,19 @@ select option {
   place-items: center;
 }
 
+.skill-checkbox {
+  position: relative;
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease;
+}
+
+.skill-checkbox-mark {
+  grid-area: 1 / 1;
+  transition: opacity 180ms ease;
+}
+
 .skills-empty-state {
   display: grid;
   min-height: 170px;
@@ -2939,26 +2952,6 @@ select option {
   color: white;
 }
 
-.skills-detail-action {
-  height: 40px;
-  justify-content: center;
-  border-color: rgb(255 255 255 / 12%);
-  background: rgb(255 255 255 / 3%);
-  color: rgb(255 255 255 / 86%);
-}
-
-.skills-detail-action:hover {
-  background: rgb(255 255 255 / 8%);
-  color: white;
-}
-
-.skills-detail-action:disabled,
-.skills-detail-action:disabled:hover {
-  border-color: rgb(255 255 255 / 8%);
-  background: rgb(255 255 255 / 2%);
-  color: rgb(255 255 255 / 32%);
-}
-
 .skills-detail-drawer {
   border-left: 1px solid rgb(255 255 255 / 12%);
   background:
@@ -2970,6 +2963,7 @@ select option {
 }
 
 .skills-content-preview {
+  min-height: 220px;
   max-height: 360px;
   overflow: auto;
   white-space: pre-wrap;
@@ -2979,8 +2973,16 @@ select option {
   background: rgb(0 0 0 / 22%);
   padding: 14px;
   color: rgb(255 255 255 / 66%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 12px;
   line-height: 1.65;
+}
+
+.skills-content-empty {
+  display: grid;
+  place-items: center;
+  color: rgb(255 255 255 / 38%);
+  text-align: center;
 }
 
 .theme-light {

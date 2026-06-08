@@ -1,7 +1,7 @@
 import {
   Archive,
   ArrowRightLeft,
-  CheckCircle2,
+  Check,
   Circle,
   Copy,
   Database,
@@ -168,17 +168,14 @@ function StatusPill({ status }: { status: SkillStatus }) {
 function SkillCheckbox({ checked, mixed = false }: { checked: boolean; mixed?: boolean }) {
   return (
     <span
-      className={`grid size-[18px] place-items-center rounded-[4px] border ${
+      className={`skill-checkbox grid size-[18px] place-items-center rounded-[4px] border ${
         checked || mixed
           ? 'border-emerald-300/50 bg-emerald-400/80 text-[#061411]'
           : 'border-white/22 bg-white/[0.02]'
       }`}
     >
-      {checked ? (
-        <CheckCircle2 className="size-3.5" />
-      ) : mixed ? (
-        <Minus className="size-3.5" />
-      ) : null}
+      <Check className={`skill-checkbox-mark size-3.5 ${checked ? 'opacity-100' : 'opacity-0'}`} />
+      <Minus className={`skill-checkbox-mark size-3.5 ${mixed ? 'opacity-100' : 'opacity-0'}`} />
     </span>
   )
 }
@@ -282,13 +279,10 @@ function SkillRow({
         </button>
       </td>
       <td className="w-[310px] py-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <SkillIcon skill={skill} />
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium text-white">{skill.name}</div>
-            <div className="mt-0.5 max-w-[230px] truncate text-[11px] text-white/42">
-              {skill.description}
-            </div>
+        <div className="min-w-0 pr-5">
+          <div className="truncate text-sm font-medium text-white">{skill.name}</div>
+          <div className="mt-0.5 max-w-[300px] truncate text-[11px] text-white/42">
+            {skill.description}
           </div>
         </div>
       </td>
@@ -328,6 +322,21 @@ function DetailField({ label, value }: { label: string; value: string | number }
       <dd className="text-white/62">{value}</dd>
     </div>
   )
+}
+
+function SkillContentPreview({ content }: { content: string }) {
+  const { t } = useI18n()
+  const preview = content.trim()
+
+  if (!preview) {
+    return (
+      <div className="skills-content-preview skills-content-empty mt-3">
+        {t('skills.contentUnavailable')}
+      </div>
+    )
+  }
+
+  return <pre className="skills-content-preview mt-3">{preview}</pre>
 }
 
 function formatAbsoluteDate(value: string, locale: string) {
@@ -381,7 +390,7 @@ function SkillsDetailDrawer({
 
               <section className="mt-5 border-t border-white/8 pt-4">
                 <h3 className="text-sm font-semibold text-white">{t('skills.contentPreview')}</h3>
-                <pre className="skills-content-preview mt-3">{skill.content}</pre>
+                <SkillContentPreview content={skill.content} />
               </section>
 
               <section className="mt-5 border-t border-white/8 pt-4">
@@ -425,29 +434,6 @@ function SkillsDetailDrawer({
                 />
                 <DetailField label={t('skills.location')} value={skill.location} />
               </dl>
-
-              <div className="mt-6 grid gap-3">
-                <Button className="skills-detail-action" variant="outline" disabled>
-                  <ArrowRightLeft className="size-4" />
-                  {t('skills.transfer')}
-                </Button>
-                <Button className="skills-detail-action" variant="outline" disabled>
-                  <Copy className="size-4" />
-                  {t('skills.duplicate')}
-                </Button>
-                <Button className="skills-detail-action" variant="outline" disabled>
-                  <Archive className="size-4" />
-                  {t('skills.backupNow')}
-                </Button>
-                <Button
-                  className="skills-detail-action border-red-400/45 bg-red-500/10 text-red-300 hover:bg-red-500/16 hover:text-red-200"
-                  variant="outline"
-                  disabled
-                >
-                  <Trash2 className="size-4" />
-                  {t('skills.deleteSkill')}
-                </Button>
-              </div>
             </div>
           </div>
         )}
