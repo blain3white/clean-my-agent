@@ -193,6 +193,8 @@ const en = {
   'sessions.detailBranch': 'Branch',
   'sessions.detailEmpty': 'No events match this filter.',
   'sessions.detailError': 'Could not load session detail.',
+  'sessions.detailApiUnavailable':
+    'Session detail requires a refreshed desktop window. Please reload or restart the app.',
   'sessions.detailFilter.all': 'All',
   'sessions.detailFilter.user': 'User',
   'sessions.detailFilter.assistant': 'Assistant',
@@ -599,6 +601,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   'sessions.detailBranch': '分支',
   'sessions.detailEmpty': '当前筛选下没有事件。',
   'sessions.detailError': '无法加载会话详情。',
+  'sessions.detailApiUnavailable': '会话详情需要刷新桌面窗口后使用，请重新加载或重启应用。',
   'sessions.detailFilter.all': '全部',
   'sessions.detailFilter.user': '用户',
   'sessions.detailFilter.assistant': '助手',
@@ -1050,6 +1053,8 @@ const jaExtra: Partial<Record<TranslationKey, string>> = {
   'sessions.detailBranch': 'ブランチ',
   'sessions.detailEmpty': 'このフィルターに一致するイベントはありません。',
   'sessions.detailError': 'セッション詳細を読み込めませんでした。',
+  'sessions.detailApiUnavailable':
+    'セッション詳細にはデスクトップウィンドウの更新が必要です。アプリを再読み込みまたは再起動してください。',
   'sessions.detailFilter.all': 'すべて',
   'sessions.detailFilter.user': 'ユーザー',
   'sessions.detailFilter.assistant': 'アシスタント',
@@ -1453,6 +1458,8 @@ const frExtra: Partial<Record<TranslationKey, string>> = {
   'sessions.detailBranch': 'Branche',
   'sessions.detailEmpty': 'Aucun événement ne correspond à ce filtre.',
   'sessions.detailError': 'Impossible de charger le détail de session.',
+  'sessions.detailApiUnavailable':
+    'Le détail de session nécessite une fenêtre desktop actualisée. Rechargez ou redémarrez l’application.',
   'sessions.detailFilter.all': 'Tout',
   'sessions.detailFilter.user': 'Utilisateur',
   'sessions.detailFilter.assistant': 'Assistant',

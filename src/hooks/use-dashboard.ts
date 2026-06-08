@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { defaultLanguage, languageOptions, normalizeLanguage, translate } from '@/lib/i18n'
-import { mockSessionDetail, mockSnapshot } from '@/lib/mock-data'
+import { mockSnapshot } from '@/lib/mock-data'
 import {
   agentSources,
   type AppLanguage,
@@ -12,6 +12,7 @@ import {
   type ExportFormat,
   type UniversalRelayDocument,
 } from '@/shared/types'
+import { loadSessionDetail } from './session-detail-api'
 
 type DashboardState = {
   snapshot: DashboardSnapshot
@@ -480,11 +481,12 @@ export function useDashboard(): DashboardState {
         }
       },
       getSessionDetail: async (sessionId: string) => {
-        if (settings.mockDataEnabled || !window.cleanMyAgent) {
-          return mockSessionDetail(sessionId)
-        }
-
-        return window.cleanMyAgent.getSessionDetail(sessionId)
+        return loadSessionDetail(
+          window.cleanMyAgent,
+          sessionId,
+          settings.language,
+          settings.mockDataEnabled,
+        )
       },
       backupSession: async (sessionId: string) => {
         if (!window.cleanMyAgent) {
