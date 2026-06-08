@@ -33,7 +33,6 @@ import type { TranslationKey } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n-context'
 import { agentSources, type SkillsSnapshot, type SkillsSummary } from '@/shared/types'
 import {
-  categoryLabelKey,
   filterSkills,
   statusLabelKey,
   type ManagedSkill,
@@ -376,9 +375,6 @@ function SkillsDetailDrawer({
               </div>
               <div className="mt-3 flex items-center gap-2">
                 <StatusPill status={skill.status} />
-                <span className={`skills-category skills-category-${skill.category}`}>
-                  {t(categoryLabelKey(skill.category))}
-                </span>
               </div>
             </SheetHeader>
 
@@ -428,10 +424,6 @@ function SkillsDetailDrawer({
                 />
                 <DetailField label={t('skills.usageCount')} value={skill.usageCount} />
                 <DetailField label={t('skills.size')} value={`${skill.sizeKb} KB`} />
-                <DetailField
-                  label={t('skills.category')}
-                  value={t(categoryLabelKey(skill.category))}
-                />
                 <DetailField label={t('skills.location')} value={skill.location} />
               </dl>
             </div>
