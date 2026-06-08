@@ -222,13 +222,22 @@ export function SessionDetailDrawer({
                         aria-label={`${t(filterLabelKey[item])} ${counts[item]}`}
                         onClick={() => setFilter(item)}
                         className={cn(
-                          'inline-flex h-10 min-w-0 items-center justify-center rounded-lg border text-xs font-semibold transition',
+                          'inline-flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition',
                           active
                             ? 'border-white/24 bg-white/88 text-neutral-900'
                             : 'border-white/10 bg-white/[0.04] text-white/58 hover:border-white/18 hover:bg-white/[0.08] hover:text-white/78',
                         )}
                       >
-                        <Icon className="size-4 shrink-0" />
+                        <Icon className="size-3.5 shrink-0" />
+                        <span className="min-w-0 truncate">{t(filterLabelKey[item])}</span>
+                        <span
+                          className={cn(
+                            'shrink-0 rounded-md px-1.5 py-0.5 text-[10px] leading-none',
+                            active ? 'bg-black/10 text-neutral-800' : 'bg-white/8 text-white/40',
+                          )}
+                        >
+                          {counts[item]}
+                        </span>
                       </button>
                     </TooltipTrigger>
                     <TooltipContent>
