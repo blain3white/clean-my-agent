@@ -17,25 +17,26 @@ type SkillIcon = ManagedSkill['icon']
 export type SkillRoot = {
   source: AgentSource
   root: string
+  primary?: boolean
 }
 
 type SkillDraft = ManagedSkill & {
   normalizedName: string
+  primary: boolean
 }
 
 const maxSkillFilesPerRoot = 500
 const recentWindowMs = 7 * 24 * 60 * 60 * 1000
-const skillFilePattern = '**/SKILL.md'
+const skillFilePattern = '*/SKILL.md'
 
 const rootCandidates: SkillRoot[] = [
-  { source: 'codex', root: '~/.codex/skills' },
-  { source: 'codex', root: '~/.codex/plugins/cache' },
-  { source: 'claude', root: '~/.claude/skills' },
-  { source: 'claude', root: '~/.agents/skills' },
-  { source: 'claude', root: '~/.cc-switch/skills' },
-  { source: 'cursor', root: '~/.cursor/skills' },
-  { source: 'gemini', root: '~/.gemini/skills' },
-  { source: 'opencode', root: '~/.opencode/skills' },
+  { source: 'codex', root: '~/.codex/skills', primary: true },
+  { source: 'claude', root: '~/.cc-switch/skills', primary: true },
+  { source: 'gemini', root: '~/.gemini/skills', primary: true },
+  { source: 'opencode', root: '~/.opencode/skills', primary: true },
+  { source: 'claude', root: '~/.claude/skills', primary: false },
+  { source: 'claude', root: '~/.agents/skills', primary: false },
+  { source: 'cursor', root: '~/.cursor/skills', primary: false },
 ]
 
 const categoryStyles: Record<SkillCategory, { accent: SkillAccent; icon: SkillIcon }> = {
@@ -151,7 +152,9 @@ export function inferSkillIcon(
 
 export function resolveSkillRoots(settings?: Pick<AppSettings, 'scanRoots'>): SkillRoot[] {
   const configuredRoots = Object.entries(settings?.scanRoots ?? {}).flatMap(([source, roots]) =>
-    Array.isArray(roots) ? roots.map((root) => ({ source: source as AgentSource, root })) : [],
+    Array.isArray(roots)
+      ? roots.map((root) => ({ source: source as AgentSource, root, primary: true }))
+      : [],
   )
 
   const roots = [...configuredRoots, ...rootCandidates]
@@ -184,7 +187,11 @@ async function safeSkillSize(skillRoot: string): Promise<number> {
   return total
 }
 
-async function scanSkillFile(filePath: string, ownerAgent: AgentSource): Promise<SkillDraft> {
+async function scanSkillFile(
+  filePath: string,
+  ownerAgent: AgentSource,
+  primary: boolean,
+): Promise<SkillDraft> {
   const markdown = await safeReadText(filePath, 160_000)
   const folderName = path.basename(path.dirname(filePath))
   const metadata = parseSkillMetadata(markdown, folderName)
@@ -198,6 +205,7 @@ async function scanSkillFile(filePath: string, ownerAgent: AgentSource): Promise
     id: hashId([ownerAgent, filePath]),
     name: metadata.name,
     normalizedName: normalizeSkillName(metadata.name),
+    primary,
     description: metadata.description,
     ownerAgent,
     category,
@@ -222,14 +230,36 @@ function applyLinkedSkillStatus(skills: SkillDraft[]): ManagedSkill[] {
     groups.set(skill.normalizedName, group)
   })
 
-  return skills
-    .map(({ normalizedName, ...skill }) => {
-      const group = groups.get(normalizedName)!
-      const linkedAgents = unique(group.map((item) => item.ownerAgent))
-      const status: SkillStatus = linkedAgents.length > 1 ? 'synced' : skill.status
-      return { ...skill, linkedAgents, status }
+  const managedSkills: ManagedSkill[] = []
+  for (const group of groups.values()) {
+    const representative =
+      group.find((skill) => skill.primary) ??
+      group.slice().sort((a, b) => a.name.localeCompare(b.name))[0]
+    if (!representative?.primary) continue
+
+    const linkedAgents = unique(group.map((item) => item.ownerAgent))
+    const status: SkillStatus = linkedAgents.length > 1 ? 'synced' : representative.status
+    managedSkills.push({
+      id: representative.id,
+      name: representative.name,
+      description: representative.description,
+      ownerAgent: representative.ownerAgent,
+      category: representative.category,
+      updatedAt: representative.updatedAt,
+      sizeKb: representative.sizeKb,
+      status,
+      linkedAgents,
+      version: representative.version,
+      createdAt: representative.createdAt,
+      lastBackupAt: representative.lastBackupAt,
+      usageCount: representative.usageCount,
+      location: representative.location,
+      accent: representative.accent,
+      icon: representative.icon,
     })
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  }
+
+  return managedSkills.sort((a, b) => a.name.localeCompare(b.name))
 }
 
 export function summarizeSkills(skills: ManagedSkill[], now = Date.now()): SkillsSummary {
@@ -265,12 +295,13 @@ export async function scanSkills(
 
   for (const candidate of roots) {
     const root = expandHome(candidate.root)
+    const primary = candidate.primary ?? true
     if (!(await exists(root))) continue
     const files = await listFiles(root, [skillFilePattern], maxSkillFilesPerRoot)
     const scanned = await Promise.all(
       files.map(async (filePath) => {
         try {
-          return await scanSkillFile(filePath, candidate.source)
+          return await scanSkillFile(filePath, candidate.source, primary)
         } catch {
           return undefined
         }

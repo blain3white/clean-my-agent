@@ -16,9 +16,9 @@ import { expandHome } from './files'
 let tmpDir: string
 
 const roots = (root: string) => [
-  { source: 'codex', root: path.join(root, 'codex') },
-  { source: 'claude', root: path.join(root, 'claude') },
-  { source: 'cursor', root: path.join(root, 'cursor') },
+  { source: 'codex', root: path.join(root, 'codex'), primary: true },
+  { source: 'claude', root: path.join(root, 'claude'), primary: true },
+  { source: 'cursor', root: path.join(root, 'cursor'), primary: true },
 ]
 
 async function writeSkill(
@@ -91,13 +91,18 @@ describe('skill scanner', () => {
       },
     })
 
-    expect(roots[0]).toEqual({ source: 'codex', root: '~/.codex/skills' })
-    expect(roots[1]).toEqual({ source: 'codex', root: path.join(tmpDir, 'codex') })
+    expect(roots[0]).toEqual({ source: 'codex', root: '~/.codex/skills', primary: true })
+    expect(roots[1]).toEqual({ source: 'codex', root: path.join(tmpDir, 'codex'), primary: true })
     expect(
       roots.filter((root) => root.source === 'claude' && root.root === path.join(tmpDir, 'claude')),
     ).toHaveLength(1)
     expect(resolveSkillRoots({ scanRoots: { codex: '/tmp' as never } }).length).toBeGreaterThan(0)
-    expect(resolveSkillRoots()[0]).toEqual({ source: 'codex', root: '~/.codex/skills' })
+    expect(resolveSkillRoots()[0]).toEqual({
+      source: 'codex',
+      root: '~/.codex/skills',
+      primary: true,
+    })
+    expect(resolveSkillRoots().some((root) => root.root.includes('/plugins/cache'))).toBe(false)
   })
 
   it('formats skill paths for display', () => {
@@ -129,22 +134,24 @@ describe('skill scanner', () => {
     )
     await mkdir(path.join(tmpDir, 'codex', 'ignored'), { recursive: true })
     await writeFile(path.join(tmpDir, 'codex', 'ignored', 'README.md'), 'not a skill')
+    await mkdir(path.join(tmpDir, 'codex', 'pr-review', 'nested-history'), { recursive: true })
+    await writeFile(
+      path.join(tmpDir, 'codex', 'pr-review', 'nested-history', 'SKILL.md'),
+      `---\nname: Nested History\ndescription: Should not be counted as an installed skill.\n---`,
+    )
 
     const snapshot = await scanSkills(undefined, roots(tmpDir))
 
-    expect(snapshot.skills).toHaveLength(3)
-    expect(snapshot.summary.totalSkills).toBe(3)
-    expect(snapshot.summary.linkedAgents).toBe(2)
+    expect(snapshot.skills).toHaveLength(2)
+    expect(snapshot.summary.totalSkills).toBe(2)
+    expect(snapshot.summary.linkedAgents).toBe(1)
     expect(snapshot.summary.linkedAgentTotal).toBe(2)
     expect(snapshot.summary.backups).toBe(0)
     expect(snapshot.summary.backupPercent).toBe(0)
 
-    const reviews = snapshot.skills.filter((skill) => skill.name === 'PR Review')
-    expect(reviews).toHaveLength(2)
-    expect(reviews.every((skill) => skill.status === 'synced')).toBe(true)
-    expect(reviews.every((skill) => skill.linkedAgents.sort().join(',') === 'claude,codex')).toBe(
-      true,
-    )
+    const review = snapshot.skills.find((skill) => skill.name === 'PR Review')
+    expect(review?.status).toBe('synced')
+    expect(review?.linkedAgents.sort().join(',')).toBe('claude,codex')
 
     const releaseNotes = snapshot.skills.find((skill) => skill.name === 'Release Notes')
     expect(releaseNotes).toMatchObject({

@@ -399,15 +399,18 @@ export function SkillsView() {
   const [status, setStatus] = useState<SkillStatusFilter>('all')
   const [snapshot, setSnapshot] = useState<SkillsSnapshot>(() => emptySnapshot())
   const [loading, setLoading] = useState(true)
+  const [scanError, setScanError] = useState(false)
   const [activeSkillId, setActiveSkillId] = useState<string>()
   const loadSkills = useCallback(async () => {
-    if (!window.cleanMyAgent) {
+    if (!window.cleanMyAgent?.getSkills) {
       setSnapshot(emptySnapshot())
+      setScanError(true)
       setLoading(false)
       return
     }
 
     setLoading(true)
+    setScanError(false)
     try {
       const next = await window.cleanMyAgent.getSkills()
       setSnapshot(next)
@@ -416,6 +419,7 @@ export function SkillsView() {
       console.error(error)
       toast.error(t('skills.scanError'))
       setSnapshot(emptySnapshot())
+      setScanError(true)
     } finally {
       setLoading(false)
     }
@@ -573,10 +577,18 @@ export function SkillsView() {
           {!loading && !hasVisibleSkills && (
             <div className="skills-empty-state">
               <div className="text-sm font-semibold text-white">
-                {hasSkills ? t('skills.noMatchesTitle') : t('skills.emptyTitle')}
+                {scanError
+                  ? t('skills.scanError')
+                  : hasSkills
+                    ? t('skills.noMatchesTitle')
+                    : t('skills.emptyTitle')}
               </div>
               <p className="mt-2 text-sm text-white/45">
-                {hasSkills ? t('skills.noMatchesBody') : t('skills.emptyBody')}
+                {scanError
+                  ? t('skills.loadingBody')
+                  : hasSkills
+                    ? t('skills.noMatchesBody')
+                    : t('skills.emptyBody')}
               </p>
             </div>
           )}
