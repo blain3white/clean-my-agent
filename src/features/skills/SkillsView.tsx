@@ -354,7 +354,6 @@ function SkillsDetailDrawer({
   onOpenChange: (open: boolean) => void
 }) {
   const { locale, t, formatRelative } = useI18n()
-  const extraAgents = Math.max(0, (skill?.linkedAgents.length ?? 0) - 3)
 
   return (
     <Sheet open={open && Boolean(skill)} onOpenChange={onOpenChange}>
@@ -391,20 +390,21 @@ function SkillsDetailDrawer({
 
               <section className="mt-5 border-t border-white/8 pt-4">
                 <h3 className="text-sm font-semibold text-white">{t('skills.linkedAgents')}</h3>
-                <div className="mt-4 flex items-center gap-4">
-                  {skill.linkedAgents.slice(0, 3).map((source) => (
-                    <div key={source} className="grid justify-items-center gap-1.5">
-                      <AgentGlyph source={source} />
-                      <span className="text-xs text-white/62">{agentLabel[source]}</span>
-                    </div>
+                <div className="mt-4 flex flex-wrap items-center gap-4">
+                  {skill.linkedAgents.map((source) => (
+                    <Tooltip key={source}>
+                      <TooltipTrigger asChild>
+                        <span
+                          className="inline-grid place-items-center"
+                          aria-label={t('skills.agentLinked', { agent: agentLabel[source] })}
+                        >
+                          <AgentGlyph source={source} />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>{agentLabel[source]}</TooltipContent>
+                    </Tooltip>
                   ))}
-                  {extraAgents > 0 && (
-                    <span className="text-sm text-white/45">+{extraAgents} more</span>
-                  )}
                 </div>
-                <p className="mt-3 text-sm text-white/38">
-                  {t('skills.totalAgents', { count: skill.linkedAgents.length })}
-                </p>
               </section>
 
               <dl className="mt-5 space-y-4 border-t border-white/8 pt-4">
