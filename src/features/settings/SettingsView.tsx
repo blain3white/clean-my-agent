@@ -1,9 +1,11 @@
 import { useMemo, type ReactNode } from 'react'
 import {
+  AlertTriangle,
   Bell,
   Clock3,
   Download,
   Folder,
+  FolderX,
   Languages,
   Palette,
   Play,
@@ -13,6 +15,7 @@ import {
   Trash2,
   Globe2,
   Volume2,
+  WifiOff,
   type LucideIcon,
 } from 'lucide-react'
 import { AgentGlyph } from '@/components/agent-glyph'
@@ -25,6 +28,7 @@ import { languageOptions } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n-context'
 import type { AppSettings, ThemePreference } from '@/shared/types'
 import type { TranslationKey } from '@/lib/i18n'
+import type { DashboardIssue } from '@/hooks/use-dashboard'
 import {
   agentSources,
   type AgentSource,
@@ -39,6 +43,7 @@ type SettingsViewProps = {
   launchAtLogin: boolean
   mockDataEnabled: boolean
   settings: AppSettings
+  lastIssue: DashboardIssue | null
   checkingForUpdates: boolean
   onLanguageChange: (language: AppLanguage) => Promise<void>
   onThemePreferenceChange: (preference: ThemePreference) => void
@@ -208,6 +213,80 @@ function ProviderStatus({
   )
 }
 
+function settingsIssueCopy(issue: DashboardIssue): {
+  icon: LucideIcon
+  titleKey: TranslationKey
+  bodyKey: TranslationKey
+} {
+  if (issue.kind === 'network-failed') {
+    return {
+      icon: WifiOff,
+      titleKey: 'settings.issueNetworkTitle',
+      bodyKey: 'settings.issueNetworkBody',
+    }
+  }
+  if (issue.kind === 'update-failed') {
+    return {
+      icon: Download,
+      titleKey: 'settings.issueUpdateTitle',
+      bodyKey: 'settings.issueUpdateBody',
+    }
+  }
+  if (issue.kind === 'refresh-failed') {
+    return {
+      icon: RefreshCcw,
+      titleKey: 'settings.issueRefreshTitle',
+      bodyKey: 'settings.issueRefreshBody',
+    }
+  }
+  return {
+    icon: AlertTriangle,
+    titleKey: 'settings.issueScanTitle',
+    bodyKey: 'settings.issueScanBody',
+  }
+}
+
+function SettingsIssueBanner({
+  issue,
+  checkingForUpdates,
+  formatRelative,
+  t,
+  onRetry,
+}: {
+  issue: DashboardIssue
+  checkingForUpdates: boolean
+  formatRelative: (value?: string) => string
+  t: (key: TranslationKey) => string
+  onRetry: () => void
+}) {
+  const copy = settingsIssueCopy(issue)
+  const Icon = copy.icon
+
+  return (
+    <div className="settings-issue-banner flex items-start gap-3 rounded-xl border px-4 py-3">
+      <div className="settings-issue-icon grid size-9 shrink-0 place-items-center rounded-lg ring-1">
+        <Icon className="size-5" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="settings-row-title text-[15px] font-semibold">{t(copy.titleKey)}</div>
+        <div className="settings-row-description mt-1 text-sm">{t(copy.bodyKey)}</div>
+        <div className="mt-2 truncate text-xs text-white/38">
+          {formatRelative(issue.occurredAt)} · {issue.detail}
+        </div>
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onRetry}
+        disabled={checkingForUpdates}
+        className="settings-outline-button"
+      >
+        {checkingForUpdates ? t('settings.checkingUpdates') : t('settings.issueRetry')}
+      </Button>
+    </div>
+  )
+}
+
 export function SettingsView({
   snapshot,
   language,
@@ -215,6 +294,7 @@ export function SettingsView({
   launchAtLogin,
   mockDataEnabled,
   settings,
+  lastIssue,
   checkingForUpdates,
   onLanguageChange,
   onThemePreferenceChange,
@@ -299,6 +379,20 @@ export function SettingsView({
 
   return (
     <div className="mx-auto w-full max-w-[900px] space-y-5 pb-8">
+      {lastIssue && (
+        <SettingsIssueBanner
+          issue={lastIssue}
+          checkingForUpdates={checkingForUpdates}
+          formatRelative={formatRelative}
+          t={t}
+          onRetry={
+            lastIssue.kind === 'update-failed' || lastIssue.kind === 'network-failed'
+              ? () => void onDownloadLatestUpdate()
+              : () => void onRescan()
+          }
+        />
+      )}
+
       <SettingsSection title={t('settings.app')}>
         <SettingsPanel>
           <SettingsRow
@@ -394,6 +488,9 @@ export function SettingsView({
             const agent = agentBySource.get(source)
             const enabled = settings.enabledProviders[source] !== false
             const detected = enabled && Boolean(agent?.readable)
+            const rootIssue = agent?.diagnostics?.find(
+              (diagnostic) => diagnostic.code === 'root-not-readable',
+            )
 
             return (
               <div
@@ -414,6 +511,17 @@ export function SettingsView({
                     <span className="settings-row-separator">•</span>
                     <span>{formatBytes(agent?.sizeBytes ?? 0)}</span>
                   </div>
+                  {enabled && rootIssue && (
+                    <div className="mt-2 flex max-w-[560px] items-start gap-2 rounded-md border border-amber-300/14 bg-amber-400/[0.055] px-2.5 py-2 text-xs text-amber-100/85">
+                      <FolderX className="mt-0.5 size-4 shrink-0 text-amber-300" />
+                      <div className="min-w-0">
+                        <div className="font-medium">{t('settings.providerFolderBlocked')}</div>
+                        <div className="mt-0.5 truncate opacity-70">
+                          {rootIssue.path ?? rootIssue.message}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <ProviderStatus
                   detected={detected}

@@ -1,16 +1,20 @@
 import { type CSSProperties, useState } from 'react'
 import {
   Archive,
+  AlertTriangle,
   ChartNoAxesColumn,
   ChartSpline,
+  CheckCircle2,
   Circle,
   Database,
+  FolderX,
   Gauge,
   Grid3X3,
   HardDrive,
   ListFilter,
   Loader2,
   RefreshCcw,
+  SearchX,
   Trash2,
 } from 'lucide-react'
 import {
@@ -28,6 +32,7 @@ import {
   YAxis,
 } from 'recharts'
 import { AgentGlyph } from '@/components/agent-glyph'
+import { EmptyState } from '@/components/empty-state'
 import { MetricCard } from '@/components/metric-card'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -46,6 +51,7 @@ import {
   type UsagePoint,
 } from '@/shared/types'
 import type { UsageRange } from '@/features/usage/ranges'
+import type { DashboardIssue } from '@/hooks/use-dashboard'
 
 type TokenActivityMode = 'line' | 'bar' | 'heat'
 type StorageViewMode = 'pie' | 'line' | 'layout'
@@ -1142,14 +1148,18 @@ export function OverviewView({
   snapshot,
   usageRange,
   loading,
+  lastIssue,
   onRefresh,
   onSelectCleanup,
+  onOpenSettings,
 }: {
   snapshot: DashboardSnapshot
   usageRange: UsageRange
   loading: boolean
+  lastIssue: DashboardIssue | null
   onRefresh: () => Promise<void>
   onSelectCleanup: () => void
+  onOpenSettings: () => void
 }) {
   const recentSessions = snapshot.sessions.slice(0, 6)
   const rangeDays = usageDaysForRange(snapshot.usage, usageRange)
@@ -1199,8 +1209,19 @@ export function OverviewView({
     snapshot.usage.some((point) => point.total > 0) ||
     storageTotal > 0
 
-  if (loading || !hasOverviewData) {
+  if (loading) {
     return <OverviewSkeletonView loading={loading} onRefresh={onRefresh} />
+  }
+
+  if (!hasOverviewData) {
+    return (
+      <OverviewEmptyState
+        snapshot={snapshot}
+        lastIssue={lastIssue}
+        onRefresh={onRefresh}
+        onOpenSettings={onOpenSettings}
+      />
+    )
   }
 
   return (
@@ -1268,21 +1289,34 @@ export function OverviewView({
           </CardHeader>
           <CardContent>
             <div className="divide-y divide-white/7">
-              {recentSessions.map((session) => (
-                <div
-                  key={session.id}
-                  className="grid grid-cols-[28px_1fr_120px_80px_80px] items-center gap-3 py-2.5 text-xs"
-                >
-                  <AgentGlyph source={session.source} />
-                  <div className="min-w-0">
-                    <div className="truncate font-medium text-white/82">{session.title}</div>
-                    <div className="truncate text-white/38">{session.projectName}</div>
+              {recentSessions.length === 0 ? (
+                <EmptyState
+                  compact
+                  icon={SearchX}
+                  tone="info"
+                  title="No recent sessions"
+                  body="A successful scan found data, but there are no live sessions in this range yet."
+                  className="border-0 bg-transparent shadow-none"
+                />
+              ) : (
+                recentSessions.map((session) => (
+                  <div
+                    key={session.id}
+                    className="grid grid-cols-[28px_1fr_120px_80px_80px] items-center gap-3 py-2.5 text-xs"
+                  >
+                    <AgentGlyph source={session.source} />
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-white/82">{session.title}</div>
+                      <div className="truncate text-white/38">{session.projectName}</div>
+                    </div>
+                    <span className="truncate text-white/42">{session.branch ?? 'Unknown'}</span>
+                    <span className="text-white/42">{formatRelative(session.lastUpdated)}</span>
+                    <span className="text-right text-white/50">
+                      {formatBytes(session.sizeBytes)}
+                    </span>
                   </div>
-                  <span className="truncate text-white/42">{session.branch ?? 'Unknown'}</span>
-                  <span className="text-white/42">{formatRelative(session.lastUpdated)}</span>
-                  <span className="text-right text-white/50">{formatBytes(session.sizeBytes)}</span>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </CardContent>
         </Card>
@@ -1303,13 +1337,150 @@ export function OverviewView({
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {snapshot.cleanup.slice(0, 4).map((candidate) => (
-                <CleanupMiniRow key={candidate.id} candidate={candidate} />
-              ))}
+              {snapshot.cleanup.length === 0 ? (
+                <EmptyState
+                  compact
+                  icon={CheckCircle2}
+                  tone="success"
+                  title="No cleanable items"
+                  body="Nothing currently meets the cleanup rules. Recent and unsafe data stays protected."
+                  className="border-0 bg-transparent shadow-none"
+                  actions={
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={onSelectCleanup}
+                      className="text-blue-300 hover:bg-blue-400/10 hover:text-blue-200"
+                    >
+                      Open cleanup
+                    </Button>
+                  }
+                />
+              ) : (
+                snapshot.cleanup
+                  .slice(0, 4)
+                  .map((candidate) => <CleanupMiniRow key={candidate.id} candidate={candidate} />)
+              )}
             </div>
           </CardContent>
         </Card>
       </section>
+    </div>
+  )
+}
+
+function OverviewEmptyState({
+  snapshot,
+  lastIssue,
+  onRefresh,
+  onOpenSettings,
+}: {
+  snapshot: DashboardSnapshot
+  lastIssue: DashboardIssue | null
+  onRefresh: () => Promise<void>
+  onOpenSettings: () => void
+}) {
+  const rootDiagnostics = snapshot.agents.flatMap((agent) =>
+    (agent.diagnostics ?? [])
+      .filter((diagnostic) => diagnostic.code === 'root-not-readable')
+      .map((diagnostic) => ({
+        agent: agent.name,
+        path: diagnostic.path,
+        message: diagnostic.message,
+      })),
+  )
+  const configuredUnreadable = snapshot.agents.filter(
+    (agent) => agent.rootPaths.length > 0 && !agent.readable,
+  )
+  const hasConfiguredRoots = snapshot.agents.some((agent) => agent.rootPaths.length > 0)
+  const scanIssue =
+    lastIssue?.kind === 'scan-failed' || lastIssue?.kind === 'refresh-failed' ? lastIssue : null
+
+  const emptyState = scanIssue
+    ? {
+        icon: AlertTriangle,
+        tone: 'danger' as const,
+        title: 'Local scan failed',
+        body: 'Clean My Agent kept the previous data untouched. Retry the scan after checking the error below.',
+      }
+    : rootDiagnostics.length > 0 || configuredUnreadable.length > 0
+      ? {
+          icon: FolderX,
+          tone: 'warning' as const,
+          title: 'Folders are missing or blocked',
+          body: 'Some agent roots could not be read. The folder may not exist anymore, or macOS permissions may need attention.',
+        }
+      : hasConfiguredRoots
+        ? {
+            icon: SearchX,
+            tone: 'info' as const,
+            title: 'No local sessions found',
+            body: 'The scan completed, but no supported agent session files were discovered in the configured folders.',
+          }
+        : {
+            icon: FolderX,
+            tone: 'neutral' as const,
+            title: 'No scan folders configured',
+            body: 'Add a custom provider folder or run the desktop app where the default local agent folders are available.',
+          }
+
+  const issueRows = scanIssue
+    ? [{ agent: 'Last run', path: scanIssue.detail, message: 'Scan error' }]
+    : rootDiagnostics.length > 0
+      ? rootDiagnostics
+      : configuredUnreadable.flatMap((agent) =>
+          agent.rootPaths.map((path) => ({
+            agent: agent.name,
+            path,
+            message: 'Missing or not readable',
+          })),
+        )
+
+  return (
+    <div className="space-y-4">
+      <EmptyState
+        icon={emptyState.icon}
+        tone={emptyState.tone}
+        title={emptyState.title}
+        body={emptyState.body}
+        actions={
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void onRefresh()}
+              className="border-white/12 bg-white/5 text-white/78 hover:bg-white/10"
+            >
+              <RefreshCcw className="size-4" />
+              Scan again
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onOpenSettings}
+              className="text-blue-300 hover:bg-blue-400/10 hover:text-blue-200"
+            >
+              Review folders
+            </Button>
+          </>
+        }
+      >
+        {issueRows.length > 0 && (
+          <div className="mx-auto grid max-w-[560px] gap-2 text-left">
+            {issueRows.slice(0, 3).map((item, index) => (
+              <div
+                key={`${item.agent}-${item.path ?? index}`}
+                className="rounded-md border border-white/8 bg-black/12 px-3 py-2"
+              >
+                <div className="text-xs font-medium text-white/72">{item.agent}</div>
+                <div className="mt-1 truncate text-[11px] text-white/42">
+                  {item.path ?? item.message}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </EmptyState>
     </div>
   )
 }

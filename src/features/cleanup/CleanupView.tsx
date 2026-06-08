@@ -1,6 +1,7 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import {
+  AlertTriangle,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -125,6 +126,7 @@ export function CleanupView({
   const [cleaning, setCleaning] = useState(false)
   const [cleaningIds, setCleaningIds] = useState<string[]>([])
   const [cleaned, setCleaned] = useState(false)
+  const [scanErrorMessage, setScanErrorMessage] = useState<string | null>(null)
   const scanRunRef = useRef(0)
   const visibleCleanup = localCleanup ?? cleanup
   const sessionById = useMemo(
@@ -215,6 +217,7 @@ export function CleanupView({
     setLocalCleanup(null)
     setCleaned(false)
     setCleaningIds([])
+    setScanErrorMessage(null)
     setSelected([])
     clearCleanupViewState()
 
@@ -265,10 +268,14 @@ export function CleanupView({
 
     if (scanError) {
       console.error(scanError)
-      setStage('idle')
+      setScanErrorMessage(scanError instanceof Error ? scanError.message : 'Cleanup scan failed.')
+      setStage('failed')
       setOrbPhase('initial')
       setProgress(0)
       clearCleanupViewState()
+      if (settings.soundEffects && settings.errorSound) {
+        void playCleanupSystemSound(settings.soundVolume / 100)
+      }
       return
     }
 
@@ -289,6 +296,7 @@ export function CleanupView({
     setStage('idle')
     setOrbPhase('initial')
     setProgress(0)
+    setScanErrorMessage(null)
     clearCleanupViewState()
   }
 
@@ -302,6 +310,7 @@ export function CleanupView({
     setCleaningIds([])
     setCleaning(false)
     setCleaned(false)
+    setScanErrorMessage(null)
     clearCleanupViewState()
   }
 
@@ -538,6 +547,7 @@ export function CleanupView({
       cleaning={cleaning}
       cleaned={cleaned}
       cleaningIds={cleaningIds}
+      scanErrorMessage={scanErrorMessage}
       onStart={() => void beginScan()}
       onCancel={cancelScan}
       onScanAgain={resetCleanupStart}
@@ -563,6 +573,7 @@ function CleanupScanShell({
   cleaning,
   cleaned,
   cleaningIds,
+  scanErrorMessage,
   onStart,
   onCancel,
   onScanAgain,
@@ -584,6 +595,7 @@ function CleanupScanShell({
   cleaning: boolean
   cleaned: boolean
   cleaningIds: string[]
+  scanErrorMessage: string | null
   onStart: () => void
   onCancel: () => void
   onScanAgain: () => void
@@ -593,7 +605,7 @@ function CleanupScanShell({
   onToggleCategory: (category: CleanupCategoryKey) => void
   reviewPanel: ReactNode
 }) {
-  const orbMode: CleanupScanStage = stage === 'review' ? 'complete' : stage
+  const orbMode: CleanupScanStage = stage === 'review' || stage === 'failed' ? 'complete' : stage
   const stageRef = useRef<HTMLDivElement>(null)
   const [stageSize, setStageSize] = useState(initialCleanupStageSize)
 
@@ -632,7 +644,11 @@ function CleanupScanShell({
     300,
   )
   const activeOrbSize =
-    stage === 'complete' ? completeOrbSize : stage === 'scanning' ? scanningOrbSize : orbSize
+    stage === 'complete' || stage === 'failed'
+      ? completeOrbSize
+      : stage === 'scanning'
+        ? scanningOrbSize
+        : orbSize
   const completeGutter = clampNumber(stageSize.width * 0.028, 18, 64)
   const completeSideSpace = clampNumber(
     completeOrbSize + completeGutter + cleanupCompleteOrbVisualBleed + 24,
@@ -662,11 +678,11 @@ function CleanupScanShell({
   const orbTop =
     stage === 'idle'
       ? idleTop
-      : stage === 'complete'
+      : stage === 'complete' || stage === 'failed'
         ? clampNumber(stageSize.height * 0.074, 54, 112)
         : scanOrbTop
   const orbLeft =
-    stage === 'complete'
+    stage === 'complete' || stage === 'failed'
       ? Math.max(
           completeGutter,
           stageSize.width -
@@ -723,7 +739,7 @@ function CleanupScanShell({
           y: orbTop,
           width: activeOrbSize,
           height: activeOrbSize,
-          opacity: stage === 'review' ? 0 : 1,
+          opacity: stage === 'review' || stage === 'failed' ? 0 : 1,
         }}
         transition={cleanupOrbMorphTransition}
       >
@@ -793,6 +809,23 @@ function CleanupScanShell({
           )}
         </AnimatePresence>
       </div>
+      <div className="cleanup-view-layer cleanup-failed-layer">
+        <AnimatePresence>
+          {stage === 'failed' && (
+            <motion.div
+              key="failed"
+              className="cleanup-stage-body cleanup-stage-body-failed"
+              variants={cleanupBodyVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={cleanupBodyTransition}
+            >
+              <CleanupFailedBody error={scanErrorMessage} onRetry={onStart} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
       <div className="cleanup-view-layer cleanup-review-layer">
         <AnimatePresence>
           {stage === 'review' && (
@@ -815,7 +848,9 @@ function CleanupScanShell({
         text={
           stage === 'complete' || stage === 'review'
             ? 'All session data was analyzed locally.'
-            : 'All session data is analyzed locally.'
+            : stage === 'failed'
+              ? 'No files were moved. Cleanup only runs after a successful local scan.'
+              : 'All session data is analyzed locally.'
         }
       />
     </div>
@@ -869,6 +904,75 @@ function CleanupScanningBody({
         </Button>
       </div>
     </>
+  )
+}
+
+function CleanupFailedBody({ error, onRetry }: { error: string | null; onRetry: () => void }) {
+  return (
+    <Card className="cleanup-failed-card mx-auto w-full max-w-[560px] rounded-lg py-0">
+      <CardContent className="px-6 py-6 text-center">
+        <div className="mx-auto grid size-12 place-items-center rounded-lg bg-rose-400/13 text-rose-300 ring-1 ring-rose-300/22">
+          <AlertTriangle className="size-6" />
+        </div>
+        <div className="mt-4 text-lg font-semibold text-white">Cleanup scan failed</div>
+        <p className="mx-auto mt-2 max-w-[430px] text-sm leading-5 text-white/52">
+          Nothing was cleaned or moved. Review folder access, then run the local scan again.
+        </p>
+        {error && (
+          <div className="mt-4 truncate rounded-md border border-rose-300/14 bg-rose-400/[0.055] px-3 py-2 text-left text-xs text-rose-100/72">
+            {error}
+          </div>
+        )}
+        <div className="mt-5 flex justify-center">
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={onRetry}
+            className="cleanup-action-button h-10 rounded-lg border-white/14 bg-white/5 px-5 text-[13px] text-white/84 hover:bg-white/10"
+          >
+            <RefreshCcw className="size-4" />
+            Scan Again
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function CleanupNoCandidatesBody({ onScanAgain }: { onScanAgain: () => void }) {
+  return (
+    <div className="cleanup-empty-result">
+      <div className="cleanup-empty-result-inner">
+        <div className="mx-auto grid size-14 place-items-center rounded-lg bg-emerald-400/12 text-emerald-300 ring-1 ring-emerald-300/20">
+          <CheckCircle2 className="size-7" />
+        </div>
+        <div className="mt-4 text-xl font-semibold text-white">Nothing to clean</div>
+        <p className="mx-auto mt-2 max-w-[480px] text-sm leading-6 text-white/52">
+          The scan completed and no sessions matched cleanup rules. Recent work, active sessions,
+          and unsafe items stay protected.
+        </p>
+        <div className="mt-5 flex flex-wrap justify-center gap-2">
+          <div className="rounded-lg border border-white/8 bg-white/[0.03] px-3 py-2 text-xs text-white/52">
+            Large chats: 0
+          </div>
+          <div className="rounded-lg border border-white/8 bg-white/[0.03] px-3 py-2 text-xs text-white/52">
+            90 days inactive: 0
+          </div>
+          <div className="rounded-lg border border-white/8 bg-white/[0.03] px-3 py-2 text-xs text-white/52">
+            Test chats: 0
+          </div>
+        </div>
+        <Button
+          variant="outline"
+          size="lg"
+          onClick={onScanAgain}
+          className="cleanup-action-button mt-6 h-10 rounded-lg border-white/14 bg-white/5 px-5 text-[13px] text-white/84 hover:bg-white/10"
+        >
+          <RefreshCcw className="size-4" />
+          Scan Again
+        </Button>
+      </div>
+    </div>
   )
 }
 
@@ -926,6 +1030,8 @@ function CleanupCompleteBody({
   const selectedBytes = candidates
     .filter((candidate) => selected.includes(candidate.id))
     .reduce((total, candidate) => total + candidate.sizeBytes, 0)
+
+  if (candidates.length === 0) return <CleanupNoCandidatesBody onScanAgain={onScanAgain} />
 
   return (
     <div className="cleanup-complete-layout">

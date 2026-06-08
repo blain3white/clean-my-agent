@@ -1121,6 +1121,11 @@ textarea,
   padding: clamp(1rem, 2.5vh, 1.5rem) clamp(1rem, 2.3vw, 1.5rem) 4.8rem;
 }
 
+.cleanup-failed-layer {
+  align-items: center;
+  padding: clamp(1rem, 3vw, 1.5rem) clamp(1rem, 3vw, 1.5rem) 5rem;
+}
+
 .cleanup-stage-body {
   width: min(100%, 680px);
   min-height: 0;
@@ -1130,6 +1135,10 @@ textarea,
 .cleanup-stage-body-complete {
   width: 100%;
   min-width: 0;
+}
+
+.cleanup-stage-body-failed {
+  width: min(100%, 580px);
 }
 
 .cleanup-stage-body-idle,
@@ -1466,6 +1475,20 @@ textarea,
   align-items: center;
   justify-content: center;
   gap: 0.45rem;
+}
+
+.cleanup-empty-result {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  place-items: center;
+  padding: clamp(1rem, 3vw, 2rem);
+}
+
+.cleanup-empty-result-inner {
+  width: min(100%, 580px);
+  text-align: center;
 }
 
 .cleanup-primary-action {
@@ -2591,6 +2614,21 @@ select option {
   color: rgb(255 255 255 / 62%);
 }
 
+.settings-issue-banner {
+  border-color: rgb(251 191 36 / 18%);
+  background:
+    linear-gradient(135deg, rgb(251 191 36 / 10%), rgb(244 63 94 / 7%)), rgb(32 35 38 / 78%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 7%),
+    0 18px 48px rgb(0 0 0 / 16%);
+}
+
+.settings-issue-icon {
+  background: rgb(251 191 36 / 12%);
+  color: rgb(252 211 77);
+  --tw-ring-color: rgb(251 191 36 / 20%);
+}
+
 .settings-switch[data-state='unchecked'] {
   background: rgb(255 255 255 / 18%);
 }
@@ -3279,6 +3317,25 @@ select option {
 
 .theme-light .settings-row:hover .settings-chevron {
   color: rgb(51 65 85 / 84%);
+}
+
+.theme-light .settings-issue-banner {
+  border-color: rgb(217 119 6 / 18%);
+  background:
+    linear-gradient(135deg, rgb(245 158 11 / 12%), rgb(244 63 94 / 7%)), rgb(255 255 255 / 86%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 84%),
+    0 18px 44px rgb(15 23 42 / 8%);
+}
+
+.theme-light .settings-issue-icon {
+  background: rgb(245 158 11 / 13%);
+  color: rgb(180 83 9);
+  --tw-ring-color: rgb(217 119 6 / 20%);
+}
+
+.theme-light .settings-issue-banner .text-white\/38 {
+  color: rgb(100 116 139 / 76%);
 }
 
 .theme-light .settings-switch[data-state='unchecked'] {

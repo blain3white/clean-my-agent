@@ -58,8 +58,10 @@ function App() {
             snapshot={dashboard.snapshot}
             usageRange={overviewRange}
             loading={dashboard.loading}
+            lastIssue={dashboard.lastIssue}
             onRefresh={dashboard.refreshRecentSessions}
             onSelectCleanup={() => setActiveView('cleanup')}
+            onOpenSettings={() => setActiveView('settings')}
           />
         )
       case 'sessions':
@@ -120,6 +122,7 @@ function App() {
             launchAtLogin={dashboard.launchAtLogin}
             mockDataEnabled={dashboard.mockDataEnabled}
             settings={dashboard.settings}
+            lastIssue={dashboard.lastIssue}
             checkingForUpdates={dashboard.checkingForUpdates}
             onLanguageChange={dashboard.setLanguage}
             onThemePreferenceChange={theme.setPreference}
