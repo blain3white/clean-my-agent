@@ -74,6 +74,7 @@ function App() {
             onRestoreArchive={dashboard.restoreArchive}
             onExport={(id) => dashboard.exportSession(id, 'markdown')}
             onRelay={dashboard.exportUniversalRelay}
+            onSessionDetail={dashboard.getSessionDetail}
           />
         )
       case 'cleanup':

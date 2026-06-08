@@ -1,4 +1,9 @@
-import type { AgentSource, DashboardSnapshot, SessionRecord } from '@/shared/types'
+import type {
+  AgentSource,
+  DashboardSnapshot,
+  SessionRecord,
+  UniversalRelayDocument,
+} from '@/shared/types'
 import { calculateUsageModelCost } from '@/shared/usage-pricing'
 
 const GB = 1024 ** 3
@@ -168,6 +173,88 @@ const sessions: SessionRecord[] = sessionBase.map((session) => {
     metadata: {},
   }
 })
+
+function detailTimestamp(session: SessionRecord, minutesOffset: number): string {
+  const base = new Date(session.lastUpdated).getTime()
+  return new Date(base + minutesOffset * 60 * 1000).toISOString()
+}
+
+export function mockSessionDetail(sessionId: string): UniversalRelayDocument {
+  const session = sessions.find((item) => item.id === sessionId) ?? sessions[0]
+  if (!session) throw new Error(`Demo session not found: ${sessionId}`)
+
+  const command = `pnpm test -- ${session.projectName}`
+  const filePath = `${session.projectPath ?? '/Users/demo/projects/clean-my-agent'}/src/features/sessions/SessionsView.tsx`
+
+  return {
+    schema: 'clean-my-agent.universal-session.v1',
+    exportedAt: now.toISOString(),
+    source: session.source,
+    session,
+    messages: [
+      {
+        id: `${session.id}-user-1`,
+        role: 'user',
+        createdAt: detailTimestamp(session, 0),
+        text: `Open the ${session.projectName} session and show me what happened in the conversation.`,
+        raw: { type: 'message' },
+      },
+      {
+        id: `${session.id}-assistant-1`,
+        role: 'assistant',
+        createdAt: detailTimestamp(session, 1),
+        text: 'I found the session record, loaded its relay metadata, and grouped the transcript into readable timeline events.',
+        raw: { type: 'message' },
+      },
+      {
+        id: `${session.id}-reasoning-1`,
+        role: 'assistant',
+        createdAt: detailTimestamp(session, 2),
+        text: 'Reasoning summary: identify the source, inspect message shape, then preserve tool and command records as first-class history items.',
+        raw: { type: 'reasoning', kind: 'thinking' },
+      },
+      {
+        id: `${session.id}-tool-1`,
+        role: 'tool',
+        createdAt: detailTimestamp(session, 3),
+        text: `Read ${filePath} and returned the relevant session table structure.`,
+        raw: {
+          type: 'tool_call',
+          toolName: 'mcp__filesystem__read_file',
+          status: 'completed',
+          input: { path: filePath },
+        },
+      },
+      {
+        id: `${session.id}-assistant-2`,
+        role: 'assistant',
+        createdAt: detailTimestamp(session, 4),
+        text: 'The UI can render this as a read-only detail panel with filters for users, assistants, tools, reasoning, and commands.',
+        raw: { type: 'message' },
+      },
+      {
+        id: `${session.id}-command-1`,
+        role: 'tool',
+        createdAt: detailTimestamp(session, 5),
+        text: command,
+        raw: {
+          type: 'command',
+          command,
+          cwd: session.projectPath,
+          status: 'success',
+        },
+      },
+    ],
+    files: [{ path: filePath, reason: 'Referenced while reviewing the session detail UI' }],
+    commands: [{ command, cwd: session.projectPath, createdAt: detailTimestamp(session, 5) }],
+    git: {
+      branch: session.branch,
+      projectPath: session.projectPath,
+    },
+    attachments: [],
+    warnings: ['Demo detail data mirrors the universal relay schema for UI preview.'],
+  }
+}
 
 const usage = Array.from({ length: 30 }, (_, index) => {
   const date = new Date(now.getTime() - (29 - index) * 24 * 60 * 60 * 1000)

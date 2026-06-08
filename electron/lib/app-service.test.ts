@@ -649,6 +649,52 @@ describe('exportUniversalRelay', () => {
 })
 
 // ---------------------------------------------------------------------------
+// getSessionDetail
+// ---------------------------------------------------------------------------
+
+describe('getSessionDetail', () => {
+  it('returns universal relay detail for a live session without writing an export file', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await writeJsonlSession(fixtureRoot, 'codex')
+    const snapshot = await service.rescan()
+    const session = snapshot.sessions.find((s) => s.source === 'codex')
+    assert.ok(session)
+
+    const detail = await service.getSessionDetail(session.id)
+
+    expect(detail.schema).toBe('clean-my-agent.universal-session.v1')
+    expect(detail.session.id).toBe(session.id)
+    expect(detail.messages.some((message) => message.text.includes('rare migration needle'))).toBe(
+      true,
+    )
+    await expect(stat(path.join(userDataPath, 'Exports'))).rejects.toThrow()
+  })
+
+  it('returns detail for an archived session by temporarily restoring the archive', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await writeJsonlSession(fixtureRoot, 'codex')
+    const snapshot = await service.rescan()
+    const session = snapshot.sessions.find((s) => s.source === 'codex')
+    assert.ok(session)
+
+    await service.archiveSession(session.id)
+    const detail = await service.getSessionDetail(session.id)
+
+    expect(detail.session.storageState).toBe('archived')
+    expect(detail.messages.some((message) => message.text.includes('rare migration needle'))).toBe(
+      true,
+    )
+  })
+
+  it('throws when session detail is requested for an unknown session', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await service.rescan()
+    await expect(service.getSessionDetail('missing-session')).rejects.toThrow(/Session not found/)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // archiveSession + idempotent archived branch
 // ---------------------------------------------------------------------------
 

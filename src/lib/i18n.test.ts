@@ -47,6 +47,7 @@ describe('i18n helpers', () => {
     expect(translate('zh-CN', 'toast.languageUpdated', { language: '中文' })).toBe(
       '语言已更新为 中文',
     )
+    expect(translate('zh-CN', 'sessions.detailSessionId', { id: 'demo-1' })).toBe('会话 ID：demo-1')
     expect(translate('fr', 'toast.languageUpdated', { language: 'Français' })).toBe(
       'Langue mise à jour : Français',
     )

@@ -10,6 +10,7 @@ const api: CleanMyAgentApi = {
   restoreArchive: (archiveId: string) => ipcRenderer.invoke('archive:restore', archiveId),
   exportSession: (sessionId: string, format: ExportFormat) =>
     ipcRenderer.invoke('session:export', sessionId, format),
+  getSessionDetail: (sessionId: string) => ipcRenderer.invoke('session:detail', sessionId),
   scanCleanup: (sessionId?: string) => ipcRenderer.invoke('cleanup:scan', sessionId),
   moveCleanupToTrash: (candidateIds: string[]) => ipcRenderer.invoke('cleanup:trash', candidateIds),
   purgeExpiredTrash: () => ipcRenderer.invoke('trash:purgeExpired'),

@@ -13,6 +13,7 @@ import type {
   StorageSlice,
   TrashRecord,
   UsagePoint,
+  UniversalRelayDocument,
 } from '../../src/shared/types'
 import { agentSources, appLanguages, defaultLanguage, exportFormats } from '../../src/shared/types'
 import { adapters, adapterFor, enabledProviderSources } from './adapters'
@@ -597,30 +598,14 @@ export class AppService {
     return exportPath
   }
 
+  async getSessionDetail(sessionId: string): Promise<UniversalRelayDocument> {
+    return this.buildUniversalRelayDocument(validateIdentifier(sessionId, 'sessionId'))
+  }
+
   async exportUniversalRelay(sessionId: string): Promise<string> {
-    const session = this.requireSession(validateIdentifier(sessionId, 'sessionId'))
-    const adapter = adapterFor(session.source)
-    const archive =
-      session.storageState === 'archived' ? this.db.getArchiveBySessionId(session.id) : undefined
-    let restorePath: string | undefined
-    let document
-    try {
-      if (archive) {
-        const extension = path.extname(archive.originalPath) || '.session'
-        restorePath = path.join(
-          this.userDataPath,
-          'Temp',
-          'relay',
-          `${archive.sessionId}-${Date.now()}${extension}`,
-        )
-        await decompressFileBrotli(archive.archivePath, restorePath)
-      }
-      document = await adapter.toUniversal(
-        restorePath ? { ...session, storagePath: restorePath } : session,
-      )
-    } finally {
-      if (restorePath) await removePath(restorePath)
-    }
+    const sessionIdValue = validateIdentifier(sessionId, 'sessionId')
+    const session = this.requireSession(sessionIdValue)
+    const document = await this.buildUniversalRelayDocument(sessionIdValue)
     const exportPath = path.join(
       this.requireSettings().exportDirectory,
       `${sanitizeName(session.title)}-${session.id}.universal-session.json`,
@@ -847,6 +832,31 @@ export class AppService {
     ]).find((item) => item.id === sessionId)
     if (!session) throw new Error(`Session not found: ${sessionId}`)
     return session
+  }
+
+  private async buildUniversalRelayDocument(sessionId: string): Promise<UniversalRelayDocument> {
+    const session = this.requireSession(sessionId)
+    const adapter = adapterFor(session.source)
+    const archive =
+      session.storageState === 'archived' ? this.db.getArchiveBySessionId(session.id) : undefined
+    let restorePath: string | undefined
+
+    try {
+      if (archive) {
+        const extension = path.extname(archive.originalPath) || '.session'
+        restorePath = path.join(
+          this.userDataPath,
+          'Temp',
+          'relay',
+          `${archive.sessionId}-${Date.now()}${extension}`,
+        )
+        await decompressFileBrotli(archive.archivePath, restorePath)
+      }
+
+      return adapter.toUniversal(restorePath ? { ...session, storagePath: restorePath } : session)
+    } finally {
+      if (restorePath) await removePath(restorePath)
+    }
   }
 
   private mergeBackupStatus(sessions: SessionRecord[]): SessionRecord[] {

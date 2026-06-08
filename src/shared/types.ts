@@ -260,6 +260,7 @@ export type CleanMyAgentApi = {
   getSnapshot: () => Promise<DashboardSnapshot>
   rescan: () => Promise<DashboardSnapshot>
   refreshRecentSessions: () => Promise<DashboardSnapshot>
+  getSessionDetail: (sessionId: string) => Promise<UniversalRelayDocument>
   backupSession: (sessionId: string) => Promise<BackupRecord>
   archiveSession: (sessionId: string) => Promise<ArchiveRecord>
   restoreArchive: (archiveId: string) => Promise<void>

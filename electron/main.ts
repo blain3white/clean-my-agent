@@ -89,6 +89,9 @@ function registerIpc(): void {
   ipcMain.handle('session:export', (_event, sessionId: string, format: ExportFormat) =>
     service.exportSession(sessionId, format),
   )
+  ipcMain.handle('session:detail', (_event, sessionId: string) =>
+    service.getSessionDetail(sessionId),
+  )
   ipcMain.handle('cleanup:scan', () => service.scanCleanup())
   ipcMain.handle('cleanup:trash', (_event, candidateIds: string[]) =>
     service.moveCleanupToTrash(candidateIds),
