@@ -17,9 +17,12 @@
   "scripts": {
     "dev": "tsx scripts/dev-server.ts electron",
     "dev:renderer": "tsx scripts/dev-server.ts renderer",
+    "dev:website": "pnpm --filter @clean-my-agent/website dev",
     "build": "tsc -b && electron-vite build",
+    "build:website": "pnpm --filter @clean-my-agent/website build",
     "dist:mac": "pnpm build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --arm64 --publish never",
     "lint": "eslint .",
+    "lint:website": "pnpm --filter @clean-my-agent/website lint",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "git config core.hooksPath .githooks || true",
