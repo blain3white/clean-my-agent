@@ -32,6 +32,9 @@
     "test:coverage": "vitest run --coverage",
     "verify:ui-screenshots": "tsx scripts/verify-ui-screenshots.ts",
     "verify:pr-tests": "tsx scripts/verify-pr-tests.ts",
+    "video:studio": "remotion studio video/index.ts",
+    "video:still": "remotion still video/index.ts CleanMyAgentDemo30 out/clean-my-agent-demo-30s-preview.png --frame=450",
+    "video:render": "remotion render video/index.ts CleanMyAgentDemo30 out/clean-my-agent-demo-30s.mp4",
     "check": "pnpm format:check && pnpm lint && pnpm test && pnpm verify:functions && pnpm build",
     "verify:functions": "tsx scripts/verify-functions.ts"
   },
@@ -104,6 +107,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@remotion/cli": "^4.0.474",
     "@tailwindcss/vite": "^4.3.0",
     "@types/node": "^22.19.19",
     "@types/react": "^19.2.14",
@@ -118,12 +122,14 @@
     "globals": "^17.6.0",
     "playwright": "^1.60.0",
     "prettier": "^3.8.3",
+    "remotion": "^4.0.474",
     "tailwindcss": "^4.3.0",
     "tsx": "^4.21.0",
     "tw-animate-css": "^1.4.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^7.3.5",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.8",
+    "zod": "4.3.6"
   }
 }
