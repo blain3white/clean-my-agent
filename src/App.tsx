@@ -191,9 +191,7 @@ function App() {
                 className={
                   activeView === 'cleanup'
                     ? 'cleanup-app-panel h-full min-w-0'
-                    : activeView === 'overview'
-                      ? 'min-w-0 p-3 sm:p-5'
-                      : 'min-w-[1120px] p-5'
+                    : 'min-w-0 p-3 sm:p-5'
                 }
               >
                 <Suspense fallback={viewFallback}>{content}</Suspense>

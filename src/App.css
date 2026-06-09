@@ -127,7 +127,7 @@ textarea,
 }
 
 .usage-page {
-  min-width: 1120px;
+  min-width: 0;
 }
 
 .usage-kpi-grid {
@@ -371,6 +371,26 @@ textarea,
 
 .usage-main-grid-balanced {
   grid-template-columns: minmax(0, 1fr) minmax(340px, 0.34fr);
+}
+
+@media (max-width: 1279px) {
+  .usage-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .usage-main-grid,
+  .usage-bottom-grid,
+  .usage-hero-grid,
+  .usage-main-grid-balanced {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .usage-kpi-grid,
+  .usage-forecast-values {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .usage-left-column,
