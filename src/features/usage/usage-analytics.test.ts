@@ -485,8 +485,15 @@ describe('buildUsageReport', () => {
           usageEvents: [{ timestamp: '2026-06-08T18:30:00.000Z', tokens: 450 }],
           relayFiles: [
             { path: '/repo/clean-my-agent/src/report.ts', lastSeenAt: '2026-06-08T18:30:00.000Z' },
+            {
+              path: '/repo/clean-my-agent/src/stale.ts',
+              lastSeenAt: '2026-06-07T18:30:00.000Z',
+            },
           ],
-          relayCommands: [{ command: 'pnpm check', createdAt: '2026-06-08T18:30:00.000Z' }],
+          relayCommands: [
+            { command: 'pnpm check', createdAt: '2026-06-08T18:30:00.000Z' },
+            { command: 'pnpm stale', createdAt: '2026-06-07T18:30:00.000Z' },
+          ],
         },
       }),
     ])
@@ -505,6 +512,8 @@ describe('buildUsageReport', () => {
       tokens: 450,
       cost: 9,
     })
+    expect(report.files.map((file) => file.path)).toEqual(['src/report.ts'])
+    expect(report.commands.map((command) => command.command)).toEqual(['pnpm check'])
   })
 
   it('renders markdown report sections', () => {
