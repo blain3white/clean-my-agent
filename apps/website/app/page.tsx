@@ -2,24 +2,37 @@ import {
   ArrowRight,
   CheckCircle2,
   Download,
+  FileArchive,
   GitBranch,
   ScanSearch,
   ShieldCheck,
+  Trash2,
 } from 'lucide-react'
-import Image from 'next/image'
 import Link from 'next/link'
-import { faqItems, pillars, product, quickWorkflow, supportedAgents, trustCards } from './content'
+import { faqItems, pillars, product, quickWorkflow, trustCards } from './content'
+import Aurora from './shared/aurora/Aurora'
 
 export default function HomePage() {
   return (
     <>
       <section className="hero">
+        <div className="hero-aurora" aria-hidden="true">
+          <Aurora
+            amplitude={1.25}
+            blend={0.42}
+            colorStops={['#0f766e', '#9ce0cf', '#4f46e5']}
+            speed={0.7}
+          />
+        </div>
         <div className="hero-copy">
-          <p className="eyebrow">Local-first desktop app</p>
+          <div className="hero-kicker">
+            <span>Local-first desktop app</span>
+            <span>Codex, Claude Code, Cursor, Gemini, OpenCode</span>
+          </div>
           <h1>{product.name}</h1>
           <p className="hero-subtitle">
-            Scan, understand, back up, export, and safely clean AI coding-agent sessions without
-            giving up local control.
+            A calm control surface for scanning, backing up, exporting, and safely cleaning local AI
+            coding-agent sessions.
           </p>
           <div className="hero-actions">
             <a className="button button-primary" href={product.downloadUrl}>
@@ -31,20 +44,81 @@ export default function HomePage() {
               <ArrowRight aria-hidden="true" size={18} />
             </Link>
           </div>
-          <div className="hero-meta" aria-label="Supported agents">
-            {supportedAgents.map((agent) => (
-              <span key={agent}>{agent}</span>
-            ))}
+          <div className="hero-proof" aria-label="Clean My Agent safety model">
+            <span>
+              <ScanSearch aria-hidden="true" size={16} />
+              Read-only scan
+            </span>
+            <span>
+              <FileArchive aria-hidden="true" size={16} />
+              Backup before risk
+            </span>
+            <span>
+              <Trash2 aria-hidden="true" size={16} />
+              Restore from Trash
+            </span>
           </div>
         </div>
-        <div className="hero-visual">
-          <Image
-            src="/images/clean-my-agent-hero.png"
-            alt="Clean My Agent dashboard showing storage, sessions, and cleanup status"
-            width={1672}
-            height={941}
-            priority
-          />
+        <div className="hero-stage" aria-label="Clean My Agent product preview">
+          <div className="hero-window">
+            <div className="window-bar">
+              <span />
+              <span />
+              <span />
+              <strong>Clean My Agent</strong>
+            </div>
+            <div className="window-grid">
+              <aside className="window-sidebar">
+                <span className="sidebar-label">Agent sources</span>
+                {[
+                  ['Codex', '12.4 GB'],
+                  ['Claude Code', '8.7 GB'],
+                  ['Cursor', '6.1 GB'],
+                  ['Gemini', '3.2 GB'],
+                  ['OpenCode', '2.8 GB'],
+                ].map(([agent, size]) => (
+                  <div className="source-row" key={agent}>
+                    <span>{agent}</span>
+                    <strong>{size}</strong>
+                  </div>
+                ))}
+              </aside>
+              <div className="window-main">
+                <div className="metric-row">
+                  <div>
+                    <span>Total scanned</span>
+                    <strong>33.2 GB</strong>
+                  </div>
+                  <div>
+                    <span>Reclaimable</span>
+                    <strong>4.7 GB</strong>
+                  </div>
+                  <div>
+                    <span>Sessions</span>
+                    <strong>1,835</strong>
+                  </div>
+                </div>
+                <div className="cleanup-board">
+                  <div>
+                    <span>Safe cleanup queue</span>
+                    <strong>Review before moving anything</strong>
+                  </div>
+                  {['Old temp files', 'Expired sessions', 'Large logs'].map((item, index) => (
+                    <div className="cleanup-row" key={item}>
+                      <span>{item}</span>
+                      <i>{['2.1 GB', '1.6 GB', '620 MB'][index]}</i>
+                    </div>
+                  ))}
+                </div>
+                <div className="safety-flow">
+                  <span>Scan</span>
+                  <span>Backup</span>
+                  <span>Trash</span>
+                  <span>Restore</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
