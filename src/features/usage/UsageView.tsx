@@ -40,6 +40,7 @@ import {
   formatHourRange,
   formatShortDate,
   formatUsageShare,
+  formatUsageTimezoneLabel,
   formatUsageTokens,
   heatLevel,
   usageHours,
@@ -275,10 +276,10 @@ function UsageKpiCard({
             </div>
           ) : (
             <>
-              <div className="mt-3 truncate text-[22px] font-semibold tracking-normal text-white">
+              <div className="mt-3 truncate text-[22px] font-semibold tracking-normal text-white tabular-nums">
                 {value}
               </div>
-              <div className="mt-0.5 truncate text-xs text-emerald-300">{detail}</div>
+              <div className="mt-0.5 truncate text-xs text-emerald-300 tabular-nums">{detail}</div>
             </>
           )}
         </div>
@@ -346,25 +347,27 @@ function UsageForecastPanel({ forecast }: { forecast: UsageForecast }) {
       <div className="usage-forecast-values">
         <div>
           <span>Projected tokens</span>
-          <strong>{formatUsageTokens(forecast.projectedTokens)}</strong>
+          <strong className="tabular-nums">{formatUsageTokens(forecast.projectedTokens)}</strong>
         </div>
         <div>
           <span>Projected cost</span>
-          <strong>{formatCost(forecast.projectedCost)}</strong>
+          <strong className="tabular-nums">{formatCost(forecast.projectedCost)}</strong>
         </div>
       </div>
       <div className="usage-forecast-progress" aria-hidden="true">
         <span style={{ width: `${progress}%` }} />
       </div>
       <div className="usage-forecast-meta">
-        <span>
+        <span className="tabular-nums">
           {forecast.elapsedDays}/{forecast.totalDays} days
         </span>
-        <span>{formatUsageTokens(forecast.observedTokens)} observed</span>
+        <span className="tabular-nums">{formatUsageTokens(forecast.observedTokens)} observed</span>
       </div>
       <div className="usage-forecast-deltas">
-        <span>{formatForecastDelta(forecast.tokenChangePercent)} tokens</span>
-        <span>{formatForecastDelta(forecast.costChangePercent)} cost</span>
+        <span className="tabular-nums">
+          {formatForecastDelta(forecast.tokenChangePercent)} tokens
+        </span>
+        <span className="tabular-nums">{formatForecastDelta(forecast.costChangePercent)} cost</span>
       </div>
     </div>
   )
@@ -386,10 +389,10 @@ function UsageForecastAlertRow({ alert }: { alert: UsageForecastAlert }) {
     <div className="usage-forecast-alert" data-severity={alert.severity}>
       <AlertTriangle className="size-4" />
       <span className="min-w-0">
-        <span className="block truncate font-semibold text-white/82">
+        <span className="block truncate font-semibold text-white/82 tabular-nums">
           {period} {metric} +{alert.deltaPercent.toFixed(1)}%
         </span>
-        <span className="block truncate text-white/46">
+        <span className="block truncate text-white/46 tabular-nums">
           {projected} projected vs {baseline} baseline
         </span>
       </span>
@@ -514,19 +517,19 @@ function UsageHeatmapCard({ rows, cells }: { rows: UsageHeatmapRow[]; cells: Usa
                     <div className="mt-2.5 space-y-2 text-[11px]">
                       <div className="usage-tooltip-row">
                         <span className="usage-tooltip-label">Tokens</span>
-                        <span className="usage-tooltip-value text-blue-300">
+                        <span className="usage-tooltip-value text-blue-300 tabular-nums">
                           {formatUsageTokens(cell.tokens)}
                         </span>
                       </div>
                       <div className="usage-tooltip-row">
                         <span className="usage-tooltip-label">Active sessions</span>
-                        <span className="usage-tooltip-value text-white/72">
+                        <span className="usage-tooltip-value text-white/72 tabular-nums">
                           {cell.sessions.toLocaleString()}
                         </span>
                       </div>
                       <div className="usage-tooltip-row">
                         <span className="usage-tooltip-label">Cost</span>
-                        <span className="usage-tooltip-value text-white/72">
+                        <span className="usage-tooltip-value text-white/72 tabular-nums">
                           {formatCost(cell.cost)}
                         </span>
                       </div>
@@ -586,13 +589,13 @@ function DailyUsageTrendTooltip({
               />
               {usageTokenLabels[key].replace(' Tokens', '')}
             </span>
-            <span className="font-mono text-white/70">{formatter(value)}</span>
+            <span className="font-mono text-white/70 tabular-nums">{formatter(value)}</span>
           </div>
         ))}
       </div>
       <div className="mt-2 flex items-center justify-between gap-6 border-t border-white/8 pt-2 text-xs">
         <span className="font-medium text-white">Total</span>
-        <span className="font-mono font-semibold text-blue-300">
+        <span className="font-mono font-semibold text-blue-300 tabular-nums">
           {formatter(point?.total ?? 0)}
         </span>
       </div>
@@ -716,8 +719,12 @@ function ByAgentCard({ rows }: { rows: AgentUsage[] }) {
                       }}
                     />
                   </div>
-                  <span className="text-right text-white/64">{formatUsageTokens(row.tokens)}</span>
-                  <span className="text-right text-white/54">{formatUsageShare(row.share)}</span>
+                  <span className="text-right text-white/64 tabular-nums">
+                    {formatUsageTokens(row.tokens)}
+                  </span>
+                  <span className="text-right text-white/54 tabular-nums">
+                    {formatUsageShare(row.share)}
+                  </span>
                 </>
               ) : (
                 <span className="col-span-3 text-white/38">No token metadata available</span>
@@ -728,8 +735,8 @@ function ByAgentCard({ rows }: { rows: AgentUsage[] }) {
         <div className="grid grid-cols-[96px_1fr_72px_48px] items-center gap-3 border-t border-white/8 pt-3 text-xs">
           <span className="text-white/58">Total</span>
           <span />
-          <span className="text-right text-white/62">{formatUsageTokens(total)}</span>
-          <span className="text-right text-white/54">{total > 0 ? '100%' : '--'}</span>
+          <span className="text-right text-white/62 tabular-nums">{formatUsageTokens(total)}</span>
+          <span className="text-right text-white/54 tabular-nums">{total > 0 ? '100%' : '--'}</span>
         </div>
       </CardContent>
     </Card>
@@ -800,8 +807,12 @@ function TokenMixCard({ mix }: { mix: TokenMix }) {
                 />
                 <span className="truncate">{usageTokenLabels[row.key]}</span>
               </span>
-              <span className="text-right text-white/58">{formatUsageTokens(row.value)}</span>
-              <span className="text-right text-white/45">{formatUsageShare(row.share)}</span>
+              <span className="text-right text-white/58 tabular-nums">
+                {formatUsageTokens(row.value)}
+              </span>
+              <span className="text-right text-white/45 tabular-nums">
+                {formatUsageShare(row.share)}
+              </span>
             </div>
           ))}
         </div>
@@ -866,7 +877,9 @@ function PriceRankingCard({
                 </TooltipTrigger>
                 <TooltipContent className="max-w-sm">{fullName}</TooltipContent>
               </Tooltip>
-              <span className="text-right text-white/66">{formatCost(project.cost)}</span>
+              <span className="text-right text-white/66 tabular-nums">
+                {formatCost(project.cost)}
+              </span>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="justify-self-end">
@@ -889,11 +902,13 @@ function PriceRankingCard({
         <div className="mt-3 grid grid-cols-2 gap-2 rounded-md border border-white/8 bg-white/[0.03] p-2.5 text-xs">
           <div className="min-w-0">
             <div className="text-white/42">Total Estimated Cost</div>
-            <div className="mt-1 font-semibold text-white/82">{formatCost(totalCost)}</div>
+            <div className="mt-1 font-semibold text-white/82 tabular-nums">
+              {formatCost(totalCost)}
+            </div>
           </div>
           <div className="min-w-0">
             <div className="text-white/42">Highest Cost Day</div>
-            <div className="mt-1 truncate font-semibold text-white/82">
+            <div className="mt-1 truncate font-semibold text-white/82 tabular-nums">
               {topCostDay && topCostDay.cost > 0
                 ? `${formatShortDate(topCostDay.date)} ${formatCost(topCostDay.cost)}`
                 : 'No cost data'}
@@ -905,9 +920,16 @@ function PriceRankingCard({
   )
 }
 
-function PeakActivityWindowsCard({ windows }: { windows: PeakWindow[] }) {
+function PeakActivityWindowsCard({
+  windows,
+  timezone,
+}: {
+  windows: PeakWindow[]
+  timezone: string
+}) {
   const visibleWindows = windows.slice(0, 5)
   const topWindow = visibleWindows[0]
+  const timezoneLabel = formatUsageTimezoneLabel(timezone)
 
   return (
     <Card className="glass-panel usage-peak-card rounded-lg py-0">
@@ -928,7 +950,7 @@ function PeakActivityWindowsCard({ windows }: { windows: PeakWindow[] }) {
         </div>
         <button type="button" className="usage-peak-timezone" aria-label="Peak activity timezone">
           <Clock className="size-3.5" />
-          <span>Local time (UTC-7)</span>
+          <span>{timezoneLabel}</span>
           <ChevronDown className="size-3.5" />
         </button>
       </CardHeader>
@@ -941,18 +963,18 @@ function PeakActivityWindowsCard({ windows }: { windows: PeakWindow[] }) {
                 <div className="usage-peak-top-time">
                   {formatPeakHourRange(topWindow.startHour, topWindow.endHour)}
                 </div>
-                <Badge className="usage-peak-share-badge">
+                <Badge className="usage-peak-share-badge tabular-nums">
                   <span />
                   {formatUsageShare(topWindow.share)}
                 </Badge>
               </div>
-              <div className="usage-peak-token-count">
+              <div className="usage-peak-token-count tabular-nums">
                 {formatUsageTokens(topWindow.tokens)} tokens
               </div>
               <PeakActivityChart windows={windows} />
               <div className="usage-peak-chart-caption">
                 <Clock className="size-3.5" />
-                <span>Local time (UTC-7)</span>
+                <span>{timezoneLabel}</span>
               </div>
             </div>
             <div className="usage-peak-ranking">
@@ -963,16 +985,18 @@ function PeakActivityWindowsCard({ windows }: { windows: PeakWindow[] }) {
                     className="usage-peak-row"
                     data-active={index === 0 ? 'true' : undefined}
                   >
-                    <span className="usage-peak-row-rank">{window.rank}</span>
+                    <span className="usage-peak-row-rank tabular-nums">{window.rank}</span>
                     <span className="usage-peak-row-copy">
                       <span className="usage-peak-row-time">
                         {formatPeakHourRange(window.startHour, window.endHour)}
                       </span>
-                      <span className="usage-peak-row-tokens">
+                      <span className="usage-peak-row-tokens tabular-nums">
                         {formatUsageTokens(window.tokens)} tokens
                       </span>
                     </span>
-                    <span className="usage-peak-row-share">{formatUsageShare(window.share)}</span>
+                    <span className="usage-peak-row-share tabular-nums">
+                      {formatUsageShare(window.share)}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -1036,7 +1060,9 @@ function UsageReportCard({
           ].map(([label, value]) => (
             <div key={label} className="rounded-md border border-white/8 bg-white/[0.03] p-2.5">
               <div className="text-[11px] text-white/42">{label}</div>
-              <div className="mt-1 truncate text-sm font-semibold text-white/82">{value}</div>
+              <div className="mt-1 truncate text-sm font-semibold text-white/82 tabular-nums">
+                {value}
+              </div>
             </div>
           ))}
         </div>
@@ -1075,10 +1101,10 @@ function UsageReportCard({
                       {project.projectPath ?? project.project}
                     </TooltipContent>
                   </Tooltip>
-                  <span className="text-right text-white/62">
+                  <span className="text-right text-white/62 tabular-nums">
                     {formatUsageTokens(project.tokens)}
                   </span>
-                  <span className="text-right text-white/45">
+                  <span className="text-right text-white/45 tabular-nums">
                     {formatUsageShare(project.share)}
                   </span>
                 </div>
@@ -1137,7 +1163,7 @@ function UsageReportCard({
                     <div className="truncate font-mono text-[11px] text-white/72">
                       {command.command}
                     </div>
-                    <div className="mt-0.5 truncate text-[11px] text-white/36">
+                    <div className="mt-0.5 truncate text-[11px] text-white/36 tabular-nums">
                       {command.sessions} session{command.sessions === 1 ? '' : 's'}
                       {command.cwd ? ` · ${command.cwd}` : ''}
                     </div>
@@ -1344,7 +1370,10 @@ export function UsageView({
       </section>
 
       <section className="usage-bottom-grid">
-        <PeakActivityWindowsCard windows={analytics.peakWindows} />
+        <PeakActivityWindowsCard
+          windows={analytics.peakWindows}
+          timezone={settings.usageTimezone}
+        />
         <TokenMixCard mix={analytics.tokenMix} />
       </section>
 

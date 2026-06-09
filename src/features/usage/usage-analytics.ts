@@ -172,6 +172,71 @@ export const usageTokenColors: Record<UsageTokenType, string> = {
 export const usagePeakColors = ['#60a5fa', '#a78bfa', '#34d399', '#fb923c', '#38bdf8', '#c084fc']
 export const usageHours = Array.from({ length: 24 }, (_, hour) => hour)
 const usageDefaultMix: TokenMix = { input: 0.506, output: 0.36, cache: 0.106, tools: 0.028 }
+const usageHourFormatterCache = new Map<string, Intl.DateTimeFormat>()
+
+export function resolveUsageTimezone(timezone = 'UTC'): string {
+  if (timezone.trim().toLowerCase() === 'local') {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    } catch {
+      return 'UTC'
+    }
+  }
+  return timezone.trim() || 'UTC'
+}
+
+function usageHourFormatterForTimezone(timezone: string): Intl.DateTimeFormat {
+  const resolvedTimezone = resolveUsageTimezone(timezone)
+  const cached = usageHourFormatterCache.get(resolvedTimezone)
+  if (cached) return cached
+
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: resolvedTimezone,
+    hour: 'numeric',
+    hourCycle: 'h23',
+  })
+  usageHourFormatterCache.set(resolvedTimezone, formatter)
+  return formatter
+}
+
+function usageHourFromTime(time: number, timezone: string): number {
+  try {
+    const hour = usageHourFormatterForTimezone(timezone)
+      .formatToParts(new Date(time))
+      .find((part) => part.type === 'hour')?.value
+    const parsed = Number(hour)
+    return Number.isFinite(parsed) ? parsed % 24 : new Date(time).getUTCHours()
+  } catch {
+    return new Date(time).getUTCHours()
+  }
+}
+
+function usageTimezoneOffsetLabel(timezone: string, date = new Date()): string {
+  const resolvedTimezone = resolveUsageTimezone(timezone)
+  try {
+    const label = new Intl.DateTimeFormat('en-US', {
+      timeZone: resolvedTimezone,
+      timeZoneName: 'shortOffset',
+      hour: 'numeric',
+    })
+      .formatToParts(date)
+      .find((part) => part.type === 'timeZoneName')?.value
+
+    if (!label) return resolvedTimezone
+    return label.replace(/^GMT$/, 'UTC').replace(/^GMT/, 'UTC')
+  } catch {
+    return resolvedTimezone
+  }
+}
+
+export function formatUsageTimezoneLabel(timezone = 'UTC', date = new Date()): string {
+  const isLocal = timezone.trim().toLowerCase() === 'local'
+  const resolvedTimezone = resolveUsageTimezone(timezone)
+  const offset = usageTimezoneOffsetLabel(resolvedTimezone, date)
+
+  if (isLocal) return `Local time (${resolvedTimezone}, ${offset})`
+  return `${resolvedTimezone} (${offset})`
+}
 
 export function usageDaysForPageRange(usage: UsagePoint[], range: UsagePageRange): number {
   if (range === 'all') return usage.length || 365
@@ -726,7 +791,7 @@ function buildUsageHeatmapData(
   for (const session of sessions) {
     const updated = new Date(session.lastUpdated)
     const date = dateKeyFromTime(updated.getTime(), timezone)
-    const hour = updated.getHours()
+    const hour = usageHourFromTime(updated.getTime(), timezone)
     const key = `${date}:${hour}`
     sessionsByDateHour.set(key, (sessionsByDateHour.get(key) ?? 0) + 1)
   }
@@ -885,20 +950,39 @@ export function buildUsageAnalytics(
   range: UsagePageRange,
   timezone = 'UTC',
 ) {
+  const resolvedTimezone = resolveUsageTimezone(timezone)
   const selectedUsage = usageForPageRange(snapshot.usage, range)
   const priorUsage = priorUsageForPageRange(snapshot.usage, range)
   const selectedDateKeys = new Set(selectedUsage.map((point) => point.date))
   const priorDateKeys = new Set(priorUsage.map((point) => point.date))
-  const rangeSessions = rangeSessionsForUsage(snapshot.sessions, range, selectedDateKeys, timezone)
-  const priorSessions = rangeSessionsForUsage(snapshot.sessions, range, priorDateKeys, timezone)
+  const rangeSessions = rangeSessionsForUsage(
+    snapshot.sessions,
+    range,
+    selectedDateKeys,
+    resolvedTimezone,
+  )
+  const priorSessions = rangeSessionsForUsage(
+    snapshot.sessions,
+    range,
+    priorDateKeys,
+    resolvedTimezone,
+  )
   const usageTokens = usageTotalForPoints(selectedUsage)
   const priorUsageTokens = usageTotalForPoints(priorUsage)
-  const sessionTokens = sessionTokenTotalForDates(snapshot.sessions, selectedDateKeys, timezone)
-  const priorSessionTokens = sessionTokenTotalForDates(snapshot.sessions, priorDateKeys, timezone)
+  const sessionTokens = sessionTokenTotalForDates(
+    snapshot.sessions,
+    selectedDateKeys,
+    resolvedTimezone,
+  )
+  const priorSessionTokens = sessionTokenTotalForDates(
+    snapshot.sessions,
+    priorDateKeys,
+    resolvedTimezone,
+  )
   const totalTokens = usageTokens || sessionTokens || sessionTokenTotal(rangeSessions)
   const priorTokens =
     range === 'all' ? 0 : priorUsageTokens || priorSessionTokens || sessionTokenTotal(priorSessions)
-  const allCostByDate = costByDateFromSessions(snapshot.sessions, timezone)
+  const allCostByDate = costByDateFromSessions(snapshot.sessions, resolvedTimezone)
   const estimatedCost =
     range === 'all'
       ? sessionCostTotal(rangeSessions)
@@ -910,7 +994,11 @@ export function buildUsageAnalytics(
           100,
           ((range === 'all'
             ? sessionCostTokenTotal(rangeSessions)
-            : sessionCostTokenTotalForDates(snapshot.sessions, selectedDateKeys, timezone)) /
+            : sessionCostTokenTotalForDates(
+                snapshot.sessions,
+                selectedDateKeys,
+                resolvedTimezone,
+              )) /
             Math.max(1, totalTokens)) *
             100,
         )
@@ -925,7 +1013,7 @@ export function buildUsageAnalytics(
     range,
     rangeSessions,
     allCostByDate,
-    timezone,
+    resolvedTimezone,
   )
   const peakWindows = buildPeakWindows(heatmap.cells, totalTokens)
   const forecast = buildUsageForecasts(snapshot.usage, allCostByDate, snapshot.generatedAt)
@@ -955,7 +1043,7 @@ export function buildUsageAnalytics(
     selectedUsage,
     totalTokens,
     selectedDateKeys,
-    timezone,
+    resolvedTimezone,
     range === 'all',
   )
 
@@ -1138,16 +1226,17 @@ export function buildUsageReport(
   range: UsagePageRange,
   timezone = 'UTC',
 ): UsageReport {
-  const analytics = buildUsageAnalytics(snapshot, range, timezone)
+  const resolvedTimezone = resolveUsageTimezone(timezone)
+  const analytics = buildUsageAnalytics(snapshot, range, resolvedTimezone)
   const selectedUsage = analytics.selectedUsage
   const selectedDateKeys = analytics.selectedDateKeys
   const includeAllDates = range === 'all'
   const sessions = snapshot.sessions.filter((session) =>
-    hasSessionTokensInRange(session, selectedDateKeys, includeAllDates, timezone),
+    hasSessionTokensInRange(session, selectedDateKeys, includeAllDates, resolvedTimezone),
   )
   const totalTokens = sessions.reduce(
     (total, session) =>
-      total + sessionTokensInRange(session, selectedDateKeys, includeAllDates, timezone),
+      total + sessionTokensInRange(session, selectedDateKeys, includeAllDates, resolvedTimezone),
     0,
   )
   const projectMap = new Map<
@@ -1202,8 +1291,13 @@ export function buildUsageReport(
 
   for (const session of sessions) {
     const project = ensureProject(session)
-    project.tokens += sessionTokensInRange(session, selectedDateKeys, includeAllDates, timezone)
-    project.cost += sessionCostInRange(session, selectedDateKeys, includeAllDates, timezone)
+    project.tokens += sessionTokensInRange(
+      session,
+      selectedDateKeys,
+      includeAllDates,
+      resolvedTimezone,
+    )
+    project.cost += sessionCostInRange(session, selectedDateKeys, includeAllDates, resolvedTimezone)
     project.sessions.add(session.id)
 
     for (const item of relayFilesFromMetadata(session.metadata)) {
@@ -1214,7 +1308,7 @@ export function buildUsageReport(
           stringValue(item.lastSeenAt),
           selectedDateKeys,
           includeAllDates,
-          timezone,
+          resolvedTimezone,
         )
       ) {
         continue
@@ -1269,7 +1363,7 @@ export function buildUsageReport(
           stringValue(item.createdAt),
           selectedDateKeys,
           includeAllDates,
-          timezone,
+          resolvedTimezone,
         )
       ) {
         continue
@@ -1385,7 +1479,7 @@ export function buildUsageReport(
       totalTokens,
       estimatedCost: sessions.reduce(
         (total, session) =>
-          total + sessionCostInRange(session, selectedDateKeys, includeAllDates, timezone),
+          total + sessionCostInRange(session, selectedDateKeys, includeAllDates, resolvedTimezone),
         0,
       ),
       activeSessions: sessions.length,

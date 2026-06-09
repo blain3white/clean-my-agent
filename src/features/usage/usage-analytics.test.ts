@@ -16,8 +16,10 @@ import {
   formatHourRange,
   formatShortDate,
   formatUsageShare,
+  formatUsageTimezoneLabel,
   formatUsageTokens,
   heatLevel,
+  resolveUsageTimezone,
   usageReportMarkdown,
   usageDaysForPageRange,
   usageSparklineTrend,
@@ -130,6 +132,24 @@ describe('usage formatting helpers', () => {
   it('formats short dates with a raw fallback for invalid dates', () => {
     expect(formatShortDate('2026-06-06')).toBe('Jun 06')
     expect(formatShortDate('not-a-date')).toBe('-date')
+  })
+
+  it('formats usage timezone labels with the current offset', () => {
+    const date = new Date('2026-06-09T12:00:00.000Z')
+
+    expect(formatUsageTimezoneLabel('Asia/Shanghai', date)).toBe('Asia/Shanghai (UTC+8)')
+    expect(formatUsageTimezoneLabel('America/Los_Angeles', date)).toBe(
+      'America/Los_Angeles (UTC-7)',
+    )
+  })
+
+  it('resolves local usage timezone settings before display and analytics', () => {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    const label = formatUsageTimezoneLabel('local', new Date('2026-06-09T12:00:00.000Z'))
+
+    expect(resolveUsageTimezone('local')).toBe(timezone)
+    expect(label).toContain(`Local time (${timezone}, `)
+    expect(label).toContain('UTC')
   })
 })
 
@@ -250,6 +270,33 @@ describe('buildUsageAnalytics', () => {
       tokens: 450,
       cost: 9,
     })
+  })
+
+  it('uses configured timezone hours for heatmap sessions and peak windows', () => {
+    const usage = [usagePoint('2026-06-09', { codex: 450 })]
+    const snapshot = makeSnapshot(usage, [
+      makeSession({
+        lastUpdated: '2026-06-08T18:30:00.000Z',
+        tokens: {
+          input: 100,
+          output: 100,
+          cached: 250,
+          total: 450,
+          costUsd: 9,
+          estimated: false,
+        },
+        metadata: {
+          usageEvents: [{ timestamp: '2026-06-08T18:30:00.000Z', tokens: 450 }],
+        },
+      }),
+    ])
+
+    const analytics = buildUsageAnalytics(snapshot, '7d', 'Asia/Shanghai')
+    const observedCell = analytics.heatmap.cells.find(
+      (cell) => cell.date === '2026-06-09' && cell.hour === 2,
+    )
+
+    expect(observedCell).toMatchObject({ sessions: 1 })
   })
 
   it('forecasts current week and month usage and flags abnormal increases', () => {
