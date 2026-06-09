@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, rm, truncate, utimes, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, truncate, utimes, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { AgentAdapter, adapterFor, adapters } from './adapters'
 import type { AppSettings } from '../../src/shared/types'
+import { scannerProviderFor, scannerProviders } from './scanner-providers'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -33,7 +34,7 @@ function makeSettings(scanRoot: string, source = 'codex'): AppSettings {
   }
 }
 
-/** Build an AgentAdapter with a custom definition (AgentDefinition is module-private). */
+/** Build an AgentAdapter with a custom provider plugin. */
 function makeAdapter(source: string, roots: string[], patterns = ['**/*.jsonl', '**/*.json']) {
   return new AgentAdapter({
     source,
@@ -371,7 +372,7 @@ describe('unreadable and missing roots', () => {
     expect(state.installed).toBe(false)
     expect(state.readable).toBe(false)
     expect(sessions).toHaveLength(0)
-    expect(state.diagnostics?.some((item) => item.code === 'root-not-readable')).toBe(true)
+    expect(state.diagnostics?.some((item) => item.code === 'root-missing')).toBe(true)
   })
 
   it('recentCandidates returns empty array for missing roots', async () => {
@@ -379,6 +380,37 @@ describe('unreadable and missing roots', () => {
     const adapter = makeAdapter('codex', [missingRoot])
     const candidates = await adapter.recentCandidates(makeSettings(missingRoot), 10)
     expect(candidates).toHaveLength(0)
+  })
+
+  it('does not warn about optional missing roots when another root is readable', async () => {
+    const root = await makeTmpDir('mixed-readable-roots')
+    const missingRoot = path.join(tmpBase, 'missing-optional-' + Date.now())
+    const adapter = makeAdapter('codex', [root, missingRoot])
+    const { state } = await adapter.scan({
+      ...makeSettings(root),
+      scanRoots: { codex: [root, missingRoot] },
+    })
+
+    expect(state.installed).toBe(true)
+    expect(state.readable).toBe(true)
+    expect(state.diagnostics?.some((item) => item.code === 'root-missing')).toBe(false)
+  })
+
+  it('reports existing unreadable roots as permission-blocked', async () => {
+    const root = await makeTmpDir('permission-blocked-root')
+    const adapter = makeAdapter('codex', [root])
+
+    try {
+      await chmod(root, 0o000)
+      const { state } = await adapter.scan(makeSettings(root))
+
+      expect(state.installed).toBe(false)
+      expect(state.readable).toBe(false)
+      expect(state.diagnostics?.some((item) => item.code === 'root-permission-blocked')).toBe(true)
+      expect(state.diagnostics?.some((item) => item.code === 'root-missing')).toBe(false)
+    } finally {
+      await chmod(root, 0o700)
+    }
   })
 })
 
@@ -528,6 +560,74 @@ describe('adapterFor', () => {
     expect(sources).toContain('cursor')
     expect(sources).toContain('gemini')
     expect(sources).toContain('opencode')
+  })
+
+  it('builds adapters from scanner provider plugins', () => {
+    expect(scannerProviders.map((provider) => provider.source)).toEqual([
+      'codex',
+      'claude',
+      'cursor',
+      'gemini',
+      'opencode',
+      'custom',
+    ])
+    expect(scannerProviderFor('codex')?.name).toBe('Codex')
+    expect(adapters.map((adapter) => adapter.source)).toEqual(
+      scannerProviders.map((provider) => provider.source),
+    )
+  })
+
+  it('uses provider parser overrides for scan and universal export', async () => {
+    const root = await makeTmpDir('provider-parser-override')
+    const filePath = path.join(root, 'session.plugin')
+    await writeFile(filePath, 'provider-specific session payload')
+    const parseCalls: string[] = []
+
+    const adapter = new AgentAdapter({
+      source: 'codex',
+      name: 'Plugin Parser',
+      roots: [root],
+      patterns: ['**/*.plugin'],
+      note: 'test plugin parser',
+      parserName: 'test-provider-parser',
+      async parseSession(pathToParse) {
+        parseCalls.push(pathToParse)
+        return {
+          title: 'Plugin parsed session',
+          projectPath: '/workspace/plugin-project',
+          branch: 'plugin-branch',
+          messages: [{ id: 'm1', role: 'user', text: 'Message from provider parser' }],
+          files: [],
+          commands: [],
+          attachments: [],
+          tokens: {
+            input: 1,
+            output: 2,
+            cached: 0,
+            cacheCreation: 0,
+            cacheRead: 0,
+            total: 3,
+            estimated: false,
+          },
+          usageByDate: { '2026-01-01': 3 },
+          usageEvents: [{ timestamp: '2026-01-01T00:00:00.000Z', tokens: 3 }],
+          metadata: { sourceFormat: 'provider-parser-test' },
+        }
+      },
+    })
+
+    const { sessions } = await adapter.scan(makeSettings(root))
+
+    expect(sessions).toHaveLength(1)
+    expect(sessions[0].title).toBe('Plugin parsed session')
+    expect(sessions[0].projectName).toBe('plugin-project')
+    expect(sessions[0].metadata.parser).toBe('test-provider-parser')
+    expect(sessions[0].metadata.sourceFormat).toBe('provider-parser-test')
+    expect(parseCalls).toEqual([filePath])
+
+    const doc = await adapter.toUniversal(sessions[0])
+    expect(parseCalls).toEqual([filePath, filePath])
+    expect(doc.messages).toEqual([{ id: 'm1', role: 'user', text: 'Message from provider parser' }])
   })
 })
 

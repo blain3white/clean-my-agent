@@ -8,11 +8,14 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.next
+apps/*/.next
 dist
 dist-ssr
 out
 coverage
 release
+output/playwright/
 .codex-backups/
 external/claude-code-history-viewer/
 .env

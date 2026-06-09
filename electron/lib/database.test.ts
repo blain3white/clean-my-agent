@@ -7,6 +7,7 @@ import { removePath } from './files'
 import type {
   ArchiveRecord,
   BackupRecord,
+  RecoveryRecord,
   SessionRecord,
   TrashRecord,
 } from '../../src/shared/types'
@@ -51,6 +52,21 @@ function makeSession(overrides: Partial<SessionRecord> = {}): SessionRecord {
       sourceFormat: 'jsonl',
       usageByDate: { '2026-01-01': 10 },
       usageEvents: [{ timestamp: '2026-01-01T23:30:00.000Z', tokens: 10 }],
+      relayFiles: [
+        {
+          path: '/tmp/project/src/app.ts',
+          reason: 'Referenced by filePath',
+          lastSeenAt: '2026-01-01T23:30:00.000Z',
+        },
+      ],
+      relayCommands: [
+        {
+          command: 'pnpm test',
+          cwd: '/tmp/project',
+          createdAt: '2026-01-01T23:30:00.000Z',
+        },
+      ],
+      gitChangedFiles: ['src/app.ts'],
       extraField: 'should be stripped',
     },
     ...overrides,
@@ -103,6 +119,31 @@ function makeTrash(candidateId = 'candidate-1', id = 'trash-1'): TrashRecord {
     deletedAt: '2026-01-04T00:00:00.000Z',
     risk: 'low',
     recoverable: true,
+  }
+}
+
+function makeRecovery(id = 'recovery-1'): RecoveryRecord {
+  return {
+    id,
+    operation: 'backup',
+    status: 'completed',
+    title: 'Backup session',
+    explanation: 'Copies a session into Backups.',
+    startedAt: '2026-01-05T00:00:00.000Z',
+    finishedAt: '2026-01-05T00:00:01.000Z',
+    targetId: 'session-1',
+    targetTitle: 'Test Session',
+    source: 'codex',
+    risk: 'low',
+    steps: [{ label: 'Completed', status: 'completed', at: '2026-01-05T00:00:01.000Z' }],
+    paths: [{ label: 'Backup', path: '/tmp/backups/backup-1', role: 'backup' }],
+    undo: {
+      kind: 'remove-created-paths',
+      available: true,
+      label: 'Remove this backup',
+    },
+    diagnostics: [],
+    metadata: { backupId: 'backup-1' },
   }
 }
 
@@ -243,7 +284,7 @@ describe('getSession', () => {
 // ---------------------------------------------------------------------------
 
 describe('compactSessionForStorage behavior', () => {
-  it('preserves parser, root, relativePath, sourceFormat, usageByDate, and usageEvents', () => {
+  it('preserves parser, root, usage, and report metadata', () => {
     db.replaceSessions([makeSession()])
     const stored = db.getSession('session-1')!
     expect(stored.metadata.parser).toBe('codex-v1')
@@ -254,6 +295,21 @@ describe('compactSessionForStorage behavior', () => {
     expect(stored.metadata.usageEvents).toEqual([
       { timestamp: '2026-01-01T23:30:00.000Z', tokens: 10 },
     ])
+    expect(stored.metadata.relayFiles).toEqual([
+      {
+        path: '/tmp/project/src/app.ts',
+        reason: 'Referenced by filePath',
+        lastSeenAt: '2026-01-01T23:30:00.000Z',
+      },
+    ])
+    expect(stored.metadata.relayCommands).toEqual([
+      {
+        command: 'pnpm test',
+        cwd: '/tmp/project',
+        createdAt: '2026-01-01T23:30:00.000Z',
+      },
+    ])
+    expect(stored.metadata.gitChangedFiles).toEqual(['src/app.ts'])
   })
 
   it('strips extra metadata fields', () => {
@@ -323,6 +379,12 @@ describe('backup CRUD', () => {
     const backups = db.getBackups()
     expect(backups[0].id).toBe('b2')
     expect(backups[1].id).toBe('b1')
+  })
+
+  it('deletes a backup record', () => {
+    db.insertBackup(makeBackup())
+    db.deleteBackupRecord('backup-1')
+    expect(db.getBackups()).toHaveLength(0)
   })
 })
 
@@ -426,5 +488,39 @@ describe('trash CRUD', () => {
     db.insertTrash(makeTrash())
     db.deleteTrashRecord('ghost')
     expect(db.getTrash()).toHaveLength(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Recovery CRUD
+// ---------------------------------------------------------------------------
+
+describe('recovery CRUD', () => {
+  it('starts empty', () => {
+    expect(db.getRecoveryRecords()).toEqual([])
+  })
+
+  it('upserts and retrieves recovery records', () => {
+    db.upsertRecovery(makeRecovery())
+    db.upsertRecovery({ ...makeRecovery(), status: 'failed', error: 'boom' })
+
+    const records = db.getRecoveryRecords()
+    expect(records).toHaveLength(1)
+    expect(records[0].status).toBe('failed')
+    expect(db.getRecoveryRecord('recovery-1')?.error).toBe('boom')
+  })
+
+  it('returns recovery records ordered by started_at DESC', () => {
+    db.upsertRecovery(makeRecovery('old'))
+    db.upsertRecovery({
+      ...makeRecovery('new'),
+      startedAt: '2026-02-01T00:00:00.000Z',
+    })
+
+    expect(db.getRecoveryRecords().map((record) => record.id)).toEqual(['new', 'old'])
+  })
+
+  it('returns undefined for unknown recovery id', () => {
+    expect(db.getRecoveryRecord('missing')).toBeUndefined()
   })
 })

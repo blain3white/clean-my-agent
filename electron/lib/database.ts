@@ -1,6 +1,7 @@
 import type {
   ArchiveRecord,
   BackupRecord,
+  RecoveryRecord,
   SessionRecord,
   TrashRecord,
 } from '../../src/shared/types'
@@ -33,6 +34,9 @@ function compactSessionForStorage(session: SessionRecord): SessionRecord {
       sourceFormat: session.metadata.sourceFormat,
       usageByDate: session.metadata.usageByDate,
       usageEvents: session.metadata.usageEvents,
+      relayFiles: session.metadata.relayFiles,
+      relayCommands: session.metadata.relayCommands,
+      gitChangedFiles: session.metadata.gitChangedFiles,
     },
   }
 }
@@ -80,6 +84,13 @@ export class LocalDatabase {
         candidate_id TEXT NOT NULL,
         deleted_at TEXT NOT NULL,
         size_bytes INTEGER NOT NULL,
+        data TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS recovery (
+        id TEXT PRIMARY KEY,
+        operation TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at TEXT NOT NULL,
         data TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS settings (
@@ -188,6 +199,10 @@ export class LocalDatabase {
     return rows.map((row) => JSON.parse(String(row.data)) as BackupRecord)
   }
 
+  deleteBackupRecord(id: string): void {
+    this.requireDb().prepare('DELETE FROM backups WHERE id = ?').run(id)
+  }
+
   insertArchive(record: ArchiveRecord): void {
     this.requireDb()
       .prepare(
@@ -256,6 +271,32 @@ export class LocalDatabase {
 
   deleteTrashRecord(id: string): void {
     this.requireDb().prepare('DELETE FROM trash WHERE id = ?').run(id)
+  }
+
+  upsertRecovery(record: RecoveryRecord): void {
+    this.requireDb()
+      .prepare(
+        `INSERT INTO recovery (id, operation, status, started_at, data)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           operation = excluded.operation,
+           status = excluded.status,
+           started_at = excluded.started_at,
+           data = excluded.data`,
+      )
+      .run(record.id, record.operation, record.status, record.startedAt, JSON.stringify(record))
+  }
+
+  getRecoveryRecords(): RecoveryRecord[] {
+    const rows = this.requireDb()
+      .prepare('SELECT data FROM recovery ORDER BY started_at DESC')
+      .all()
+    return rows.map((row) => JSON.parse(String(row.data)) as RecoveryRecord)
+  }
+
+  getRecoveryRecord(id: string): RecoveryRecord | undefined {
+    const row = this.requireDb().prepare('SELECT data FROM recovery WHERE id = ?').get(id)
+    return row ? (JSON.parse(String(row.data)) as RecoveryRecord) : undefined
   }
 
   getSetting<T>(key: string): T | undefined {

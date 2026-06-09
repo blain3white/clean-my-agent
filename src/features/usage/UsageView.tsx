@@ -1,13 +1,18 @@
 import { type ReactNode, useMemo, useState } from 'react'
 import {
   Activity,
+  AlertTriangle,
   Bot,
+  CalendarClock,
   ChartNoAxesColumn,
   ChevronDown,
   ChevronRight,
   Clock,
   Database,
+  Download,
+  FileText,
   Gauge,
+  Terminal,
 } from 'lucide-react'
 import {
   Area,
@@ -25,7 +30,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { sourceColors } from '@/lib/agent-colors'
 import { formatCost } from '@/lib/format'
-import type { DashboardSnapshot } from '@/shared/types'
+import type { AppSettings, DashboardSnapshot } from '@/shared/types'
 import type { UsagePageRange } from '@/features/usage/ranges'
 import {
   buildUsageAnalytics,
@@ -49,7 +54,13 @@ import {
   type TokenMix,
   type UsageHeatmapCell,
   type UsageHeatmapRow,
+  type UsageForecast,
+  type UsageForecastAlert,
+  type UsageForecasts,
   type UsageTokenType,
+  buildUsageReport,
+  exportUsageReportMarkdown,
+  type UsageReport,
 } from '@/features/usage/usage-analytics'
 
 const usageHeatmapMetrics: Array<{ value: UsageHeatmapMetric; label: string }> = [
@@ -114,7 +125,7 @@ function formatPeakHourRange(startHour: number, endHour: number): string {
   return `${formatPeakHourLabel(startHour)} – ${formatPeakHourLabel(endHour)}`
 }
 
-function formatProjectDisplayName(project: ProjectUsage): string {
+function formatProjectDisplayName(project: Pick<ProjectUsage, 'project' | 'projectPath'>): string {
   const value = project.projectPath || project.project
   const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '')
   return normalized.split('/').filter(Boolean).pop() || project.project
@@ -308,6 +319,108 @@ function UsageSectionTitle({
         {action}
       </div>
     </CardHeader>
+  )
+}
+
+function formatForecastDelta(value: number | null): string {
+  if (value === null) return 'No baseline'
+  const sign = value >= 0 ? '+' : ''
+  return `${sign}${value.toFixed(1)}%`
+}
+
+function forecastConfidenceLabel(forecast: UsageForecast): string {
+  if (forecast.confidence === 'high') return 'High confidence'
+  if (forecast.confidence === 'medium') return 'Medium confidence'
+  return 'Low confidence'
+}
+
+function UsageForecastPanel({ forecast }: { forecast: UsageForecast }) {
+  const progress = Math.min(100, Math.max(0, (forecast.elapsedDays / forecast.totalDays) * 100))
+
+  return (
+    <div className="usage-forecast-panel">
+      <div className="usage-forecast-panel-header">
+        <span className="usage-forecast-period">{forecast.label}</span>
+        <Badge className="usage-forecast-confidence">{forecastConfidenceLabel(forecast)}</Badge>
+      </div>
+      <div className="usage-forecast-values">
+        <div>
+          <span>Projected tokens</span>
+          <strong>{formatUsageTokens(forecast.projectedTokens)}</strong>
+        </div>
+        <div>
+          <span>Projected cost</span>
+          <strong>{formatCost(forecast.projectedCost)}</strong>
+        </div>
+      </div>
+      <div className="usage-forecast-progress" aria-hidden="true">
+        <span style={{ width: `${progress}%` }} />
+      </div>
+      <div className="usage-forecast-meta">
+        <span>
+          {forecast.elapsedDays}/{forecast.totalDays} days
+        </span>
+        <span>{formatUsageTokens(forecast.observedTokens)} observed</span>
+      </div>
+      <div className="usage-forecast-deltas">
+        <span>{formatForecastDelta(forecast.tokenChangePercent)} tokens</span>
+        <span>{formatForecastDelta(forecast.costChangePercent)} cost</span>
+      </div>
+    </div>
+  )
+}
+
+function UsageForecastAlertRow({ alert }: { alert: UsageForecastAlert }) {
+  const period = alert.period === 'week' ? 'Week' : 'Month'
+  const metric = alert.metric === 'cost' ? 'cost' : 'tokens'
+  const projected =
+    alert.metric === 'cost'
+      ? formatCost(alert.projectedValue)
+      : formatUsageTokens(alert.projectedValue)
+  const baseline =
+    alert.metric === 'cost'
+      ? formatCost(alert.baselineValue)
+      : formatUsageTokens(alert.baselineValue)
+
+  return (
+    <div className="usage-forecast-alert" data-severity={alert.severity}>
+      <AlertTriangle className="size-4" />
+      <span className="min-w-0">
+        <span className="block truncate font-semibold text-white/82">
+          {period} {metric} +{alert.deltaPercent.toFixed(1)}%
+        </span>
+        <span className="block truncate text-white/46">
+          {projected} projected vs {baseline} baseline
+        </span>
+      </span>
+    </div>
+  )
+}
+
+function UsageForecastCard({ forecast }: { forecast: UsageForecasts }) {
+  return (
+    <Card className="glass-panel rounded-lg py-4">
+      <UsageSectionTitle
+        title="AI Spend Forecast"
+        description="Projected usage for the current week and month."
+      />
+      <CardContent className="space-y-3">
+        <UsageForecastPanel forecast={forecast.week} />
+        <UsageForecastPanel forecast={forecast.month} />
+        <div className="usage-forecast-alert-list">
+          {forecast.alerts.length > 0 ? (
+            forecast.alerts
+              .slice(0, 3)
+              .map((alert) => <UsageForecastAlertRow key={alert.id} alert={alert} />)
+          ) : (
+            <div className="usage-forecast-clear">
+              <CalendarClock className="size-4" />
+              <span>No unusual increases detected</span>
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -879,6 +992,171 @@ function PeakActivityWindowsCard({ windows }: { windows: PeakWindow[] }) {
   )
 }
 
+function UsageReportCard({
+  report,
+  snapshot,
+  range,
+  timezone,
+}: {
+  report: UsageReport
+  snapshot: DashboardSnapshot
+  range: UsagePageRange
+  timezone: string
+}) {
+  const topProjects = report.projects.slice(0, 4)
+  const topFiles = report.files.slice(0, 6)
+  const topCommands = report.commands.slice(0, 4)
+
+  return (
+    <Card className="glass-panel rounded-lg py-4">
+      <UsageSectionTitle
+        title="Weekly / Project Report"
+        description="Summarized from scanned local AI sessions, token metadata, file references, commands, and git diff file paths."
+        action={
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => exportUsageReportMarkdown(snapshot, range, timezone)}
+            className="gap-1.5 text-white/65 hover:bg-white/7 hover:text-white"
+          >
+            <Download className="size-3.5" />
+            Markdown
+          </Button>
+        }
+      />
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-6 gap-2">
+          {[
+            ['Tokens', formatUsageTokens(report.summary.totalTokens)],
+            ['Sessions', report.summary.activeSessions.toLocaleString()],
+            ['Projects', report.summary.projectCount.toLocaleString()],
+            ['Files', report.summary.fileCount.toLocaleString()],
+            ['Commands', report.summary.commandCount.toLocaleString()],
+            ['Cost', formatCost(report.summary.estimatedCost)],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-md border border-white/8 bg-white/[0.03] p-2.5">
+              <div className="text-[11px] text-white/42">{label}</div>
+              <div className="mt-1 truncate text-sm font-semibold text-white/82">{value}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] gap-4">
+          <div className="min-w-0 space-y-3">
+            <div className="text-xs font-medium text-white/72">Highlights</div>
+            <div className="grid gap-2">
+              {report.highlights.map((item) => (
+                <div
+                  key={item}
+                  className="flex min-w-0 items-start gap-2 rounded-md border border-white/8 bg-white/[0.025] p-2 text-xs text-white/62"
+                >
+                  <FileText className="mt-0.5 size-3.5 shrink-0 text-blue-300" />
+                  <span className="min-w-0">{item}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="min-w-0 space-y-3">
+            <div className="text-xs font-medium text-white/72">Top Projects</div>
+            <div className="space-y-2">
+              {topProjects.map((project) => (
+                <div
+                  key={`${project.project}-${project.projectPath ?? ''}`}
+                  className="grid grid-cols-[minmax(0,1fr)_86px_54px] items-center gap-2 rounded-md border border-white/8 bg-white/[0.025] p-2 text-xs"
+                >
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="truncate font-medium text-white/76">
+                        {formatProjectDisplayName(project)}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-sm">
+                      {project.projectPath ?? project.project}
+                    </TooltipContent>
+                  </Tooltip>
+                  <span className="text-right text-white/62">
+                    {formatUsageTokens(project.tokens)}
+                  </span>
+                  <span className="text-right text-white/45">
+                    {formatUsageShare(project.share)}
+                  </span>
+                </div>
+              ))}
+              {topProjects.length === 0 && (
+                <div className="rounded-md border border-white/8 bg-white/[0.03] p-3 text-xs text-white/42">
+                  No project activity in this range
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] gap-4">
+          <div className="min-w-0 space-y-3">
+            <div className="text-xs font-medium text-white/72">Produced / Referenced Files</div>
+            <div className="grid gap-2">
+              {topFiles.map((file) => (
+                <div
+                  key={`${file.path}-${file.projects.join(',')}`}
+                  className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-2 rounded-md border border-white/8 bg-white/[0.025] p-2 text-xs"
+                >
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="truncate font-mono text-[11px] text-white/70">
+                        {file.path}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-md">
+                      {file.reason} · {file.projects.join(', ')}
+                    </TooltipContent>
+                  </Tooltip>
+                  <Badge className="justify-self-end rounded-md border-white/10 bg-white/7 text-[10px] text-white/58">
+                    {file.changed ? 'changed' : 'seen'}
+                  </Badge>
+                </div>
+              ))}
+              {topFiles.length === 0 && (
+                <div className="rounded-md border border-white/8 bg-white/[0.03] p-3 text-xs text-white/42">
+                  No file metadata detected
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="min-w-0 space-y-3">
+            <div className="text-xs font-medium text-white/72">Command Signals</div>
+            <div className="grid gap-2">
+              {topCommands.map((command) => (
+                <div
+                  key={`${command.command}-${command.cwd ?? ''}`}
+                  className="flex min-w-0 items-start gap-2 rounded-md border border-white/8 bg-white/[0.025] p-2 text-xs"
+                >
+                  <Terminal className="mt-0.5 size-3.5 shrink-0 text-emerald-300" />
+                  <div className="min-w-0">
+                    <div className="truncate font-mono text-[11px] text-white/72">
+                      {command.command}
+                    </div>
+                    <div className="mt-0.5 truncate text-[11px] text-white/36">
+                      {command.sessions} session{command.sessions === 1 ? '' : 's'}
+                      {command.cwd ? ` · ${command.cwd}` : ''}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {topCommands.length === 0 && (
+                <div className="rounded-md border border-white/8 bg-white/[0.03] p-3 text-xs text-white/42">
+                  No command metadata detected
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 function UsageEmptyView() {
   return (
     <Card className="glass-panel rounded-lg py-4">
@@ -963,14 +1241,23 @@ export function UsageView({
   snapshot,
   range,
   loading,
+  settings,
   onSelectProject,
 }: {
   snapshot: DashboardSnapshot
   range: UsagePageRange
   loading: boolean
+  settings: AppSettings
   onSelectProject: (project?: ProjectUsage) => void
 }) {
-  const analytics = useMemo(() => buildUsageAnalytics(snapshot, range), [snapshot, range])
+  const analytics = useMemo(
+    () => buildUsageAnalytics(snapshot, range, settings.usageTimezone),
+    [snapshot, range, settings.usageTimezone],
+  )
+  const report = useMemo(
+    () => buildUsageReport(snapshot, range, settings.usageTimezone),
+    [snapshot, range, settings.usageTimezone],
+  )
 
   if (loading) return <UsageLoadingView />
   if (analytics.summary.totalTokens <= 0 && analytics.summary.activeSessions <= 0) {
@@ -1051,6 +1338,7 @@ export function UsageView({
         </div>
         <div className="space-y-4">
           <ByAgentCard rows={analytics.agentRows} />
+          <UsageForecastCard forecast={analytics.forecast} />
           <PriceRankingCard projects={analytics.projectRows} onSelectProject={onSelectProject} />
         </div>
       </section>
@@ -1059,6 +1347,13 @@ export function UsageView({
         <PeakActivityWindowsCard windows={analytics.peakWindows} />
         <TokenMixCard mix={analytics.tokenMix} />
       </section>
+
+      <UsageReportCard
+        report={report}
+        snapshot={snapshot}
+        range={range}
+        timezone={settings.usageTimezone}
+      />
     </div>
   )
 }

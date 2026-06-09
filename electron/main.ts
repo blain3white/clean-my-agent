@@ -99,6 +99,11 @@ function registerIpc(): void {
   )
   ipcMain.handle('trash:purgeExpired', () => service.purgeExpiredTrash())
   ipcMain.handle('trash:restore', (_event, trashId: string) => service.restoreTrash(trashId))
+  ipcMain.handle('recovery:list', () => service.getRecoveryRecords())
+  ipcMain.handle('recovery:diagnose', (_event, recoveryId: string) =>
+    service.diagnoseRecovery(recoveryId),
+  )
+  ipcMain.handle('recovery:undo', (_event, recoveryId: string) => service.undoRecovery(recoveryId))
   ipcMain.handle('relay:exportUniversal', (_event, sessionId: string) =>
     service.exportUniversalRelay(sessionId),
   )
@@ -117,6 +122,7 @@ function registerIpc(): void {
   ipcMain.handle('shell:beep', () => {
     shell.beep()
   })
+  ipcMain.handle('diagnostics:export', () => service.exportDiagnostics())
   ipcMain.handle('app:getLaunchAtLogin', () => app.getLoginItemSettings().openAtLogin)
   ipcMain.handle('app:setLaunchAtLogin', (_event, enabled: boolean) => {
     app.setLoginItemSettings({ openAtLogin: enabled })
@@ -128,7 +134,11 @@ function registerIpc(): void {
 
 app.whenReady().then(async () => {
   nativeTheme.themeSource = 'system'
-  service = new AppService({ userDataPath: app.getPath('userData'), openPath: openTarget })
+  service = new AppService({
+    userDataPath: app.getPath('userData'),
+    appVersion: app.getVersion(),
+    openPath: openTarget,
+  })
   updateService = new UpdateService({
     userDataPath: app.getPath('userData'),
     currentVersion: app.getVersion(),

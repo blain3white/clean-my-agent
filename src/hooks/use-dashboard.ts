@@ -10,13 +10,27 @@ import {
   type CleanupCandidate,
   type DashboardSnapshot,
   type ExportFormat,
+  type RecoveryRecord,
   type UniversalRelayDocument,
 } from '@/shared/types'
 import { loadSessionDetail } from './session-detail-api'
 
+export type DashboardIssueKind =
+  | 'scan-failed'
+  | 'refresh-failed'
+  | 'update-failed'
+  | 'network-failed'
+
+export type DashboardIssue = {
+  kind: DashboardIssueKind
+  detail: string
+  occurredAt: string
+}
+
 type DashboardState = {
   snapshot: DashboardSnapshot
   loading: boolean
+  lastIssue: DashboardIssue | null
   settings: AppSettings
   mockDataEnabled: boolean
   language: AppLanguage
@@ -40,10 +54,13 @@ type DashboardState = {
   restoreArchive: (archiveId: string) => Promise<void>
   exportSession: (sessionId: string, format: ExportFormat) => Promise<void>
   exportUniversalRelay: (sessionId: string) => Promise<void>
+  exportDiagnostics: () => Promise<void>
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<void>
   restoreTrash: (trashId: string) => Promise<void>
   purgeExpiredTrash: () => Promise<void>
+  diagnoseRecovery: (recoveryId: string) => Promise<RecoveryRecord | undefined>
+  undoRecovery: (recoveryId: string) => Promise<void>
 }
 
 const agentNames: Record<AgentSource, string> = {
@@ -133,9 +150,24 @@ const emptySnapshot = (): DashboardSnapshot => ({
   archives: [],
   backups: [],
   trash: [],
+  recovery: [],
   usage: [],
   storage: [],
 })
+
+const errorMessage = (error: unknown): string => {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  return 'Unknown error'
+}
+
+const isNetworkFailure = (error: unknown): boolean =>
+  /(network|fetch|offline|timeout|timed out|econn|enotfound|eai_again|etimedout|socket|tls|proxy)/i.test(
+    errorMessage(error),
+  )
+
+const updateIssueKind = (error: unknown): DashboardIssueKind =>
+  isNetworkFailure(error) ? 'network-failed' : 'update-failed'
 
 export function useDashboard(): DashboardState {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(() => emptySnapshot())
@@ -151,6 +183,7 @@ export function useDashboard(): DashboardState {
   })
   const [loading, setLoading] = useState(true)
   const [checkingForUpdates, setCheckingForUpdates] = useState(false)
+  const [lastIssue, setLastIssue] = useState<DashboardIssue | null>(null)
   const t = useCallback(
     (key: Parameters<typeof translate>[1], values?: Parameters<typeof translate>[2]) =>
       translate(settings.language, key, values),
@@ -187,17 +220,18 @@ export function useDashboard(): DashboardState {
   }, [])
 
   const load = useCallback(
-    async (force = false) => {
+    async (force = false): Promise<boolean> => {
       if (settings.mockDataEnabled) {
         setSnapshot(mockSnapshot)
         setLoading(false)
-        return
+        setLastIssue(null)
+        return true
       }
 
       if (!window.cleanMyAgent) {
         setSnapshot(emptySnapshot())
         setLoading(false)
-        return
+        return true
       }
 
       setLoading(true)
@@ -206,10 +240,20 @@ export function useDashboard(): DashboardState {
           ? await window.cleanMyAgent.rescan()
           : await window.cleanMyAgent.getSnapshot()
         setSnapshot(next)
+        setLastIssue((current) =>
+          current?.kind === 'scan-failed' || current?.kind === 'refresh-failed' ? null : current,
+        )
+        return true
       } catch (error) {
         console.error(error)
         toast.error(t('toast.readLocalDataError'))
+        setLastIssue({
+          kind: 'scan-failed',
+          detail: errorMessage(error),
+          occurredAt: new Date().toISOString(),
+        })
         setSnapshot(emptySnapshot())
+        return false
       } finally {
         setLoading(false)
       }
@@ -228,9 +272,17 @@ export function useDashboard(): DashboardState {
       () => {
         void window.cleanMyAgent
           ?.refreshRecentSessions()
-          .then(setSnapshot)
+          .then((next) => {
+            setSnapshot(next)
+            setLastIssue((current) => (current?.kind === 'refresh-failed' ? null : current))
+          })
           .catch((error) => {
             console.error(error)
+            setLastIssue({
+              kind: 'refresh-failed',
+              detail: errorMessage(error),
+              occurredAt: new Date().toISOString(),
+            })
             if (settings.soundEffects && settings.errorSound) {
               void import('@/features/cleanup/cleanup-system-sound').then(
                 ({ playCleanupSystemSound }) => playCleanupSystemSound(settings.soundVolume / 100),
@@ -253,6 +305,11 @@ export function useDashboard(): DashboardState {
     if (!settings.checkForUpdates || !window.cleanMyAgent) return
     void window.cleanMyAgent.checkForUpdates().catch((error) => {
       console.error(error)
+      setLastIssue({
+        kind: updateIssueKind(error),
+        detail: errorMessage(error),
+        occurredAt: new Date().toISOString(),
+      })
     })
   }, [settings.checkForUpdates])
 
@@ -265,6 +322,9 @@ export function useDashboard(): DashboardState {
     setCheckingForUpdates(true)
     try {
       const result = await window.cleanMyAgent.checkForUpdates()
+      setLastIssue((current) =>
+        current?.kind === 'update-failed' || current?.kind === 'network-failed' ? null : current,
+      )
       if (result.available) {
         toast.success(
           t('toast.updateAvailable', {
@@ -280,6 +340,11 @@ export function useDashboard(): DashboardState {
       )
     } catch (error) {
       console.error(error)
+      setLastIssue({
+        kind: updateIssueKind(error),
+        detail: errorMessage(error),
+        occurredAt: new Date().toISOString(),
+      })
       toast.error(t('toast.updateCheckError'))
     } finally {
       setCheckingForUpdates(false)
@@ -295,6 +360,9 @@ export function useDashboard(): DashboardState {
     setCheckingForUpdates(true)
     try {
       const result = await window.cleanMyAgent.downloadLatestUpdate()
+      setLastIssue((current) =>
+        current?.kind === 'update-failed' || current?.kind === 'network-failed' ? null : current,
+      )
       if (!result.available) {
         toast.success(
           t('toast.noUpdateAvailable', {
@@ -322,6 +390,11 @@ export function useDashboard(): DashboardState {
       await window.cleanMyAgent.openPath(result.downloadedPath)
     } catch (error) {
       console.error(error)
+      setLastIssue({
+        kind: updateIssueKind(error),
+        detail: errorMessage(error),
+        occurredAt: new Date().toISOString(),
+      })
       toast.error(t('toast.updateCheckError'))
     } finally {
       setCheckingForUpdates(false)
@@ -400,6 +473,7 @@ export function useDashboard(): DashboardState {
         if (enabled) {
           setSnapshot(mockSnapshot)
           setLoading(false)
+          setLastIssue(null)
           toast.success(t('toast.demoEnabled'))
         } else {
           toast.success(t('toast.liveEnabled'))
@@ -409,9 +483,15 @@ export function useDashboard(): DashboardState {
               ? await window.cleanMyAgent.getSnapshot()
               : emptySnapshot()
             setSnapshot(next)
+            setLastIssue((current) => (current?.kind === 'scan-failed' ? null : current))
           } catch (error) {
             console.error(error)
             toast.error(t('toast.readLocalDataError'))
+            setLastIssue({
+              kind: 'scan-failed',
+              detail: errorMessage(error),
+              occurredAt: new Date().toISOString(),
+            })
             setSnapshot(emptySnapshot())
           } finally {
             setLoading(false)
@@ -459,7 +539,8 @@ export function useDashboard(): DashboardState {
       },
       downloadLatestUpdate: runUpdateDownload,
       rescan: async () => {
-        await load(true)
+        const didScan = await load(true)
+        if (!didScan) return
         if (!settings.mockDataEnabled && settings.soundEffects && settings.scanSound) {
           const { playCleanupSystemSound } = await import('@/features/cleanup/cleanup-system-sound')
           await playCleanupSystemSound(settings.soundVolume / 100)
@@ -482,6 +563,7 @@ export function useDashboard(): DashboardState {
         try {
           const next = await window.cleanMyAgent.refreshRecentSessions()
           setSnapshot(next)
+          setLastIssue((current) => (current?.kind === 'refresh-failed' ? null : current))
           if (settings.soundEffects && settings.scanSound) {
             const { playCleanupSystemSound } =
               await import('@/features/cleanup/cleanup-system-sound')
@@ -490,6 +572,11 @@ export function useDashboard(): DashboardState {
           toast.success(t('toast.recentRefreshed'))
         } catch (error) {
           console.error(error)
+          setLastIssue({
+            kind: 'refresh-failed',
+            detail: errorMessage(error),
+            occurredAt: new Date().toISOString(),
+          })
           if (settings.soundEffects && settings.errorSound) {
             const { playCleanupSystemSound } =
               await import('@/features/cleanup/cleanup-system-sound')
@@ -550,6 +637,20 @@ export function useDashboard(): DashboardState {
         }
         const exportPath = await window.cleanMyAgent.exportUniversalRelay(sessionId)
         toast.success(t('toast.relayExported', { path: exportPath }))
+      },
+      exportDiagnostics: async () => {
+        if (!window.cleanMyAgent) {
+          toast.info(t('toast.diagnosticsDesktopOnly'))
+          return
+        }
+
+        try {
+          const exportPath = await window.cleanMyAgent.exportDiagnostics()
+          toast.success(t('toast.diagnosticsExported', { path: exportPath }))
+        } catch (error) {
+          console.error(error)
+          toast.error(t('toast.diagnosticsExportError'))
+        }
       },
       scanCleanup: async () => {
         if (settings.mockDataEnabled || !window.cleanMyAgent) {
@@ -627,6 +728,41 @@ export function useDashboard(): DashboardState {
           toast.error(t('toast.trashPurgeError'))
         }
       },
+      diagnoseRecovery: async (recoveryId: string) => {
+        if (!window.cleanMyAgent) {
+          toast.info(t('toast.recoveryDesktopOnly'))
+          return undefined
+        }
+
+        try {
+          const record = await window.cleanMyAgent.diagnoseRecovery(recoveryId)
+          setSnapshot((current) => ({
+            ...current,
+            recovery: current.recovery.map((item) => (item.id === record.id ? record : item)),
+          }))
+          toast.success(t('toast.recoveryDiagnosed'))
+          return record
+        } catch (error) {
+          console.error(error)
+          toast.error(t('toast.recoveryDiagnoseError'))
+          return undefined
+        }
+      },
+      undoRecovery: async (recoveryId: string) => {
+        if (!window.cleanMyAgent) {
+          toast.info(t('toast.recoveryDesktopOnly'))
+          return
+        }
+
+        try {
+          await window.cleanMyAgent.undoRecovery(recoveryId)
+          toast.success(t('toast.recoveryUndoComplete'))
+          await load(true)
+        } catch (error) {
+          console.error(error)
+          toast.error(t('toast.recoveryUndoError'))
+        }
+      },
     }),
     [load, runUpdateCheck, runUpdateDownload, settings, snapshot.cleanup, t],
   )
@@ -634,6 +770,7 @@ export function useDashboard(): DashboardState {
   return {
     snapshot,
     loading,
+    lastIssue,
     settings,
     mockDataEnabled: settings.mockDataEnabled,
     language: settings.language,

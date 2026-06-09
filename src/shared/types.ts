@@ -139,6 +139,84 @@ export type TrashRecord = {
   recoverable: boolean
 }
 
+export type RecoveryOperation =
+  | 'backup'
+  | 'archive'
+  | 'restore'
+  | 'export'
+  | 'trash'
+  | 'purge-trash'
+
+export type RecoveryStatus = 'running' | 'completed' | 'failed' | 'undone'
+
+export type RecoveryStepStatus = 'pending' | 'completed' | 'failed' | 'skipped'
+
+export type RecoveryStep = {
+  label: string
+  status: RecoveryStepStatus
+  at?: string
+  detail?: string
+}
+
+export type RecoveryPathRole =
+  | 'source'
+  | 'destination'
+  | 'checkpoint'
+  | 'backup'
+  | 'export'
+  | 'trash'
+  | 'restored'
+
+export type RecoveryPath = {
+  label: string
+  path: string
+  role: RecoveryPathRole
+  optional?: boolean
+}
+
+export type RecoveryDiagnostic = {
+  level: 'info' | 'warning' | 'error'
+  code: string
+  message: string
+  path?: string
+}
+
+export type RecoveryUndoKind =
+  | 'none'
+  | 'remove-created-paths'
+  | 'restore-trash'
+  | 'restore-archive'
+  | 'restore-purged-trash'
+  | 'restore-pre-restore-archive'
+  | 'restore-pre-restore-trash'
+
+export type RecoveryUndo = {
+  kind: RecoveryUndoKind
+  available: boolean
+  label: string
+  reason?: string
+}
+
+export type RecoveryRecord = {
+  id: string
+  operation: RecoveryOperation
+  status: RecoveryStatus
+  title: string
+  explanation: string
+  startedAt: string
+  finishedAt?: string
+  targetId?: string
+  targetTitle?: string
+  source?: AgentSource
+  risk?: RiskLevel
+  steps: RecoveryStep[]
+  paths: RecoveryPath[]
+  undo: RecoveryUndo
+  diagnostics: RecoveryDiagnostic[]
+  error?: string
+  metadata: Record<string, unknown>
+}
+
 export type UsagePoint = {
   date: string
   codex: number
@@ -177,6 +255,7 @@ export type DashboardSnapshot = {
   archives: ArchiveRecord[]
   backups: BackupRecord[]
   trash: TrashRecord[]
+  recovery: RecoveryRecord[]
   usage: UsagePoint[]
   storage: StorageSlice[]
 }
@@ -297,6 +376,98 @@ export type UpdateDownloadResult = UpdateReleaseCheckResult & {
   downloadedBytes?: number
 }
 
+export type DiagnosticOperationStatus = 'success' | 'error'
+
+export type DiagnosticOperation = {
+  id: string
+  operation: string
+  startedAt: string
+  finishedAt: string
+  durationMs: number
+  status: DiagnosticOperationStatus
+  error?: {
+    name: string
+    message: string
+  }
+}
+
+export type DiagnosticPerformanceMetric = {
+  operation: string
+  count: number
+  errorCount: number
+  averageDurationMs: number
+  maxDurationMs: number
+  lastDurationMs: number
+  lastFinishedAt: string
+}
+
+export type DiagnosticReport = {
+  schema: 'clean-my-agent.diagnostic-report.v1'
+  generatedAt: string
+  app: {
+    name: string
+    version: string
+    nodeVersion: string
+    electronVersion?: string
+    chromeVersion?: string
+    v8Version?: string
+  }
+  system: {
+    platform: string
+    arch: string
+    release: string
+    cpuCount: number
+    totalMemoryBytes: number
+    freeMemoryBytes: number
+    locale: string
+    timezone: string
+  }
+  privacy: {
+    fullPaths: 'redacted'
+    sessionContent: 'excluded'
+    sessionMetadata: 'excluded'
+    operationArguments: 'excluded'
+  }
+  settings: {
+    language: AppLanguage
+    usageTimezone: string
+    scanOnLaunch: boolean
+    backgroundScan: boolean
+    mockDataEnabled: boolean
+    cleanupRetentionDays: number
+    trashRetentionDays: number
+    excludedFolderCount: number
+    customScanRootCount: number
+    enabledProviders: Partial<Record<AgentSource, boolean>>
+  }
+  scanSources: Array<{
+    source: AgentSource
+    name: string
+    enabled: boolean
+    installed: boolean
+    readable: boolean
+    rootCount: number
+    configuredRootCount: number
+    rootIds: string[]
+    sessionCount: number
+    liveSessionCount: number
+    sizeBytes: number
+    scannedFiles?: number
+    skippedFiles?: number
+    lastScannedAt?: string
+    diagnostics: Array<{
+      level: AgentScanDiagnostic['level']
+      code: string
+      message: string
+      pathId?: string
+      count?: number
+    }>
+  }>
+  errorLogs: DiagnosticOperation[]
+  recentOperations: DiagnosticOperation[]
+  performance: DiagnosticPerformanceMetric[]
+}
+
 export type CleanMyAgentApi = {
   getSnapshot: () => Promise<DashboardSnapshot>
   rescan: () => Promise<DashboardSnapshot>
@@ -311,12 +482,16 @@ export type CleanMyAgentApi = {
   moveCleanupToTrash: (candidateIds: string[]) => Promise<TrashRecord[]>
   purgeExpiredTrash: () => Promise<TrashRecord[]>
   restoreTrash: (trashId: string) => Promise<void>
+  getRecoveryRecords: () => Promise<RecoveryRecord[]>
+  diagnoseRecovery: (recoveryId: string) => Promise<RecoveryRecord>
+  undoRecovery: (recoveryId: string) => Promise<RecoveryRecord>
   exportUniversalRelay: (sessionId: string) => Promise<string>
   getSettings: () => Promise<AppSettings>
   updateSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>
   chooseFolders: () => Promise<string[]>
   openPath: (path: string) => Promise<void>
   playSystemSound: () => Promise<void>
+  exportDiagnostics: () => Promise<string>
   getLaunchAtLogin: () => Promise<boolean>
   setLaunchAtLogin: (enabled: boolean) => Promise<boolean>
   checkForUpdates: () => Promise<UpdateReleaseCheckResult>

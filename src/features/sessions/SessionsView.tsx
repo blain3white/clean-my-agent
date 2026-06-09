@@ -7,8 +7,10 @@ import {
   HardDrive,
   RefreshCcw,
   Search,
+  SearchX,
 } from 'lucide-react'
 import { AgentGlyph } from '@/components/agent-glyph'
+import { EmptyState } from '@/components/empty-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -148,139 +150,158 @@ export function SessionsView({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.slice(0, 80).map((session) => {
-                  const archive = archivesBySessionId.get(session.id)
-                  return (
-                    <TableRow
-                      key={session.id}
-                      tabIndex={0}
-                      onClick={() => void openSessionDetail(session)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault()
-                          void openSessionDetail(session)
+                {filtered.length === 0 ? (
+                  <TableRow className="border-white/7 hover:bg-transparent">
+                    <TableCell colSpan={9} className="p-0">
+                      <EmptyState
+                        compact
+                        icon={SearchX}
+                        tone={sessions.length === 0 ? 'info' : 'neutral'}
+                        title={sessions.length === 0 ? 'No sessions scanned' : 'No matches'}
+                        body={
+                          sessions.length === 0
+                            ? 'Run a local scan after granting folder access or adding a provider path.'
+                            : 'Try a different search term or agent filter.'
                         }
-                      }}
-                      className="cursor-pointer border-white/7 outline-none hover:bg-white/[0.035] focus-visible:bg-white/[0.05]"
-                    >
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <AgentGlyph source={session.source} />
-                          <span className="text-xs text-white/70">
-                            {agentLabel[session.source]}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="max-w-[240px] truncate font-medium text-white/82">
-                        {session.title}
-                      </TableCell>
-                      <TableCell className="max-w-[180px] truncate text-white/55">
-                        {session.projectName}
-                      </TableCell>
-                      <TableCell className="max-w-[160px] truncate text-white/45">
-                        {session.branch ?? t('common.unknown')}
-                      </TableCell>
-                      <TableCell className="text-white/45">
-                        {formatRelative(session.lastUpdated)}
-                      </TableCell>
-                      <TableCell className="text-right text-white/60">
-                        {formatTokens(session.tokens.total)}
-                      </TableCell>
-                      <TableCell className="text-right text-white/60">
-                        {formatBytes(session.sizeBytes)}
-                      </TableCell>
-                      <TableCell>
-                        {session.storageState === 'archived' ? (
-                          <Badge className="bg-emerald-400/10 text-emerald-300">
-                            <Archive className="size-3" />
-                            {t('status.vault')}
-                          </Badge>
-                        ) : session.backupStatus === 'backed-up' ? (
-                          <Badge className="bg-blue-400/10 text-blue-300">
-                            <CheckCircle2 className="size-3" />
-                            {t('status.live')}
-                          </Badge>
-                        ) : (
-                          <Badge
-                            variant="outline"
-                            className="border-amber-400/20 bg-amber-400/10 text-amber-300"
-                          >
-                            {t('status.live')}
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell onClick={(event) => event.stopPropagation()}>
-                        <div className="flex justify-end gap-1">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                onClick={() => void onBackup(session.id)}
-                                disabled={session.storageState === 'archived'}
-                                className="text-white/55 hover:bg-white/10 hover:text-white"
-                              >
-                                <Archive className="size-3.5" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>{t('sessions.backupTooltip')}</TooltipContent>
-                          </Tooltip>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                onClick={() =>
-                                  session.storageState === 'archived' && archive
-                                    ? void onRestoreArchive(archive.id)
-                                    : void onArchive(session.id)
-                                }
-                                className="text-white/55 hover:bg-white/10 hover:text-white"
-                              >
-                                {session.storageState === 'archived' ? (
-                                  <RefreshCcw className="size-3.5" />
-                                ) : (
-                                  <HardDrive className="size-3.5" />
-                                )}
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              {session.storageState === 'archived'
-                                ? t('sessions.restoreTooltip')
-                                : t('sessions.archiveTooltip')}
-                            </TooltipContent>
-                          </Tooltip>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                onClick={() => void onExport(session.id)}
-                                className="text-white/55 hover:bg-white/10 hover:text-white"
-                              >
-                                <Download className="size-3.5" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>{t('sessions.exportMarkdownTooltip')}</TooltipContent>
-                          </Tooltip>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                onClick={() => void onRelay(session.id)}
-                                className="text-white/55 hover:bg-white/10 hover:text-white"
-                              >
-                                <FileJson2 className="size-3.5" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>{t('sessions.exportRelayTooltip')}</TooltipContent>
-                          </Tooltip>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
+                        className="min-h-[260px] rounded-none border-0 bg-transparent shadow-none"
+                      />
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filtered.slice(0, 80).map((session) => {
+                    const archive = archivesBySessionId.get(session.id)
+                    return (
+                      <TableRow
+                        key={session.id}
+                        tabIndex={0}
+                        onClick={() => void openSessionDetail(session)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            void openSessionDetail(session)
+                          }
+                        }}
+                        className="cursor-pointer border-white/7 outline-none hover:bg-white/[0.035] focus-visible:bg-white/[0.05]"
+                      >
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <AgentGlyph source={session.source} />
+                            <span className="text-xs text-white/70">
+                              {agentLabel[session.source]}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="max-w-[240px] truncate font-medium text-white/82">
+                          {session.title}
+                        </TableCell>
+                        <TableCell className="max-w-[180px] truncate text-white/55">
+                          {session.projectName}
+                        </TableCell>
+                        <TableCell className="max-w-[160px] truncate text-white/45">
+                          {session.branch ?? t('common.unknown')}
+                        </TableCell>
+                        <TableCell className="text-white/45">
+                          {formatRelative(session.lastUpdated)}
+                        </TableCell>
+                        <TableCell className="text-right text-white/60">
+                          {formatTokens(session.tokens.total)}
+                        </TableCell>
+                        <TableCell className="text-right text-white/60">
+                          {formatBytes(session.sizeBytes)}
+                        </TableCell>
+                        <TableCell>
+                          {session.storageState === 'archived' ? (
+                            <Badge className="bg-emerald-400/10 text-emerald-300">
+                              <Archive className="size-3" />
+                              {t('status.vault')}
+                            </Badge>
+                          ) : session.backupStatus === 'backed-up' ? (
+                            <Badge className="bg-blue-400/10 text-blue-300">
+                              <CheckCircle2 className="size-3" />
+                              {t('status.live')}
+                            </Badge>
+                          ) : (
+                            <Badge
+                              variant="outline"
+                              className="border-amber-400/20 bg-amber-400/10 text-amber-300"
+                            >
+                              {t('status.live')}
+                            </Badge>
+                          )}
+                        </TableCell>
+                        <TableCell onClick={(event) => event.stopPropagation()}>
+                          <div className="flex justify-end gap-1">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  onClick={() => void onBackup(session.id)}
+                                  disabled={session.storageState === 'archived'}
+                                  className="text-white/55 hover:bg-white/10 hover:text-white"
+                                >
+                                  <Archive className="size-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>{t('sessions.backupTooltip')}</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  onClick={() =>
+                                    session.storageState === 'archived' && archive
+                                      ? void onRestoreArchive(archive.id)
+                                      : void onArchive(session.id)
+                                  }
+                                  className="text-white/55 hover:bg-white/10 hover:text-white"
+                                >
+                                  {session.storageState === 'archived' ? (
+                                    <RefreshCcw className="size-3.5" />
+                                  ) : (
+                                    <HardDrive className="size-3.5" />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {session.storageState === 'archived'
+                                  ? t('sessions.restoreTooltip')
+                                  : t('sessions.archiveTooltip')}
+                              </TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  onClick={() => void onExport(session.id)}
+                                  className="text-white/55 hover:bg-white/10 hover:text-white"
+                                >
+                                  <Download className="size-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>{t('sessions.exportMarkdownTooltip')}</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  onClick={() => void onRelay(session.id)}
+                                  className="text-white/55 hover:bg-white/10 hover:text-white"
+                                >
+                                  <FileJson2 className="size-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>{t('sessions.exportRelayTooltip')}</TooltipContent>
+                            </Tooltip>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })
+                )}
               </TableBody>
             </Table>
           </div>

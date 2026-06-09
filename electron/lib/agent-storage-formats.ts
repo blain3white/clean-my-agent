@@ -105,10 +105,15 @@ export function isRecord(value: unknown): value is JsonRecord {
 }
 
 export function isCodexJsonlRecord(value: unknown): value is CodexJsonlRecord {
+  const record = toRecord(value)
+  const type = asString(record?.type)
+  if (!record || !type) return false
   return (
-    isRecord(value) &&
-    typeof value.type === 'string' &&
-    ('payload' in value || 'timestamp' in value)
+    type === 'session_meta' ||
+    type === 'response_item' ||
+    type === 'event_msg' ||
+    type === 'turn_context' ||
+    'payload' in record
   )
 }
 

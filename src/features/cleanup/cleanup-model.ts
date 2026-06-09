@@ -13,8 +13,8 @@ import {
   type SessionRecord,
 } from '@/shared/types'
 
-export type CleanupStage = 'idle' | 'scanning' | 'complete' | 'review'
-export type CleanupScanStage = Exclude<CleanupStage, 'review'>
+export type CleanupStage = 'idle' | 'scanning' | 'complete' | 'review' | 'failed'
+export type CleanupScanStage = Exclude<CleanupStage, 'review' | 'failed'>
 export type CleanupOrbPhase = 'initial' | 'scalein' | 'running' | 'scaleout' | 'finish'
 export type CleanupFilter = 'all' | 'high' | 'medium' | 'low' | 'recoverable'
 export type CleanupSort = 'size' | 'risk' | 'agent'

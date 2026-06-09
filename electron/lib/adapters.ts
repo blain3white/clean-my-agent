@@ -1,6 +1,6 @@
 import path from 'node:path'
-import { createReadStream } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { constants, createReadStream } from 'node:fs'
+import { access, stat } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import type {
   AgentScanDiagnostic,
@@ -13,7 +13,6 @@ import type {
   UniversalRelayDocument,
   UniversalRelayMessage,
 } from '../../src/shared/types'
-import { agentSources } from '../../src/shared/types'
 import { calculateUsageModelCost } from '../../src/shared/usage-pricing'
 import {
   asString,
@@ -25,39 +24,16 @@ import {
   type JsonRecord,
 } from './agent-storage-formats'
 import { expandHome, hashId, listFiles, pathSize, readable, safeReadText } from './files'
+import { scannerProviders } from './scanner-providers'
+import type {
+  AgentScannerProvider,
+  ScannerProviderCandidate,
+  ScannerProviderParsedSession,
+} from './scanner-providers'
 
-type AgentDefinition = {
-  source: AgentSource
-  name: string
-  roots: string[]
-  patterns: string[]
-  note: string
-}
+type ParsedSession = ScannerProviderParsedSession
 
-type ParsedSession = {
-  title?: string
-  projectPath?: string
-  branch?: string
-  messages: UniversalRelayMessage[]
-  files: UniversalRelayDocument['files']
-  commands: UniversalRelayDocument['commands']
-  attachments: UniversalRelayDocument['attachments']
-  gitDiff?: string
-  tokens: TokenUsage
-  usageByDate: Record<string, number>
-  usageEvents: Array<{ timestamp: string; tokens: number }>
-  metadata: JsonRecord
-}
-
-type SessionFileCandidate = {
-  path: string
-  root?: string
-  relativePath?: string
-  sizeBytes: number
-  createdAt: string
-  lastUpdated: string
-  mtimeMs: number
-}
+type SessionFileCandidate = ScannerProviderCandidate
 
 type CandidateDiscovery = {
   candidates: SessionFileCandidate[]
@@ -67,9 +43,24 @@ type CandidateDiscovery = {
 
 type RelayHints = Pick<ParsedSession, 'files' | 'commands' | 'attachments' | 'gitDiff'>
 
+type SqliteStatement = {
+  all: (...values: unknown[]) => JsonRecord[]
+}
+
+type SqliteDatabase = {
+  prepare: (sql: string) => SqliteStatement
+  close: () => void
+}
+
+type SqliteModule = {
+  DatabaseSync: new (filePath: string, options?: { readOnly?: boolean }) => SqliteDatabase
+}
+
 const maxDiagnosticsPerScan = 50
 const maxRelayItems = 500
 const maxRelayDiffLength = 200_000
+const sqliteJsonValueColumns = ['value', 'json', 'data', 'body', 'content', 'contents']
+const sqliteKeyColumns = ['key', 'id', 'name']
 
 const emptyTokens = (): TokenUsage => ({
   input: 0,
@@ -80,54 +71,6 @@ const emptyTokens = (): TokenUsage => ({
   total: 0,
   estimated: true,
 })
-
-const definitions: AgentDefinition[] = [
-  {
-    source: 'codex',
-    name: 'Codex',
-    roots: ['~/.codex/sessions', '~/.codex/tasks', '~/.codex/archived_sessions'],
-    patterns: ['**/*.jsonl', '**/*.json'],
-    note: 'Scans Codex CLI/App session JSONL data.',
-  },
-  {
-    source: 'claude',
-    name: 'Claude Code',
-    roots: ['~/.claude/projects', '~/.claude/transcripts'],
-    patterns: ['**/*.jsonl', '**/*.json'],
-    note: 'Scans Claude Code project transcripts.',
-  },
-  {
-    source: 'cursor',
-    name: 'Cursor',
-    roots: [
-      '~/Library/Application Support/Cursor/User/workspaceStorage',
-      '~/Library/Application Support/Cursor/User/globalStorage',
-    ],
-    patterns: ['**/*.json', '**/*.jsonl', '**/*.db', '**/*.sqlite', '**/*.log'],
-    note: 'Read-only scan of Cursor workspace storage and chat artifacts.',
-  },
-  {
-    source: 'gemini',
-    name: 'Gemini',
-    roots: ['~/.gemini', '~/.config/gemini', '~/Library/Application Support/Gemini'],
-    patterns: ['**/*.json', '**/*.jsonl', '**/*.md', '**/*.log'],
-    note: 'Scans configurable Gemini CLI/session storage roots.',
-  },
-  {
-    source: 'opencode',
-    name: 'OpenCode',
-    roots: ['~/.local/share/opencode', '~/Library/Application Support/opencode', '~/.opencode'],
-    patterns: ['**/*.json', '**/*.jsonl', '**/*.db', '**/*.sqlite', '**/*.md', '**/*.log'],
-    note: 'Scans OpenCode data roots using a generic session parser.',
-  },
-  {
-    source: 'custom',
-    name: 'Custom',
-    roots: [],
-    patterns: ['**/*.json', '**/*.jsonl', '**/*.db', '**/*.sqlite', '**/*.md', '**/*.log'],
-    note: 'Scans user-selected custom session folders with the generic parser.',
-  },
-]
 
 function normalizePathForCompare(value: string): string {
   return path.resolve(expandHome(value)).replace(/[\\/]+$/, '')
@@ -140,7 +83,9 @@ function isInsidePath(filePath: string, parentPath: string): boolean {
 }
 
 export function enabledProviderSources(settings: AppSettings): AgentSource[] {
-  return agentSources.filter((source) => settings.enabledProviders[source] !== false)
+  return scannerProviders
+    .map((provider) => provider.source)
+    .filter((source) => settings.enabledProviders[source] !== false)
 }
 
 function pushDiagnostic(diagnostics: AgentScanDiagnostic[], diagnostic: AgentScanDiagnostic): void {
@@ -165,6 +110,29 @@ function pushDiagnostic(diagnostics: AgentScanDiagnostic[], diagnostic: AgentSca
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : 'Unknown error'
+}
+
+function errorCode(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : undefined
+}
+
+async function rootAccess(
+  root: string,
+): Promise<{ root: string; exists: boolean; readable: boolean }> {
+  try {
+    await access(root, constants.R_OK)
+    return { root, exists: true, readable: true }
+  } catch (readError) {
+    try {
+      await access(root, constants.F_OK)
+      return { root, exists: true, readable: false }
+    } catch (existsError) {
+      const code = errorCode(existsError) ?? errorCode(readError)
+      return { root, exists: code === 'EACCES' || code === 'EPERM', readable: false }
+    }
+  }
 }
 
 function isLikelyPath(value: string): boolean {
@@ -243,6 +211,60 @@ function addRelayAttachment(
   })
 }
 
+function cleanGitDiffPath(filePath: string): string | undefined {
+  const normalized = filePath
+    .trim()
+    .replace(/^"|"$/g, '')
+    .replace(/^(a|b)\//, '')
+  if (!normalized || normalized === '/dev/null') return undefined
+  return normalized
+}
+
+function gitChangedFilesFromDiff(diff: string | undefined): string[] {
+  if (!diff) return []
+
+  const files = new Set<string>()
+  for (const line of diff.split(/\r?\n/)) {
+    const diffHeader = /^diff --git a\/(.+) b\/(.+)$/.exec(line)
+    if (diffHeader) {
+      const nextPath = cleanGitDiffPath(diffHeader[2])
+      if (nextPath) files.add(nextPath)
+      if (files.size >= maxRelayItems) break
+      continue
+    }
+
+    const fileHeader = /^(?:\+\+\+|---)\s+(.+)$/.exec(line)
+    if (!fileHeader) continue
+    const filePath = cleanGitDiffPath(fileHeader[1])
+    if (filePath) files.add(filePath)
+    if (files.size >= maxRelayItems) break
+  }
+
+  return Array.from(files)
+}
+
+function isSensitiveRelayPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, '/').toLowerCase()
+  const basename = normalized.split('/').filter(Boolean).pop() ?? normalized
+  if (basename === '.env' || basename.startsWith('.env.')) return true
+  if (normalized.includes('/.ssh/') || normalized.includes('/keychain/')) return true
+  return /(^|[._/-])(token|tokens|secret|secrets|credential|credentials|oauth|api[-_]?key|apikey|private[-_]?key|password|passwd)([._/-]|$)/i.test(
+    normalized,
+  )
+}
+
+function redactRelayCommand(command: string): string {
+  return command
+    .replace(
+      /\b([A-Z0-9_]*(?:TOKEN|SECRET|API_KEY|PASSWORD|PASS|PRIVATE_KEY)[A-Z0-9_]*)=("[^"]*"|'[^']*'|\S+)/gi,
+      '$1=[redacted]',
+    )
+    .replace(
+      /(--?(?:token|secret|api-key|apikey|password|pass|private-key|key))(\s+|=)("[^"]*"|'[^']*'|\S+)/gi,
+      '$1$2[redacted]',
+    )
+}
+
 function timestampFromRecord(record: JsonRecord): string | undefined {
   const payload = toRecord(record.payload)
   const message = toRecord(record.message)
@@ -265,7 +287,7 @@ function extractRelayHints(
   inherited?: { cwd?: string; createdAt?: string },
   depth = 0,
 ): void {
-  if (depth > 5) return
+  if (depth > 7) return
   if (Array.isArray(value)) {
     value.forEach((item) => extractRelayHints(item, hints, inherited, depth + 1))
     return
@@ -362,6 +384,47 @@ function textFromContent(value: unknown): string {
     asString(record.input) ??
     ''
   )
+}
+
+function isLikelyMessageItem(value: unknown): boolean {
+  return extractMessage(value, '__probe__') !== undefined
+}
+
+function collectMessageItems(
+  value: unknown,
+  items: unknown[] = [],
+  seen = new WeakSet<object>(),
+  depth = 0,
+): unknown[] {
+  if (depth > 7) return items
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return items
+    seen.add(value)
+    const messageItems = value.filter(isLikelyMessageItem)
+    if (messageItems.length > 0) {
+      items.push(...messageItems)
+      return items
+    }
+    value.forEach((item) => collectMessageItems(item, items, seen, depth + 1))
+    return items
+  }
+
+  const record = toRecord(value)
+  if (!record) return items
+  if (seen.has(record)) return items
+  seen.add(record)
+
+  if (isLikelyMessageItem(record)) {
+    items.push(record)
+    return items
+  }
+
+  Object.entries(record).forEach(([key, child]) => {
+    if (key === 'raw') return
+    collectMessageItems(child, items, seen, depth + 1)
+  })
+  return items
 }
 
 function normalizeRole(value: unknown): UniversalRelayMessage['role'] {
@@ -550,6 +613,7 @@ function extractUsage(
 ): TokenUsage {
   const tokens = emptyTokens()
   const seenUsageObjects = new WeakSet<JsonRecord>()
+  const seenVisitObjects = new WeakSet<object>()
 
   function addUsage(node: unknown, parent?: JsonRecord): void {
     const record = toRecord(node)
@@ -625,14 +689,18 @@ function extractUsage(
   }
 
   function visit(node: unknown, depth = 0): void {
-    if (depth > 4) return
+    if (depth > 7) return
     if (Array.isArray(node)) {
+      if (seenVisitObjects.has(node)) return
+      seenVisitObjects.add(node)
       node.forEach((item) => visit(item, depth + 1))
       return
     }
 
     const record = toRecord(node)
     if (!record) return
+    if (seenVisitObjects.has(record)) return
+    seenVisitObjects.add(record)
 
     addUsage(record.usage, record)
     addUsage(record.token_usage, record)
@@ -675,6 +743,11 @@ function extractUsage(
       addUsage(message.last_token_usage, record)
       addUsage(message.lastTokenUsage, record)
     }
+
+    Object.entries(record).forEach(([key, child]) => {
+      if (key === 'raw') return
+      visit(child, depth + 1)
+    })
   }
 
   visit(value)
@@ -745,6 +818,108 @@ function projectNameFromPath(projectPath: string | undefined, filePath: string):
   return 'Unknown Project'
 }
 
+function isSqliteLikePath(filePath: string): boolean {
+  return /\.(db|sqlite|vscdb)$/i.test(filePath)
+}
+
+function storageKindFromPath(filePath: string): SessionRecord['storageKind'] {
+  return isSqliteLikePath(filePath) ? 'database' : 'file'
+}
+
+function addTextFallbackMessages(text: string, messages: UniversalRelayMessage[]): void {
+  text
+    .split(/\r?\n/)
+    .filter((line) => line.trim())
+    .slice(0, 200)
+    .forEach((line, index) => {
+      messages.push({ id: `${index}`, role: 'unknown', text: line.slice(0, 1000) })
+    })
+}
+
+function parseEmbeddedJson(value: string): unknown | undefined {
+  const trimmed = value.trim()
+  if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) return undefined
+  try {
+    return JSON.parse(trimmed) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+function textFromSqliteCell(value: unknown): string | undefined {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (value instanceof Uint8Array) return Buffer.from(value).toString('utf8')
+  return undefined
+}
+
+function valueFromSqliteCell(value: unknown): unknown {
+  const text = textFromSqliteCell(value)
+  if (text === undefined) return value
+  return parseEmbeddedJson(text) ?? text
+}
+
+function quoteSqlIdentifier(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`
+}
+
+async function readSqliteJsonValues(
+  filePath: string,
+): Promise<{ sourceFormat: string; values: unknown[] } | undefined> {
+  let db: SqliteDatabase | undefined
+  try {
+    const sqlite = (await import('node:sqlite')) as unknown as SqliteModule
+    db = new sqlite.DatabaseSync(filePath, { readOnly: true })
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all()
+      .map((row) => asString(row.name))
+      .filter((name): name is string => Boolean(name && !name.startsWith('sqlite_')))
+
+    const values: unknown[] = []
+    for (const table of tables.slice(0, 40)) {
+      const quotedTable = quoteSqlIdentifier(table)
+      const columns = db
+        .prepare(`PRAGMA table_info(${quotedTable})`)
+        .all()
+        .map((row) => asString(row.name))
+        .filter((name): name is string => Boolean(name))
+      const valueColumns = sqliteJsonValueColumns.filter((column) => columns.includes(column))
+      if (valueColumns.length === 0) continue
+      const keyColumn = sqliteKeyColumns.find((column) => columns.includes(column))
+      const selectedColumns = [...(keyColumn ? [keyColumn] : []), ...valueColumns]
+
+      const rows = db
+        .prepare(
+          `SELECT ${selectedColumns.map(quoteSqlIdentifier).join(', ')} FROM ${quotedTable} LIMIT 1000`,
+        )
+        .all()
+
+      rows.forEach((row) => {
+        const key = keyColumn ? asString(row[keyColumn]) : undefined
+        valueColumns.forEach((column) => {
+          const value = valueFromSqliteCell(row[column])
+          if (value === undefined || value === '') return
+          values.push(key ? { table, key, value } : value)
+        })
+      })
+    }
+
+    if (values.length === 0) return undefined
+    const sourceFormat =
+      path.basename(filePath).toLowerCase() === 'state.vscdb' ||
+      tables.includes('ItemTable') ||
+      tables.includes('cursorDiskKV')
+        ? 'cursor-state-sqlite'
+        : 'sqlite-kv-json'
+    return { sourceFormat, values }
+  } catch {
+    return undefined
+  } finally {
+    db?.close()
+  }
+}
+
 async function parseJsonLike(filePath: string): Promise<ParsedSession> {
   const messages: UniversalRelayMessage[] = []
   const metadata: JsonRecord = {}
@@ -810,29 +985,34 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
       const record = toRecord(json)
       currentModel = record ? modelHintFromRecord(record) : undefined
       extractRelayHints(json, relayHints)
-      const array =
-        (Array.isArray(json) && json) ||
-        (Array.isArray(record?.messages) && record?.messages) ||
-        (Array.isArray(record?.conversation) && record?.conversation) ||
-        (Array.isArray(record?.entries) && record?.entries) ||
-        []
-      array.slice(0, 3000).forEach((item, index) => {
-        const message = extractMessage(item, `${index}`)
-        if (message) messages.push(message)
-      })
+      collectMessageItems(json)
+        .slice(0, 3000)
+        .forEach((item, index) => {
+          const message = extractMessage(item, `${index}`)
+          if (message) messages.push(message)
+        })
       tokens = extractUsage(json, new Set<string>(), currentModel)
     } catch {
       messages.push({ id: 'raw', role: 'unknown', text: text.slice(0, 4000) })
     }
+  } else if (isSqliteLikePath(filePath)) {
+    const sqlite = await readSqliteJsonValues(filePath)
+    if (sqlite) {
+      sampleForHints = sqlite.values
+      metadata.sourceFormat = sqlite.sourceFormat
+      extractRelayHints(sqlite.values, relayHints)
+      collectMessageItems(sqlite.values)
+        .slice(0, 3000)
+        .forEach((item, index) => {
+          const message = extractMessage(item, `${index}`)
+          if (message) messages.push(message)
+        })
+      tokens = extractUsage(sqlite.values, new Set<string>(), currentModel)
+    } else {
+      addTextFallbackMessages(await safeReadText(filePath), messages)
+    }
   } else {
-    const text = await safeReadText(filePath)
-    text
-      .split(/\r?\n/)
-      .filter((line) => line.trim())
-      .slice(0, 200)
-      .forEach((line, index) => {
-        messages.push({ id: `${index}`, role: 'unknown', text: line.slice(0, 1000) })
-      })
+    addTextFallbackMessages(await safeReadText(filePath), messages)
   }
 
   return {
@@ -843,6 +1023,7 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
       'project_path',
       'workspace',
       'workspacePath',
+      'folder',
     ]),
     branch: findStringByKeys(sampleForHints, ['branch', 'gitBranch', 'git_branch']),
     messages,
@@ -864,23 +1045,23 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
 }
 
 export class AgentAdapter {
-  private readonly definition: AgentDefinition
+  private readonly provider: AgentScannerProvider
 
-  constructor(definition: AgentDefinition) {
-    this.definition = definition
+  constructor(provider: AgentScannerProvider) {
+    this.provider = provider
   }
 
   get source(): AgentSource {
-    return this.definition.source
+    return this.provider.source
   }
 
   get name(): string {
-    return this.definition.name
+    return this.provider.name
   }
 
   roots(settings: AppSettings): string[] {
-    const configured = settings.scanRoots[this.definition.source]
-    return (configured?.length ? configured : this.definition.roots).map(expandHome)
+    const configured = settings.scanRoots[this.provider.source]
+    return (configured?.length ? configured : this.provider.roots).map(expandHome)
   }
 
   async recentCandidates(settings: AppSettings, limit: number): Promise<SessionFileCandidate[]> {
@@ -893,18 +1074,28 @@ export class AgentAdapter {
     settings: AppSettings,
   ): Promise<{ state: AgentInstallState; sessions: SessionRecord[] }> {
     const roots = this.roots(settings)
-    const rootChecks = await Promise.all(
-      roots.map(async (root) => ({ root, isReadable: await readable(root) })),
-    )
-    const readableRoots = rootChecks.filter((item) => item.isReadable).map((item) => item.root)
+    const rootChecks = await Promise.all(roots.map(rootAccess))
+    const readableRoots = rootChecks.filter((item) => item.readable).map((item) => item.root)
     const diagnostics: AgentScanDiagnostic[] = []
     rootChecks
-      .filter((item) => !item.isReadable)
+      .filter((item) => !item.readable)
       .forEach((item) => {
+        if (!item.exists) {
+          if (readableRoots.length === 0) {
+            pushDiagnostic(diagnostics, {
+              level: 'info',
+              code: 'root-missing',
+              message: 'Scan root does not exist.',
+              path: item.root,
+            })
+          }
+          return
+        }
+
         pushDiagnostic(diagnostics, {
           level: 'warning',
-          code: 'root-not-readable',
-          message: 'Scan root is missing or not readable.',
+          code: 'root-permission-blocked',
+          message: 'Scan root exists but is not readable. Grant folder access and scan again.',
           path: item.root,
         })
       })
@@ -940,8 +1131,8 @@ export class AgentAdapter {
 
     return {
       state: {
-        source: this.definition.source,
-        name: this.definition.name,
+        source: this.provider.source,
+        name: this.provider.name,
         installed: readableRoots.length > 0,
         readable: readableRoots.length > 0,
         rootPaths: roots,
@@ -950,7 +1141,7 @@ export class AgentAdapter {
         scannedFiles: files.length,
         skippedFiles,
         lastScannedAt: new Date().toISOString(),
-        note: this.definition.note,
+        note: this.provider.note,
         diagnostics,
       },
       sessions,
@@ -970,7 +1161,7 @@ export class AgentAdapter {
   }
 
   async toUniversal(session: SessionRecord): Promise<UniversalRelayDocument> {
-    const parsed = await parseJsonLike(session.storagePath)
+    const parsed = await this.parseSessionFile(session.storagePath)
     return {
       schema: 'clean-my-agent.universal-session.v1',
       exportedAt: new Date().toISOString(),
@@ -1007,7 +1198,7 @@ export class AgentAdapter {
     const filesByRoot = await Promise.all(
       roots.map(async (root) => ({
         root,
-        files: await listFiles(root, this.definition.patterns),
+        files: await listFiles(root, this.provider.patterns),
       })),
     )
     const exclusions = excludedFolders.map(normalizePathForCompare)
@@ -1067,18 +1258,17 @@ export class AgentAdapter {
   }
 
   private async parseCandidate(candidate: SessionFileCandidate): Promise<SessionRecord> {
-    const parsed = await parseJsonLike(candidate.path)
-    const id = hashId([this.definition.source, candidate.path])
+    const parsed = await this.parseSessionFile(candidate.path)
+    const id = hashId([this.provider.source, candidate.path])
     return {
       id,
-      source: this.definition.source,
+      source: this.provider.source,
       title: parsed.title ?? path.basename(candidate.path),
       projectName: projectNameFromPath(parsed.projectPath, candidate.path),
       projectPath: parsed.projectPath,
       branch: parsed.branch,
       storagePath: candidate.path,
-      storageKind:
-        candidate.path.endsWith('.db') || candidate.path.endsWith('.sqlite') ? 'database' : 'file',
+      storageKind: storageKindFromPath(candidate.path),
       storageState: 'live',
       createdAt: candidate.createdAt,
       lastUpdated: candidate.lastUpdated,
@@ -1086,19 +1276,33 @@ export class AgentAdapter {
       tokens: parsed.tokens,
       sizeBytes: candidate.sizeBytes,
       backupStatus: 'pending',
-      tags: [this.definition.source],
+      tags: [this.provider.source],
       searchText: searchTextFromParsed(parsed),
       metadata: {
         ...parsed.metadata,
-        parser: 'generic-json-session-parser',
+        parser: this.provider.parserName ?? 'generic-json-session-parser',
         root: candidate.root,
         relativePath: candidate.relativePath,
+        relayFiles: parsed.files.filter((item) => !isSensitiveRelayPath(item.path)),
+        relayCommands: parsed.commands.map((item) => ({
+          ...item,
+          command: redactRelayCommand(item.command),
+        })),
+        gitChangedFiles: gitChangedFilesFromDiff(parsed.gitDiff).filter(
+          (item) => !isSensitiveRelayPath(item),
+        ),
       },
     }
   }
+
+  private async parseSessionFile(filePath: string): Promise<ParsedSession> {
+    return this.provider.parseSession
+      ? this.provider.parseSession(filePath)
+      : parseJsonLike(filePath)
+  }
 }
 
-export const adapters = definitions.map((definition) => new AgentAdapter(definition))
+export const adapters = scannerProviders.map((provider) => new AgentAdapter(provider))
 
 export function adapterFor(source: AgentSource): AgentAdapter {
   const adapter = adapters.find((item) => item.source === source)

@@ -1,0 +1,29 @@
+.aurora-container {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+}
+
+.aurora-container canvas {
+  position: relative;
+  z-index: 2;
+}
+
+.aurora-fallback {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    radial-gradient(circle at 18% 22%, rgba(156, 224, 207, 0.72), transparent 34%),
+    radial-gradient(circle at 70% 34%, rgba(79, 70, 229, 0.58), transparent 38%),
+    linear-gradient(
+      115deg,
+      rgba(15, 118, 110, 0.72),
+      rgba(156, 224, 207, 0.18) 48%,
+      rgba(5, 9, 8, 0)
+    );
+  filter: blur(28px);
+  opacity: 0.62;
+  transform: scale(1.08);
+}
