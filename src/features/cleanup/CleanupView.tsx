@@ -23,11 +23,23 @@ import { AgentGlyph } from '@/components/agent-glyph'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
+  buildCleanupConfirmationSummary,
   buildCleanupCandidateGroups,
   buildCleanupCategorySummaries,
+  cleanupConfirmationCancel,
+  cleanupConfirmationConfirm,
+  cleanupConfirmationRequest,
   cleanupCategoryForCandidate,
   cleanupCompactPath,
   cleanupKindMeta,
@@ -127,6 +139,7 @@ export function CleanupView({
   const [cleaningIds, setCleaningIds] = useState<string[]>([])
   const [cleaned, setCleaned] = useState(false)
   const [scanErrorMessage, setScanErrorMessage] = useState<string | null>(null)
+  const [cleanupConfirmationIds, setCleanupConfirmationIds] = useState<string[] | null>(null)
   const scanRunRef = useRef(0)
   const visibleCleanup = localCleanup ?? cleanup
   const sessionById = useMemo(
@@ -202,6 +215,17 @@ export function CleanupView({
     () => visibleCleanup.filter((item) => selected.includes(item.id)),
     [selected, visibleCleanup],
   )
+  const confirmationItems = useMemo(
+    () =>
+      cleanupConfirmationIds
+        ? visibleCleanup.filter((item) => cleanupConfirmationIds.includes(item.id))
+        : [],
+    [cleanupConfirmationIds, visibleCleanup],
+  )
+  const confirmationSummary = useMemo(
+    () => buildCleanupConfirmationSummary(confirmationItems, settings.confirmBeforeCleanup),
+    [confirmationItems, settings.confirmBeforeCleanup],
+  )
   const selectedAllVisible =
     filteredCleanup.length > 0 && filteredCleanup.every((item) => selected.includes(item.id))
   const firstSelected = selectedItems[0]
@@ -217,6 +241,7 @@ export function CleanupView({
     setLocalCleanup(null)
     setCleaned(false)
     setCleaningIds([])
+    setCleanupConfirmationIds(null)
     setScanErrorMessage(null)
     setSelected([])
     clearCleanupViewState()
@@ -310,6 +335,7 @@ export function CleanupView({
     setCleaningIds([])
     setCleaning(false)
     setCleaned(false)
+    setCleanupConfirmationIds(null)
     setScanErrorMessage(null)
     clearCleanupViewState()
   }
@@ -357,21 +383,22 @@ export function CleanupView({
     })
   }
 
-  const moveSelectedToTrash = async () => {
-    if (selected.length === 0 || cleaning) return
-    if (
-      settings.confirmBeforeCleanup &&
-      !window.confirm(`Move ${selected.length} selected cleanup item(s) to app Trash?`)
-    ) {
-      return
-    }
+  const requestMoveSelectedToTrash = () => {
+    if (selectedItems.length === 0 || cleaning) return
+    const result = cleanupConfirmationRequest(selectedItems)
+    setCleanupConfirmationIds(result.confirmationIds)
+  }
+
+  const moveConfirmedToTrash = async (candidateIds: string[]) => {
+    if (candidateIds.length === 0 || cleaning) return
     if (settings.soundEffects && settings.cleanupSound) {
       void playCleanupSystemSound(settings.soundVolume / 100)
     }
     setCleaning(true)
     setCleaned(false)
-    setCleaningIds(selected)
-    const removing = selected
+    setCleanupConfirmationIds(null)
+    setCleaningIds(candidateIds)
+    const removing = candidateIds
     try {
       await onMoveToTrash(removing)
       window.setTimeout(() => {
@@ -527,36 +554,201 @@ export function CleanupView({
         firstSelected={firstSelected}
         cleaning={cleaning}
         cleaned={cleaned}
-        onMoveToTrash={() => void moveSelectedToTrash()}
+        onMoveToTrash={requestMoveSelectedToTrash}
         onClear={() => setSelected([])}
       />
     </div>
   )
 
   return (
-    <CleanupScanShell
-      stage={stage}
-      orbPhase={orbPhase}
-      progress={progress}
-      sourceProgress={sourceProgress}
-      totalBytes={totalBytes}
-      categories={categories}
-      candidates={visibleCleanup}
-      sessionById={sessionById}
-      selected={selected}
-      cleaning={cleaning}
-      cleaned={cleaned}
-      cleaningIds={cleaningIds}
-      scanErrorMessage={scanErrorMessage}
-      onStart={() => void beginScan()}
-      onCancel={cancelScan}
-      onScanAgain={resetCleanupStart}
-      onClean={() => void moveSelectedToTrash()}
-      onToggleCandidate={toggleSelected}
-      onToggleCandidates={toggleCandidateSetSelected}
-      onToggleCategory={toggleCategorySelected}
-      reviewPanel={reviewPanel}
-    />
+    <>
+      <CleanupScanShell
+        stage={stage}
+        orbPhase={orbPhase}
+        progress={progress}
+        sourceProgress={sourceProgress}
+        totalBytes={totalBytes}
+        categories={categories}
+        candidates={visibleCleanup}
+        sessionById={sessionById}
+        selected={selected}
+        cleaning={cleaning}
+        cleaned={cleaned}
+        cleaningIds={cleaningIds}
+        scanErrorMessage={scanErrorMessage}
+        onStart={() => void beginScan()}
+        onCancel={cancelScan}
+        onScanAgain={resetCleanupStart}
+        onClean={requestMoveSelectedToTrash}
+        onToggleCandidate={toggleSelected}
+        onToggleCandidates={toggleCandidateSetSelected}
+        onToggleCategory={toggleCategorySelected}
+        reviewPanel={reviewPanel}
+      />
+      <CleanupConfirmationDialog
+        open={cleanupConfirmationIds !== null}
+        summary={confirmationSummary}
+        candidates={confirmationItems}
+        cleaning={cleaning}
+        onCancel={() => setCleanupConfirmationIds(cleanupConfirmationCancel().confirmationIds)}
+        onOpenChange={(open) => {
+          if (!open && !cleaning)
+            setCleanupConfirmationIds(cleanupConfirmationCancel().confirmationIds)
+        }}
+        onConfirm={() => {
+          const result = cleanupConfirmationConfirm(cleanupConfirmationIds)
+          if (result.moveIds) void moveConfirmedToTrash(result.moveIds)
+        }}
+      />
+    </>
+  )
+}
+
+function CleanupConfirmationDialog({
+  open,
+  summary,
+  candidates,
+  cleaning,
+  onCancel,
+  onOpenChange,
+  onConfirm,
+}: {
+  open: boolean
+  summary: ReturnType<typeof buildCleanupConfirmationSummary>
+  candidates: CleanupCandidate[]
+  cleaning: boolean
+  onCancel: () => void
+  onOpenChange: (open: boolean) => void
+  onConfirm: () => void
+}) {
+  const previewCandidates = candidates.slice(0, 4)
+  const hiddenCount = Math.max(0, candidates.length - previewCandidates.length)
+  const hasRiskWarnings = summary.highRiskCount > 0 || summary.unrecoverableCount > 0
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        showCloseButton={false}
+        className="max-w-[520px] gap-0 rounded-lg border border-white/12 bg-[#101417] p-0 text-white shadow-[0_28px_80px_rgb(0_0_0_/_45%)]"
+      >
+        <DialogHeader className="gap-3 border-b border-white/9 px-6 pb-5 pt-6">
+          <div className="flex items-start gap-4">
+            <div className="grid size-11 shrink-0 place-items-center rounded-lg bg-rose-400/14 text-rose-200 ring-1 ring-rose-300/24">
+              <AlertTriangle className="size-5" />
+            </div>
+            <div className="min-w-0">
+              <DialogTitle className="text-[18px] font-semibold leading-6 text-white">
+                Confirm move to app Trash
+              </DialogTitle>
+              <DialogDescription className="mt-2 text-sm leading-5 text-white/58">
+                This will move {summary.count} selected cleanup item
+                {summary.count === 1 ? '' : 's'} totaling {formatBytes(summary.bytes)} after
+                preserving backups when needed.
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <div className="space-y-5 px-6 py-5">
+          <div className="grid grid-cols-3 gap-3">
+            <CleanupConfirmationStat label="Selected" value={String(summary.count)} />
+            <CleanupConfirmationStat label="Size" value={formatBytes(summary.bytes)} />
+            <CleanupConfirmationStat
+              label="Needs backup"
+              value={String(summary.needsBackupCount)}
+            />
+          </div>
+
+          {hasRiskWarnings && (
+            <div className="rounded-lg border border-rose-300/18 bg-rose-400/[0.06] px-4 py-3 text-sm leading-5 text-rose-100/78">
+              {summary.highRiskCount > 0 && (
+                <div>
+                  {summary.highRiskCount} high-risk item
+                  {summary.highRiskCount === 1 ? '' : 's'} selected.
+                </div>
+              )}
+              {summary.unrecoverableCount > 0 && (
+                <div>
+                  {summary.unrecoverableCount} item
+                  {summary.unrecoverableCount === 1 ? '' : 's'} may require backup recovery rather
+                  than direct Trash restore.
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="space-y-3 rounded-lg border border-emerald-300/14 bg-emerald-400/[0.055] px-4 py-4 text-[13px] text-white/66">
+            <div className="flex items-center gap-3">
+              <ShieldCheck className="size-4 text-emerald-300" />
+              Backups are retained before risky session files are moved.
+            </div>
+            <div className="flex items-center gap-3">
+              <Trash2 className="size-4 text-blue-300" />
+              Files move to Clean My Agent Trash, not permanent deletion.
+            </div>
+            <div className="flex items-center gap-3">
+              <RefreshCcw className="size-4 text-violet-300" />
+              Trash items remain recoverable while retained by your settings.
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-2 text-xs uppercase text-white/38">Selected items</div>
+            <div className="max-h-[156px] space-y-2 overflow-auto pr-1">
+              {previewCandidates.map((candidate) => (
+                <div
+                  key={candidate.id}
+                  className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-md border border-white/8 bg-white/[0.035] px-3 py-2 text-sm"
+                >
+                  <span className="truncate text-white/78">{candidate.title}</span>
+                  <span className="text-white/48">{formatBytes(candidate.sizeBytes)}</span>
+                </div>
+              ))}
+              {hiddenCount > 0 && (
+                <div className="px-1 text-xs text-white/44">
+                  {hiddenCount} more selected item{hiddenCount === 1 ? '' : 's'}.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {summary.settingPolicy === 'trash-safety-override' && (
+            <p className="text-xs leading-5 text-white/42">
+              Cleanup confirmation is off in Settings, but moving files to app Trash still requires
+              this in-app review.
+            </p>
+          )}
+        </div>
+
+        <DialogFooter className="border-white/9 bg-white/[0.035] px-6 py-4 sm:justify-between">
+          <Button
+            variant="ghost"
+            onClick={onCancel}
+            disabled={cleaning}
+            className="h-10 rounded-lg px-4 text-white/64 hover:bg-white/8 hover:text-white"
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={onConfirm}
+            disabled={cleaning || !summary.confirmationRequired}
+            className="h-10 rounded-lg bg-rose-500 px-4 text-white shadow-[0_14px_32px_rgb(244_63_94_/_24%)] hover:bg-rose-400 disabled:pointer-events-none disabled:opacity-60"
+          >
+            {cleaning ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+            {cleaning ? 'Moving...' : `Confirm move ${summary.count} to Trash`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function CleanupConfirmationStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-lg border border-white/8 bg-white/[0.035] px-3 py-3">
+      <div className="truncate text-[11px] uppercase text-white/38">{label}</div>
+      <div className="mt-1 truncate text-[16px] font-semibold text-white">{value}</div>
+    </div>
   )
 }
 
