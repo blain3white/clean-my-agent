@@ -107,6 +107,17 @@ function isGitHubRelease(value: unknown): value is GitHubRelease {
   )
 }
 
+function githubRequestErrorMessage(response: FetchResponse): string {
+  const statusText = response.statusText.trim()
+  const status = statusText ? `${response.status} ${statusText}` : String(response.status)
+
+  if (response.status === 429 || (response.status === 403 && /rate.?limit/i.test(statusText))) {
+    return 'GitHub update rate limit reached. Try again later.'
+  }
+
+  return `GitHub update request failed (${status})`
+}
+
 function versionParts(value: string): number[] {
   const match = value
     .trim()
@@ -284,7 +295,7 @@ export class UpdateService {
     })
 
     if (!response.ok) {
-      throw new Error(`GitHub update request failed (${response.status} ${response.statusText})`)
+      throw new Error(githubRequestErrorMessage(response))
     }
 
     return response

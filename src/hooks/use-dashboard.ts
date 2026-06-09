@@ -156,13 +156,16 @@ const emptySnapshot = (): DashboardSnapshot => ({
 })
 
 const errorMessage = (error: unknown): string => {
-  if (error instanceof Error) return error.message
-  if (typeof error === 'string') return error
-  return 'Unknown error'
+  const message =
+    error instanceof Error ? error.message : typeof error === 'string' ? error : 'Unknown error'
+  const cleaned = message
+    .replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/i, '')
+    .trim()
+  return cleaned || 'Unknown error'
 }
 
 const isNetworkFailure = (error: unknown): boolean =>
-  /(network|fetch|offline|timeout|timed out|econn|enotfound|eai_again|etimedout|socket|tls|proxy)/i.test(
+  /(network|fetch|offline|timeout|timed out|econn|enotfound|eai_again|etimedout|socket|tls|proxy|rate limit|too many requests|429)/i.test(
     errorMessage(error),
   )
 
@@ -305,11 +308,6 @@ export function useDashboard(): DashboardState {
     if (!settings.checkForUpdates || !window.cleanMyAgent) return
     void window.cleanMyAgent.checkForUpdates().catch((error) => {
       console.error(error)
-      setLastIssue({
-        kind: updateIssueKind(error),
-        detail: errorMessage(error),
-        occurredAt: new Date().toISOString(),
-      })
     })
   }, [settings.checkForUpdates])
 

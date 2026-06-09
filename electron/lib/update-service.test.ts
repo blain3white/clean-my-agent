@@ -333,6 +333,24 @@ describe('UpdateService', () => {
     await expect(service.downloadLatestUpdate()).rejects.toThrow(/GitHub update request failed/)
   })
 
+  it('reports GitHub API rate limits with a user-safe update error', async () => {
+    const service = new UpdateService({
+      userDataPath,
+      currentVersion: '0.1.1',
+      fetcher: async () => ({
+        ok: false,
+        status: 403,
+        statusText: 'rate limit exceeded',
+        json: async () => ({}),
+        arrayBuffer: async () => new ArrayBuffer(0),
+      }),
+    })
+
+    await expect(service.checkForUpdates()).rejects.toThrow(
+      'GitHub update rate limit reached. Try again later.',
+    )
+  })
+
   it('rejects unrecognized latest release responses', async () => {
     const service = new UpdateService({
       userDataPath,
