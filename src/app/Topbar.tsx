@@ -49,12 +49,12 @@ export function Topbar({
             : t('topbar.localSubtitle')
 
   return (
-    <header className="drag-region flex h-16 shrink-0 items-center justify-between border-b border-white/8 px-7">
-      <div>
-        <h1 className="text-xl font-semibold text-white">{t(titleKey)}</h1>
-        <p className="mt-0.5 text-xs text-white/42">{subtitle}</p>
+    <header className="drag-region flex min-h-16 shrink-0 flex-wrap items-center justify-between gap-3 border-b border-white/8 px-4 py-3 md:h-16 md:px-7 md:py-0">
+      <div className="min-w-0">
+        <h1 className="truncate text-xl font-semibold text-white">{t(titleKey)}</h1>
+        <p className="mt-0.5 truncate text-xs text-white/42">{subtitle}</p>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
         {mockDataEnabled && (
           <Badge
             variant="outline"

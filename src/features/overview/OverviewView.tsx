@@ -256,11 +256,9 @@ function TokenActivityCard({
   heatmapUsage: UsagePoint[]
 }) {
   const [mode, setMode] = useState<TokenActivityMode>('bar')
-  const heatUsageDays = Math.min(30, heatmapUsage.length)
-  const minWidth = mode === 'heat' ? Math.max(620, 72 + heatUsageDays * 21) : 580
 
   return (
-    <Card className="glass-panel token-activity-card rounded-lg py-4" style={{ minWidth }}>
+    <Card className="glass-panel token-activity-card min-w-0 rounded-lg py-4">
       <CardHeader className="pb-0">
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="text-sm text-white">Token Activity</CardTitle>
@@ -466,47 +464,49 @@ function TokenHeatmap({ usage }: { usage: UsagePoint[] }) {
 
   return (
     <div className="flex h-full flex-col justify-center">
-      <div
-        className="token-heatmap-grid"
-        style={{ gridTemplateColumns: `36px repeat(${heatmapUsage.length}, 16px)` }}
-      >
-        {heatmapTimeLabels.map((time, index) => (
-          <div
-            key={time}
-            className="self-center text-[11px] text-white/42"
-            style={{ gridColumn: 1, gridRow: index + 1 }}
-          >
-            {time}
-          </div>
-        ))}
-        {cells.map((cell) => (
-          <Tooltip key={`${cell.date}-${cell.gridRow}`}>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-label={`${cell.date} ${cell.day}:00: ${formatTokens(cell.value)} tokens`}
-                className="token-heatmap-cell"
-                data-level={cell.level}
-                style={{ gridColumn: cell.gridColumn + 1, gridRow: cell.gridRow }}
-              />
-            </TooltipTrigger>
-            <TooltipContent>
-              {cell.date} {cell.day}:00 · {formatTokens(cell.value)}
-            </TooltipContent>
-          </Tooltip>
-        ))}
+      <div className="token-heatmap-scroll overflow-x-auto pb-1">
+        <div
+          className="token-heatmap-grid"
+          style={{ gridTemplateColumns: `36px repeat(${heatmapUsage.length}, 16px)` }}
+        >
+          {heatmapTimeLabels.map((time, index) => (
+            <div
+              key={time}
+              className="self-center text-[11px] text-white/42"
+              style={{ gridColumn: 1, gridRow: index + 1 }}
+            >
+              {time}
+            </div>
+          ))}
+          {cells.map((cell) => (
+            <Tooltip key={`${cell.date}-${cell.gridRow}`}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`${cell.date} ${cell.day}:00: ${formatTokens(cell.value)} tokens`}
+                  className="token-heatmap-cell"
+                  data-level={cell.level}
+                  style={{ gridColumn: cell.gridColumn + 1, gridRow: cell.gridRow }}
+                />
+              </TooltipTrigger>
+              <TooltipContent>
+                {cell.date} {cell.day}:00 · {formatTokens(cell.value)}
+              </TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
+        <div
+          className="token-heatmap-axis mt-3 grid pl-9 text-[11px] text-white/38"
+          style={{ gridTemplateColumns: `repeat(${heatmapUsage.length}, 16px)` }}
+        >
+          {dateLabels.map(({ point, index }) => (
+            <span key={point.date} style={{ gridColumn: index + 1 }}>
+              {point.date.slice(5)}
+            </span>
+          ))}
+        </div>
       </div>
-      <div
-        className="token-heatmap-axis mt-3 grid pl-9 text-[11px] text-white/38"
-        style={{ gridTemplateColumns: `repeat(${heatmapUsage.length}, 16px)` }}
-      >
-        {dateLabels.map(({ point, index }) => (
-          <span key={point.date} style={{ gridColumn: index + 1 }}>
-            {point.date.slice(5)}
-          </span>
-        ))}
-      </div>
-      <div className="mt-5 flex items-center justify-center gap-2 text-[11px] text-white/42">
+      <div className="mt-5 flex flex-wrap items-center justify-center gap-2 text-[11px] text-white/42">
         <span>Low activity</span>
         {Array.from({ length: 9 }, (_, index) => (
           <span key={index} className="token-heatmap-legend-cell" data-level={index + 1} />
@@ -792,7 +792,7 @@ function StorageLineView({
       {storageData.slice(0, 5).map((slice) => (
         <Tooltip key={slice.source}>
           <TooltipTrigger asChild>
-            <div className="storage-line-row grid grid-cols-[112px_1fr_72px] items-center gap-3">
+            <div className="storage-line-row grid grid-cols-[minmax(84px,112px)_minmax(64px,1fr)_minmax(56px,72px)] items-center gap-3">
               <div className="flex min-w-0 items-center gap-2">
                 <span
                   className="size-2.5 rounded-full"
@@ -820,7 +820,7 @@ function StorageLineView({
         </Tooltip>
       ))}
       {storageTotal > 0 && (
-        <div className="mt-1 grid grid-cols-[112px_1fr_72px] items-center gap-3 border-t border-white/7 pt-3">
+        <div className="mt-1 grid grid-cols-[minmax(84px,112px)_minmax(64px,1fr)_minmax(56px,72px)] items-center gap-3 border-t border-white/7 pt-3">
           <div className="flex min-w-0 items-center gap-2">
             <Database className="size-4 text-blue-300" />
             <span className="text-[13px] font-semibold text-white/70">Total</span>
@@ -847,7 +847,7 @@ function StoragePieView({
   sessionCount: number
 }) {
   return (
-    <div className="grid h-full grid-cols-[150px_1fr] items-center gap-3">
+    <div className="grid h-full grid-cols-1 items-center gap-3 sm:grid-cols-[150px_1fr]">
       <ResponsiveContainer className="chart-static" width="100%" height={170}>
         <PieChart accessibilityLayer={false}>
           <defs>
@@ -965,7 +965,7 @@ function OverviewMetricSkeleton({ icon: Icon, accent }: { icon: typeof Database;
 
 function OverviewTokenActivitySkeleton() {
   return (
-    <Card className="glass-panel token-activity-card rounded-lg py-4">
+    <Card className="glass-panel token-activity-card min-w-0 rounded-lg py-4">
       <CardHeader className="pb-0">
         <div className="flex items-center justify-between gap-3">
           <Skeleton className="h-4 w-28 bg-white/10" />
@@ -1004,7 +1004,7 @@ function OverviewStorageSkeleton() {
           </div>
         </div>
       </CardHeader>
-      <CardContent className="grid min-h-0 flex-1 grid-cols-[150px_1fr] items-center gap-3">
+      <CardContent className="grid min-h-0 flex-1 grid-cols-1 items-center gap-3 sm:grid-cols-[150px_1fr]">
         <div className="grid place-items-center">
           <div className="relative size-[150px]">
             <Skeleton className="absolute inset-0 rounded-full bg-white/10" />
@@ -1062,7 +1062,7 @@ function OverviewRecentSessionsSkeleton({
           {Array.from({ length: 6 }, (_, index) => (
             <div
               key={index}
-              className="grid grid-cols-[28px_1fr_120px_80px_80px] items-center gap-3 py-2.5"
+              className="grid grid-cols-[28px_minmax(0,1fr)_minmax(80px,120px)_minmax(60px,80px)_minmax(56px,80px)] items-center gap-3 py-2.5"
             >
               <Skeleton className="size-7 rounded-lg bg-white/10" />
               <div className="min-w-0">
@@ -1126,17 +1126,17 @@ function OverviewSkeletonView({
 }) {
   return (
     <div className="space-y-4">
-      <section className="grid grid-cols-4 gap-3">
+      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <OverviewMetricSkeleton icon={Database} accent="bg-emerald-400/12 text-emerald-300" />
         <OverviewMetricSkeleton icon={Archive} accent="bg-blue-400/12 text-blue-300" />
         <OverviewMetricSkeleton icon={HardDrive} accent="bg-amber-400/12 text-amber-300" />
         <OverviewMetricSkeleton icon={Gauge} accent="bg-violet-400/12 text-violet-300" />
       </section>
-      <section className="grid grid-cols-[1fr_400px] gap-4">
+      <section className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,400px)]">
         <OverviewTokenActivitySkeleton />
         <OverviewStorageSkeleton />
       </section>
-      <section className="grid grid-cols-[1fr_400px] gap-4">
+      <section className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,400px)]">
         <OverviewRecentSessionsSkeleton loading={loading} onRefresh={onRefresh} />
         <OverviewCleanupSkeleton />
       </section>
@@ -1226,7 +1226,7 @@ export function OverviewView({
 
   return (
     <div className="space-y-4">
-      <section className="grid grid-cols-4 gap-3">
+      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           icon={Database}
           label="Total Sessions"
@@ -1257,7 +1257,7 @@ export function OverviewView({
         />
       </section>
 
-      <section className="grid grid-cols-[1fr_400px] gap-4">
+      <section className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,400px)]">
         <TokenActivityCard usage={rangeUsage} heatmapUsage={snapshot.usage} />
         <StorageBreakdownCard
           storageData={storageData}
@@ -1266,7 +1266,7 @@ export function OverviewView({
         />
       </section>
 
-      <section className="grid grid-cols-[1fr_400px] gap-4">
+      <section className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,400px)]">
         <Card className="glass-panel rounded-lg py-4">
           <CardHeader className="pb-0">
             <div className="flex w-full items-center justify-between">
@@ -1302,7 +1302,7 @@ export function OverviewView({
                 recentSessions.map((session) => (
                   <div
                     key={session.id}
-                    className="grid grid-cols-[28px_1fr_120px_80px_80px] items-center gap-3 py-2.5 text-xs"
+                    className="grid grid-cols-[28px_minmax(0,1fr)] gap-3 py-2.5 text-xs sm:grid-cols-[28px_minmax(0,1fr)_minmax(80px,120px)_minmax(60px,80px)_minmax(56px,80px)] sm:items-center"
                   >
                     <AgentGlyph source={session.source} />
                     <div className="min-w-0">

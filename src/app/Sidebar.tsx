@@ -22,21 +22,21 @@ export function Sidebar({
   const visibleAgents = visibleSidebarAgents(snapshot)
 
   return (
-    <aside className="sidebar-glass drag-region flex w-[232px] shrink-0 flex-col px-4 pb-4 pt-5">
-      <div className="mb-7 flex items-center gap-2 pl-2 pt-8">
+    <aside className="sidebar-glass drag-region flex w-full shrink-0 flex-col px-3 py-2 md:w-[232px] md:px-4 md:pb-4 md:pt-5">
+      <div className="mb-2 flex shrink-0 items-center gap-2 pl-1 md:mb-7 md:pl-2 md:pt-8">
         <img
           src="/app-logo.png"
           alt=""
-          className="size-10 shrink-0 object-contain"
+          className="size-8 shrink-0 object-contain md:size-10"
           draggable={false}
         />
-        <div>
+        <div className="min-w-0">
           <div className="text-sm font-medium text-white">Clean My Agent</div>
-          <div className="text-[11px] text-white/40">{t('app.tagline')}</div>
+          <div className="truncate text-[11px] text-white/40">{t('app.tagline')}</div>
         </div>
       </div>
 
-      <nav className="space-y-1">
+      <nav className="flex min-w-0 gap-1 overflow-x-auto md:block md:space-y-1 md:overflow-visible">
         {navItems
           .filter((item) => !item.hiddenInSidebar)
           .map((item) => {
@@ -47,7 +47,7 @@ export function Sidebar({
                 key={item.id}
                 type="button"
                 onClick={() => setActiveView(item.id)}
-                className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] transition ${
+                className={`flex h-8 shrink-0 items-center gap-2 rounded-md px-2 text-left text-[13px] transition md:w-full ${
                   active
                     ? 'bg-white/11 text-white shadow-inner'
                     : 'text-white/66 hover:bg-white/7 hover:text-white'
@@ -60,11 +60,11 @@ export function Sidebar({
           })}
       </nav>
 
-      <div className="mt-8 flex items-center justify-between px-2 text-[11px] uppercase tracking-wide text-white/35">
+      <div className="mt-8 hidden items-center justify-between px-2 text-[11px] uppercase tracking-wide text-white/35 md:flex">
         <span>{t('sidebar.sources')}</span>
         <Circle className="size-3 fill-emerald-300/70 text-emerald-300/70" />
       </div>
-      <div className="mt-3 space-y-2">
+      <div className="mt-3 hidden space-y-2 md:block">
         {visibleAgents.map((agent) => (
           <div
             key={agent.source}
@@ -81,7 +81,7 @@ export function Sidebar({
         ))}
       </div>
 
-      <div className="mt-auto space-y-3">
+      <div className="mt-2 space-y-3 md:mt-auto">
         <div className="grid grid-cols-2 gap-2">
           {sidebarUtilityItems.map((item) => {
             const navItem = navItems.find((nav) => nav.id === item.id)
@@ -107,7 +107,7 @@ export function Sidebar({
             )
           })}
         </div>
-        <div className="rounded-lg border border-white/8 bg-black/18 p-3">
+        <div className="hidden rounded-lg border border-white/8 bg-black/18 p-3 md:block">
           <div className="flex items-center gap-2 text-xs font-medium text-white/80">
             <ShieldCheck className="size-4 text-emerald-300" />
             {t('sidebar.safeTitle')}

@@ -157,7 +157,7 @@ function App() {
     <I18nProvider language={dashboard.language}>
       <TooltipProvider>
         <div
-          className={`mac-window theme-${theme.resolvedTheme} flex h-screen overflow-hidden text-white`}
+          className={`mac-window theme-${theme.resolvedTheme} flex h-screen flex-col overflow-hidden text-white md:flex-row`}
         >
           <Sidebar
             activeView={activeView}
@@ -191,7 +191,9 @@ function App() {
                 className={
                   activeView === 'cleanup'
                     ? 'cleanup-app-panel h-full min-w-0'
-                    : 'min-w-[1120px] p-5'
+                    : activeView === 'overview'
+                      ? 'min-w-0 p-3 sm:p-5'
+                      : 'min-w-[1120px] p-5'
                 }
               >
                 <Suspense fallback={viewFallback}>{content}</Suspense>
