@@ -9,6 +9,7 @@ import {
   agentSources,
   type AgentSource,
   type ArchiveRecord,
+  type CleanupCandidate,
   type DiagnosticReport,
   type RecoveryRecord,
   type SessionRecord,
@@ -915,6 +916,24 @@ describe('exportDiagnostics', () => {
       ),
     ).toBe(true)
   })
+
+  it('builds diagnostics from adapter defaults before any scan state exists', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+
+    const report = service['buildDiagnosticReport']({ recentOperations: [] })
+    const codexSource = report.scanSources.find((source) => source.source === 'codex')
+
+    expect(report.recentOperations).toEqual([])
+    expect(report.errorLogs).toEqual([])
+    expect(codexSource).toEqual(
+      expect.objectContaining({
+        installed: false,
+        readable: false,
+        configuredRootCount: 1,
+        diagnostics: [],
+      }),
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1410,6 +1429,97 @@ describe('moveCleanupToTrash', () => {
     const records = await service.moveCleanupToTrash(['does-not-exist'])
     expect(records).toHaveLength(0)
   })
+
+  it('records medium-risk cleanup moves when source paths are already missing', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const missingPath = path.join(fixtureRoot, 'codex', 'already-gone.jsonl')
+    const candidate: CleanupCandidate = {
+      id: 'medium-missing-path',
+      kind: 'old-session',
+      title: 'Medium missing path',
+      source: 'codex',
+      sessionIds: [],
+      paths: [missingPath],
+      sizeBytes: 10,
+      lastUpdated: '2026-01-01T00:00:00.000Z',
+      reason: 'Fixture candidate with a missing path.',
+      risk: 'medium',
+      recoverable: true,
+      backedUp: true,
+    }
+    vi.spyOn(service, 'scanCleanup').mockResolvedValue([candidate])
+
+    const records = await service.moveCleanupToTrash([candidate.id])
+    const recovery = service.getRecoveryRecords().find((item) => item.operation === 'trash')
+
+    expect(records).toHaveLength(1)
+    expect(records[0].originalPaths).toEqual([])
+    expect(recovery?.risk).toBe('medium')
+    expect(recovery?.paths).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: missingPath, role: 'source' })]),
+    )
+  })
+
+  it('records high-risk cleanup recovery when any selected candidate is high risk', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const highPath = path.join(fixtureRoot, 'gemini', 'danger.log')
+    await mkdir(path.dirname(highPath), { recursive: true })
+    await writeFile(highPath, 'high risk cleanup content')
+    const candidate: CleanupCandidate = {
+      id: 'high-risk-cleanup',
+      kind: 'large-log',
+      title: 'High risk cleanup',
+      source: 'gemini',
+      sessionIds: [],
+      paths: [highPath],
+      sizeBytes: 24,
+      lastUpdated: '2026-01-01T00:00:00.000Z',
+      reason: 'Fixture candidate for high risk recovery.',
+      risk: 'high',
+      recoverable: true,
+      backedUp: false,
+    }
+    vi.spyOn(service, 'scanCleanup').mockResolvedValue([candidate])
+
+    const records = await service.moveCleanupToTrash([candidate.id])
+    const recovery = service.getRecoveryRecords().find((item) => item.operation === 'trash')
+
+    expect(records).toHaveLength(1)
+    expect(recovery?.risk).toBe('high')
+  })
+
+  it('records low-risk cleanup recovery and failed rescan diagnostics', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const filePath = path.join(fixtureRoot, 'codex', 'low-risk.jsonl')
+    await mkdir(path.dirname(filePath), { recursive: true })
+    await writeFile(filePath, 'low risk cleanup content')
+    const candidate: CleanupCandidate = {
+      id: 'low-risk-rescan-fails',
+      kind: 'duplicate-backup',
+      title: 'Low risk rescan fails',
+      source: 'codex',
+      sessionIds: [],
+      paths: [filePath],
+      sizeBytes: 24,
+      lastUpdated: '2026-01-01T00:00:00.000Z',
+      reason: 'Fixture candidate for rescan diagnostics.',
+      risk: 'low',
+      recoverable: true,
+      backedUp: true,
+    }
+    vi.spyOn(service, 'scanCleanup').mockResolvedValue([candidate])
+    vi.spyOn(service, 'rescan').mockRejectedValue(new Error('rescan failed after trash'))
+
+    await expect(service.moveCleanupToTrash([candidate.id])).rejects.toThrow(/rescan failed/)
+    const recovery = service.getRecoveryRecords().find((item) => item.operation === 'trash')
+
+    expect(recovery?.risk).toBe('low')
+    expect(recovery?.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'rescan.failed', message: 'rescan failed after trash' }),
+      ]),
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1767,6 +1877,29 @@ describe('recovery system', () => {
     assert.ok(recovery)
     expect(recovery.status).toBe('failed')
     expect(recovery.diagnostics.some((item) => item.level === 'error')).toBe(true)
+  })
+
+  it('starts recovery records with default paths, undo, steps, and metadata', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+
+    const recovery = service['startRecovery']({
+      operation: 'export',
+      title: 'Default recovery fixture',
+      explanation: 'Covers startRecovery default branches.',
+    })
+
+    expect(recovery.paths).toEqual([])
+    expect(recovery.metadata).toEqual({})
+    expect(recovery.steps).toEqual([
+      expect.objectContaining({ label: 'Started', status: 'completed' }),
+    ])
+    expect(recovery.undo).toEqual(
+      expect.objectContaining({
+        kind: 'none',
+        available: false,
+        reason: 'This operation has not completed yet.',
+      }),
+    )
   })
 
   it('diagnoses missing paths, operation errors, and unavailable undo states', async () => {
