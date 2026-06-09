@@ -318,6 +318,7 @@ export function SessionsView({
                                   variant="ghost"
                                   size="icon-xs"
                                   onClick={() => void onRelay(session.id)}
+                                  aria-label={t('sessions.exportRelayTooltip')}
                                   className="text-white/55 hover:bg-white/10 hover:text-white"
                                 >
                                   <FileJson2 className="size-3.5" />

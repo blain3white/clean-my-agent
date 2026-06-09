@@ -4,6 +4,7 @@ import { AgentGlyph } from '@/components/agent-glyph'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { agentLabel, formatTokens } from '@/lib/format'
+import { useI18n } from '@/lib/i18n-context'
 import type { SessionRecord } from '@/shared/types'
 
 export function RelayView({
@@ -13,6 +14,7 @@ export function RelayView({
   sessions: SessionRecord[]
   onRelay: (sessionId: string) => Promise<void>
 }) {
+  const { t } = useI18n()
   const [selected, setSelected] = useState(sessions[0]?.id ?? '')
   const session = sessions.find((item) => item.id === selected)
 
@@ -20,11 +22,8 @@ export function RelayView({
     <div className="grid grid-cols-[1fr_360px] gap-4">
       <Card className="glass-panel rounded-lg py-4">
         <CardHeader className="pb-0">
-          <CardTitle className="text-sm text-white">Universal Relay JSON</CardTitle>
-          <p className="mt-1 text-xs text-white/42">
-            V0 extracts chats into a common schema. Agent-specific converters can target Codex,
-            Claude Code, Cursor, Gemini, or OpenCode later.
-          </p>
+          <CardTitle className="text-sm text-white">{t('relay.title')}</CardTitle>
+          <p className="mt-1 text-xs text-white/42">{t('relay.description')}</p>
         </CardHeader>
         <CardContent>
           <pre className="overflow-hidden rounded-lg border border-white/8 bg-black/25 p-4 text-xs leading-5 text-white/58">
@@ -51,12 +50,13 @@ export function RelayView({
 
       <Card className="glass-panel rounded-lg py-4">
         <CardHeader className="pb-0">
-          <CardTitle className="text-sm text-white">Export Source</CardTitle>
+          <CardTitle className="text-sm text-white">{t('relay.exportSource')}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <select
             value={selected}
             onChange={(event) => setSelected(event.target.value)}
+            aria-label={t('relay.selectSession')}
             className="h-9 w-full rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white outline-none"
           >
             {sessions.map((item) => (
@@ -85,7 +85,7 @@ export function RelayView({
             className="w-full bg-blue-500 text-white hover:bg-blue-400"
           >
             <FileJson2 className="size-4" />
-            Export Universal JSON
+            {t('relay.exportUniversal')}
           </Button>
         </CardContent>
       </Card>

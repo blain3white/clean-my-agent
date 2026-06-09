@@ -1,7 +1,11 @@
 import { Circle, ShieldCheck } from 'lucide-react'
 import { AgentGlyph } from '@/components/agent-glyph'
 import { navItems, type ViewId } from '@/app/navigation'
-import { visibleSidebarAgents } from '@/app/sidebar-model'
+import {
+  agentHealthStatusKey,
+  sidebarUtilityItems,
+  visibleSidebarAgents,
+} from '@/app/sidebar-model'
 import { useI18n } from '@/lib/i18n-context'
 import type { DashboardSnapshot } from '@/shared/types'
 
@@ -70,20 +74,46 @@ export function Sidebar({
             <div className="min-w-0 flex-1">
               <div className="truncate text-xs font-medium text-white/82">{agent.name}</div>
               <div className="text-[11px] text-white/38">
-                {agent.sessionCount} {t('unit.sessions')} ·{' '}
-                {agent.readable ? t('status.readable') : t('status.notFound')}
+                {agent.sessionCount} {t('unit.sessions')} · {t(agentHealthStatusKey(agent))}
               </div>
             </div>
           </div>
         ))}
       </div>
 
-      <div className="mt-auto rounded-lg border border-white/8 bg-black/18 p-3">
-        <div className="flex items-center gap-2 text-xs font-medium text-white/80">
-          <ShieldCheck className="size-4 text-emerald-300" />
-          {t('sidebar.safeTitle')}
+      <div className="mt-auto space-y-3">
+        <div className="grid grid-cols-2 gap-2">
+          {sidebarUtilityItems.map((item) => {
+            const navItem = navItems.find((nav) => nav.id === item.id)
+            if (!navItem) return null
+
+            const Icon = navItem.icon
+            const active = activeView === item.id
+
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setActiveView(item.id)}
+                className={`flex h-8 items-center justify-center gap-1.5 rounded-md border px-2 text-[11px] transition ${
+                  active
+                    ? 'border-white/14 bg-white/11 text-white'
+                    : 'border-white/8 bg-black/12 text-white/55 hover:bg-white/7 hover:text-white'
+                }`}
+              >
+                <Icon className="size-3.5" />
+                <span className="truncate">{t(item.labelKey)}</span>
+              </button>
+            )
+          })}
         </div>
-        <p className="mt-2 text-[11px] leading-4 text-white/42">{t('sidebar.safeBody')}</p>
+        <div className="rounded-lg border border-white/8 bg-black/18 p-3">
+          <div className="flex items-center gap-2 text-xs font-medium text-white/80">
+            <ShieldCheck className="size-4 text-emerald-300" />
+            {t('sidebar.safeTitle')}
+          </div>
+          <p className="mt-2 text-[11px] leading-4 text-white/42">{t('sidebar.safeBody')}</p>
+        </div>
       </div>
     </aside>
   )

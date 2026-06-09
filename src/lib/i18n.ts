@@ -72,6 +72,7 @@ const en = {
   'sidebar.safeTitle': 'Safe by default',
   'sidebar.safeBody': 'Cleanup moves files to app Trash. Session candidates are backed up first.',
   'status.readable': 'Readable',
+  'status.unreadable': 'Installed, unreadable',
   'status.notFound': 'Not found',
   'status.live': 'Live',
   'status.vault': 'Vault',
@@ -346,6 +347,7 @@ const en = {
   'health.scanDiagnostics': 'Scan diagnostics',
   'health.moreDiagnostics': '+{count} more diagnostics',
   'health.noDiagnostics': 'No scan diagnostics',
+  'health.noAgents': 'No agents found yet. Add scan folders in Settings, then rescan.',
   'settings.displayData': 'Display Data',
   'settings.displayDataDescription':
     'Switch between live local scan results and a balanced demo dataset for visual review.',
@@ -565,6 +567,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   'sidebar.safeTitle': '默认安全',
   'sidebar.safeBody': '清理会把文件移到应用回收站。会话候选项会先备份。',
   'status.readable': '可读取',
+  'status.unreadable': '已安装，不可读取',
   'status.notFound': '未找到',
   'status.live': '实时',
   'status.vault': '保险库',
@@ -739,6 +742,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   'health.scanDiagnostics': '扫描诊断',
   'health.moreDiagnostics': '还有 {count} 条诊断',
   'health.noDiagnostics': '暂无扫描诊断',
+  'health.noAgents': '还没有找到 Agent。请在设置中添加扫描文件夹，然后重新扫描。',
   'settings.displayData': '显示数据',
   'settings.displayDataDescription': '在实时本地扫描结果和平衡演示数据之间切换，以便视觉检查。',
   'settings.demoData': '演示数据',
@@ -1033,6 +1037,7 @@ const ja: Partial<Record<TranslationKey, string>> = {
   'nav.relay': 'Relay JSON',
   'nav.health': 'ヘルス',
   'nav.settings': '設定',
+  'status.unreadable': 'インストール済み、読み取り不可',
   'topbar.usageSubtitle':
     'ローカル AI エージェントのトークン、コスト、セッション分析を表示します。',
   'topbar.cleanupSubtitle':
@@ -1331,6 +1336,8 @@ const jaExtra: Partial<Record<TranslationKey, string>> = {
   'relay.description':
     'V0 はチャットを共通スキーマに抽出します。Agent 固有の変換は後で Codex、Claude Code、Cursor、Gemini、OpenCode を対象にできます。',
   'health.agentSummary': '{count} セッション · {size}',
+  'health.noAgents':
+    'エージェントはまだ見つかっていません。設定でスキャンフォルダを追加してから再スキャンしてください。',
   'settings.displayDataDescription':
     'ライブのローカルスキャン結果と、表示確認用のバランスの取れたデモデータを切り替えます。',
   'settings.demoDataDescription':
@@ -1453,6 +1460,7 @@ const fr: Partial<Record<TranslationKey, string>> = {
   'nav.relay': 'Relay JSON',
   'nav.health': 'Santé',
   'nav.settings': 'Réglages',
+  'status.unreadable': 'Installé, illisible',
   'topbar.usageSubtitle':
     'Analyse détaillée des tokens, des coûts et des sessions des agents IA locaux.',
   'topbar.cleanupSubtitle':
@@ -1758,6 +1766,8 @@ const frExtra: Partial<Record<TranslationKey, string>> = {
   'relay.description':
     'V0 extrait les discussions dans un schéma commun. Des convertisseurs propres aux agents pourront ensuite cibler Codex, Claude Code, Cursor, Gemini ou OpenCode.',
   'health.agentSummary': '{count} sessions · {size}',
+  'health.noAgents':
+    'Aucun agent trouvé pour le moment. Ajoutez des dossiers d’analyse dans Réglages, puis relancez l’analyse.',
   'settings.displayDataDescription':
     'Basculez entre les résultats d’analyse locale en direct et un jeu de données de démonstration équilibré pour la revue visuelle.',
   'settings.demoDataDescription':
