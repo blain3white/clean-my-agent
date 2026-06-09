@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, stat, truncate, utimes, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppService } from './app-service'
-import { agentSources, type AgentSource, type DiagnosticReport } from '../../src/shared/types'
+import {
+  agentSources,
+  type AgentSource,
+  type ArchiveRecord,
+  type DiagnosticReport,
+  type RecoveryRecord,
+  type SessionRecord,
+  type TrashRecord,
+} from '../../src/shared/types'
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -69,6 +78,77 @@ async function initServiceWithScan(
     exportDirectory: path.join(userDataPath, 'Exports'),
   })
   return service
+}
+
+function recoveryRecord(patch: Partial<RecoveryRecord> = {}): RecoveryRecord {
+  return {
+    id: `recovery-${Math.random().toString(16).slice(2)}`,
+    operation: 'restore',
+    status: 'completed',
+    title: 'Recovery fixture',
+    explanation: 'Fixture recovery record for focused undo tests.',
+    startedAt: '2026-02-01T00:00:00.000Z',
+    finishedAt: '2026-02-01T00:00:01.000Z',
+    steps: [{ label: 'Completed', status: 'completed', at: '2026-02-01T00:00:01.000Z' }],
+    paths: [],
+    undo: {
+      kind: 'none',
+      available: false,
+      label: 'No undo',
+      reason: 'No undo fixture',
+    },
+    diagnostics: [],
+    metadata: {},
+    ...patch,
+  }
+}
+
+function archiveRecord(session: SessionRecord, patch: Partial<ArchiveRecord> = {}): ArchiveRecord {
+  return {
+    id: `archive-${session.id}`,
+    sessionId: session.id,
+    source: session.source,
+    title: session.title,
+    createdAt: session.createdAt ?? '2026-02-01T00:00:00.000Z',
+    archivedAt: '2026-02-01T00:00:00.000Z',
+    originalPath: session.storagePath,
+    archivePath: path.join(userDataPath, 'Vault', `${session.id}.br`),
+    originalBytes: session.sizeBytes,
+    compressedBytes: 16,
+    contentHash: 'fixture-hash',
+    compression: 'brotli',
+    restorable: true,
+    session,
+    ...patch,
+  }
+}
+
+function trashRecord(patch: Partial<TrashRecord> = {}): TrashRecord {
+  return {
+    id: 'trash-fixture',
+    candidateId: 'candidate-fixture',
+    title: 'Trash fixture',
+    source: 'codex',
+    originalPaths: [],
+    trashPath: path.join(userDataPath, 'Trash', 'trash-fixture'),
+    sizeBytes: 0,
+    deletedAt: '2026-02-01T00:00:00.000Z',
+    risk: 'low',
+    recoverable: true,
+    ...patch,
+  }
+}
+
+function saveRecovery(service: AppService, record: RecoveryRecord): RecoveryRecord {
+  service['db'].upsertRecovery(record)
+  return record
+}
+
+function testHashId(parts: Array<string | number | undefined>): string {
+  return createHash('sha256')
+    .update(parts.filter((part) => part !== undefined).join('|'))
+    .digest('hex')
+    .slice(0, 24)
 }
 
 // ---------------------------------------------------------------------------
@@ -1420,6 +1500,36 @@ describe('restoreTrash', () => {
 // ---------------------------------------------------------------------------
 
 describe('purgeExpiredTrash', () => {
+  it('returns an empty list when no Trash records are expired', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ trashRetentionDays: 1 })
+
+    await expect(service.purgeExpiredTrash()).resolves.toEqual([])
+  })
+
+  it('restores purge checkpoints when deleting a Trash record fails', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ trashRetentionDays: 1 })
+    const trashPath = path.join(userDataPath, 'Trash', 'purge-delete-failure')
+    await mkdir(trashPath, { recursive: true })
+    await writeFile(path.join(trashPath, 'session.jsonl'), 'trash content')
+    const record = trashRecord({
+      id: 'purge-delete-failure',
+      trashPath,
+      deletedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    })
+    service['db'].insertTrash(record)
+    service['db'].deleteTrashRecord = () => {
+      throw new Error('delete failed')
+    }
+
+    await expect(service.purgeExpiredTrash()).rejects.toThrow(/delete failed/)
+    expect(await readFile(path.join(trashPath, 'session.jsonl'), 'utf8')).toBe('trash content')
+    expect(
+      service.getRecoveryRecords().find((item) => item.operation === 'purge-trash')?.status,
+    ).toBe('failed')
+  })
+
   it('removes only expired trash records and keeps fresh records recoverable', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
     service.updateSettings({ cleanupRetentionDays: 0, trashRetentionDays: 1 })
@@ -1562,6 +1672,93 @@ describe('recovery system', () => {
     ).toBeDefined()
   }, 20_000)
 
+  it('records unavailable purge undo when expired Trash paths are already gone', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ trashRetentionDays: 1 })
+    const expiredRecord = trashRecord({
+      id: 'trash-missing-path',
+      trashPath: path.join(userDataPath, 'Trash', 'missing-path'),
+      deletedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    })
+    service['db'].insertTrash(expiredRecord)
+
+    const purged = await service.purgeExpiredTrash()
+    const recovery = service
+      .getRecoveryRecords()
+      .find((record) => record.operation === 'purge-trash')
+
+    expect(purged.map((record) => record.id)).toEqual([expiredRecord.id])
+    assert.ok(recovery)
+    expect(recovery.undo).toMatchObject({
+      kind: 'restore-purged-trash',
+      available: false,
+      reason: 'No on-disk Trash paths existed when purge ran.',
+    })
+  })
+
+  it('rolls back purge recovery metadata when checkpoint creation fails', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ trashRetentionDays: 1 })
+    const startedAt = '2026-02-10T00:00:00.000Z'
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.123)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date(startedAt))
+      const expiredRecord = trashRecord({
+        id: 'trash-checkpoint-fails',
+        trashPath: path.join(userDataPath, 'Trash', 'checkpoint-fails'),
+        deletedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+      })
+      await mkdir(expiredRecord.trashPath, { recursive: true })
+      await writeFile(path.join(expiredRecord.trashPath, 'item.jsonl'), 'trash content')
+      service['db'].insertTrash(expiredRecord)
+      const recoveryId = testHashId([
+        'recovery',
+        'purge-trash',
+        undefined,
+        'Purge 1 expired Trash item',
+        startedAt,
+        0.123,
+      ])
+      const blockedCheckpointDir = path.join(userDataPath, 'Recovery', 'purge-trash', recoveryId)
+      await mkdir(path.dirname(blockedCheckpointDir), { recursive: true })
+      await writeFile(blockedCheckpointDir, 'not a directory')
+
+      await expect(service.purgeExpiredTrash()).rejects.toThrow()
+      const recovery = service['db'].getRecoveryRecord(recoveryId)
+
+      expect(recovery?.status).toBe('failed')
+      expect(recovery?.metadata.trashIds).toEqual([expiredRecord.id])
+      expect(service['db'].getTrashRecord(expiredRecord.id)).toBeDefined()
+      await expect(stat(expiredRecord.trashPath)).resolves.toBeDefined()
+    } finally {
+      randomSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('undoes an archive recovery by restoring the archived session', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const filePath = await writeJsonlSession(fixtureRoot, 'codex')
+    const snapshot = await service.rescan()
+    const session = snapshot.sessions.find((item) => item.source === 'codex')
+    assert.ok(session)
+
+    const archive = await service.archiveSession(session.id)
+    await expect(stat(filePath)).rejects.toThrow()
+    const recovery = service
+      .getRecoveryRecords()
+      .find((record) => record.operation === 'archive' && record.metadata.archiveId === archive.id)
+    assert.ok(recovery)
+
+    await service.undoRecovery(recovery.id)
+
+    expect(await readFile(filePath, 'utf8')).toContain('rare migration needle')
+    expect((await service.getSnapshot(false)).archives.find((item) => item.id === archive.id)).toBe(
+      undefined,
+    )
+  })
+
   it('records failed export diagnostics when the source session cannot be decoded', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
     const filePath = await writeJsonlSession(fixtureRoot, 'codex')
@@ -1575,6 +1772,425 @@ describe('recovery system', () => {
     assert.ok(recovery)
     expect(recovery.status).toBe('failed')
     expect(recovery.diagnostics.some((item) => item.level === 'error')).toBe(true)
+  })
+
+  it('diagnoses missing paths, operation errors, and unavailable undo states', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await service.rescan()
+    const missingPath = path.join(fixtureRoot, 'missing-session.jsonl')
+    const optionalMissingPath = path.join(fixtureRoot, 'optional-missing-session.jsonl')
+    const recovery = recoveryRecord({
+      status: 'failed',
+      error: 'fixture failure',
+      paths: [
+        { label: 'Missing required path', path: missingPath, role: 'source' },
+        {
+          label: 'Missing optional path',
+          path: optionalMissingPath,
+          role: 'checkpoint',
+          optional: true,
+        },
+      ],
+      undo: {
+        kind: 'remove-created-paths',
+        available: false,
+        label: 'Unavailable undo',
+      },
+    })
+    service['db'].upsertRecovery(recovery)
+
+    const diagnosed = await service.diagnoseRecovery(recovery.id)
+
+    expect(diagnosed.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'path.missing', level: 'warning', path: missingPath }),
+        expect.objectContaining({ code: 'path.missing', level: 'info', path: optionalMissingPath }),
+        expect.objectContaining({ code: 'operation.error', level: 'error' }),
+        expect.objectContaining({ code: 'undo.unavailable', level: 'warning' }),
+      ]),
+    )
+  })
+
+  it('rejects already-undone and unavailable recovery undo requests', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await service.init()
+    const undone = recoveryRecord({ id: 'already-undone', status: 'undone' })
+    const unavailable = recoveryRecord({
+      id: 'unavailable-undo',
+      undo: {
+        kind: 'restore-trash',
+        available: false,
+        label: 'Unavailable restore',
+        reason: 'fixture unavailable',
+      },
+    })
+    service['db'].upsertRecovery(undone)
+    service['db'].upsertRecovery(unavailable)
+
+    await expect(service.undoRecovery(undone.id)).rejects.toThrow(/already undone/)
+    await expect(service.undoRecovery(unavailable.id)).rejects.toThrow(/fixture unavailable/)
+
+    const noReason = recoveryRecord({
+      id: 'unavailable-undo-without-reason',
+      undo: {
+        kind: 'restore-trash',
+        available: false,
+        label: 'Unavailable restore',
+      },
+    })
+    service['db'].upsertRecovery(noReason)
+    await expect(service.undoRecovery(noReason.id)).rejects.toThrow(/Recovery cannot be undone/)
+    await expect(service.diagnoseRecovery('missing-recovery-record')).rejects.toThrow(
+      /Recovery record not found/,
+    )
+  })
+
+  it('removes created paths without requiring backup metadata', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await service.init()
+    const sourcePath = path.join(fixtureRoot, 'source.txt')
+    const exportPath = path.join(userDataPath, 'Exports', 'remove-me.md')
+    const restoredPath = path.join(userDataPath, 'Restored', 'remove-me.jsonl')
+    await mkdir(path.dirname(exportPath), { recursive: true })
+    await mkdir(path.dirname(restoredPath), { recursive: true })
+    await writeFile(sourcePath, 'keep me')
+    await writeFile(exportPath, 'remove export')
+    await writeFile(restoredPath, 'remove restored')
+    const recovery = recoveryRecord({
+      id: 'remove-created-paths-no-backup',
+      operation: 'export',
+      paths: [
+        { label: 'Source', path: sourcePath, role: 'source' },
+        { label: 'Export', path: exportPath, role: 'export' },
+        { label: 'Restored', path: restoredPath, role: 'restored' },
+      ],
+      undo: {
+        kind: 'remove-created-paths',
+        available: true,
+        label: 'Remove created paths',
+      },
+    })
+    service['db'].upsertRecovery(recovery)
+
+    await service.undoRecovery(recovery.id)
+
+    await expect(stat(sourcePath)).resolves.toBeDefined()
+    await expect(stat(exportPath)).rejects.toThrow()
+    await expect(stat(restoredPath)).rejects.toThrow()
+  })
+
+  it('marks restore-trash undo failed when no matching trash record exists', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await service.init()
+    const recovery = recoveryRecord({
+      id: 'missing-trash-undo',
+      undo: {
+        kind: 'restore-trash',
+        available: true,
+        label: 'Restore missing Trash',
+      },
+      metadata: { trashId: 'missing-trash' },
+    })
+    service['db'].upsertRecovery(recovery)
+
+    await expect(service.undoRecovery(recovery.id)).rejects.toThrow(/No matching Trash records/)
+    expect(service.getRecoveryRecords().find((record) => record.id === recovery.id)?.status).toBe(
+      'failed',
+    )
+  })
+
+  it('marks restore-archive undo failed when archive metadata points to a missing archive', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await service.init()
+    const recovery = recoveryRecord({
+      id: 'missing-archive-undo',
+      undo: {
+        kind: 'restore-archive',
+        available: true,
+        label: 'Restore missing archive',
+      },
+      metadata: { archiveId: 'missing-archive' },
+    })
+    service['db'].upsertRecovery(recovery)
+
+    await expect(service.undoRecovery(recovery.id)).rejects.toThrow(/No matching archive record/)
+  })
+
+  it('rejects invalid purged Trash metadata and existing recovery Trash paths', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await service.init()
+    const missing = recoveryRecord({
+      id: 'missing-purged-trash',
+      undo: {
+        kind: 'restore-purged-trash',
+        available: true,
+        label: 'Recover missing purge metadata',
+      },
+      metadata: {},
+    })
+    const invalid = recoveryRecord({
+      id: 'invalid-purged-trash',
+      undo: {
+        kind: 'restore-purged-trash',
+        available: true,
+        label: 'Recover invalid purge',
+      },
+      metadata: { purgedTrash: [{ checkpointPath: 42 }] },
+    })
+    const existingTrash = trashRecord({
+      id: 'existing-trash',
+      trashPath: path.join(userDataPath, 'Trash', 'existing-trash'),
+    })
+    const checkpointPath = path.join(userDataPath, 'Recovery', 'checkpoint-existing')
+    await mkdir(existingTrash.trashPath, { recursive: true })
+    await mkdir(checkpointPath, { recursive: true })
+    const pathExists = recoveryRecord({
+      id: 'purged-trash-path-exists',
+      undo: {
+        kind: 'restore-purged-trash',
+        available: true,
+        label: 'Recover path exists purge',
+      },
+      metadata: { purgedTrash: [{ record: existingTrash, checkpointPath }] },
+    })
+    service['db'].upsertRecovery(missing)
+    service['db'].upsertRecovery(invalid)
+    service['db'].upsertRecovery(pathExists)
+
+    await expect(service.undoRecovery(missing.id)).rejects.toThrow(/missing purged Trash/)
+    await expect(service.undoRecovery(invalid.id)).rejects.toThrow(/invalid purged Trash/)
+    await expect(service.undoRecovery(pathExists.id)).rejects.toThrow(/path exists/)
+  })
+
+  it('guards restore-archive undo when restored content changed or archive path exists', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await writeJsonlSession(fixtureRoot, 'claude', { filename: 'claude-session.jsonl' })
+    const filePath = await writeJsonlSession(fixtureRoot, 'codex')
+    const snapshot = await service.rescan()
+    const session = snapshot.sessions.find((s) => s.source === 'codex')
+    assert.ok(session)
+
+    const checkpointPath = path.join(userDataPath, 'Recovery', 'archive-checkpoint.br')
+    await mkdir(path.dirname(checkpointPath), { recursive: true })
+    await writeFile(checkpointPath, 'checkpoint')
+    const changedArchive = archiveRecord(session, {
+      id: 'changed-archive',
+      originalPath: filePath,
+      archivePath: path.join(userDataPath, 'Vault', 'changed-archive.br'),
+      contentHash: 'not-the-current-file-hash',
+    })
+    const changed = recoveryRecord({
+      id: 'restore-archive-changed',
+      undo: {
+        kind: 'restore-pre-restore-archive',
+        available: true,
+        label: 'Undo changed archive restore',
+      },
+      metadata: { archiveRecord: changedArchive, checkpointPath },
+    })
+
+    const existingArchivePath = path.join(userDataPath, 'Vault', 'already-there.br')
+    const archivePathExists = recoveryRecord({
+      id: 'restore-archive-path-exists',
+      undo: {
+        kind: 'restore-pre-restore-archive',
+        available: true,
+        label: 'Undo path exists archive restore',
+      },
+      metadata: {
+        archiveRecord: archiveRecord(session, {
+          id: 'archive-path-exists',
+          originalPath: path.join(fixtureRoot, 'missing-original.jsonl'),
+          archivePath: existingArchivePath,
+        }),
+        checkpointPath,
+      },
+    })
+    await mkdir(path.dirname(existingArchivePath), { recursive: true })
+    await writeFile(existingArchivePath, 'existing archive')
+    service['db'].upsertRecovery(changed)
+    service['db'].upsertRecovery(archivePathExists)
+
+    await expect(service.undoRecovery(changed.id)).rejects.toThrow(/restored file changed/)
+    await expect(service.undoRecovery(archivePathExists.id)).rejects.toThrow(/archive path exists/)
+  }, 20_000)
+
+  it('successfully undoes an archive restore using its checkpoint', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await writeJsonlSession(fixtureRoot, 'claude', { filename: 'claude-session.jsonl' })
+    const snapshot = await service.rescan()
+    const session = snapshot.sessions.find((s) => s.source === 'claude')
+    assert.ok(session)
+    const checkpointPath = path.join(userDataPath, 'Recovery', 'successful-archive-checkpoint.br')
+    const archivePath = path.join(userDataPath, 'Vault', 'successful-archive.br')
+    const missingOriginalPath = path.join(fixtureRoot, 'claude', 'missing-original.jsonl')
+    await mkdir(path.dirname(checkpointPath), { recursive: true })
+    await writeFile(checkpointPath, 'checkpoint archive content')
+    const archive = archiveRecord(session, {
+      id: 'successful-archive-undo',
+      originalPath: missingOriginalPath,
+      archivePath,
+    })
+    const recovery = recoveryRecord({
+      id: 'restore-archive-success',
+      undo: {
+        kind: 'restore-pre-restore-archive',
+        available: true,
+        label: 'Undo archive restore',
+      },
+      metadata: { archiveRecord: archive, checkpointPath },
+    })
+    service['db'].upsertRecovery(recovery)
+
+    await service.undoRecovery(recovery.id)
+
+    expect(service['db'].getArchiveRecord(archive.id)?.id).toBe(archive.id)
+    await expect(stat(archivePath)).resolves.toBeDefined()
+    await expect(stat(checkpointPath)).rejects.toThrow()
+  }, 20_000)
+
+  it('guards and performs restore-trash undo back into app Trash', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await writeJsonlSession(fixtureRoot, 'claude', { filename: 'claude-session.jsonl' })
+    await service.rescan()
+    const originalPath = path.join(fixtureRoot, 'codex', 'restored-trash.jsonl')
+    await mkdir(path.dirname(originalPath), { recursive: true })
+    await writeFile(originalPath, 'restored content')
+    const existingTrash = trashRecord({
+      id: 'restore-trash-path-exists',
+      originalPaths: [originalPath],
+      trashPath: path.join(userDataPath, 'Trash', 'restore-trash-path-exists'),
+    })
+    const successfulTrash = trashRecord({
+      id: 'restore-trash-success',
+      originalPaths: [originalPath],
+      trashPath: path.join(userDataPath, 'Trash', 'restore-trash-success'),
+    })
+    const blocked = recoveryRecord({
+      id: 'restore-pre-trash-path-exists',
+      undo: {
+        kind: 'restore-pre-restore-trash',
+        available: true,
+        label: 'Move back to existing Trash',
+      },
+      metadata: { trashRecord: existingTrash },
+    })
+    const succeeds = recoveryRecord({
+      id: 'restore-pre-trash-success',
+      undo: {
+        kind: 'restore-pre-restore-trash',
+        available: true,
+        label: 'Move back to Trash',
+      },
+      metadata: { trashRecord: successfulTrash },
+    })
+    await mkdir(existingTrash.trashPath, { recursive: true })
+    service['db'].upsertRecovery(blocked)
+    service['db'].upsertRecovery(succeeds)
+
+    await expect(service.undoRecovery(blocked.id)).rejects.toThrow(/Trash path exists/)
+    await service.undoRecovery(succeeds.id)
+
+    await expect(stat(originalPath)).rejects.toThrow()
+    await expect(
+      stat(path.join(successfulTrash.trashPath, path.basename(originalPath))),
+    ).resolves.toBeDefined()
+    expect(service['db'].getTrashRecord(successfulTrash.id)?.id).toBe(successfulTrash.id)
+  }, 20_000)
+
+  it('refuses to restore Trash over an existing original path', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await service.init()
+    const originalPath = path.join(fixtureRoot, 'codex', 'existing-original.jsonl')
+    const trashPath = path.join(userDataPath, 'Trash', 'restore-collision')
+    await mkdir(path.dirname(originalPath), { recursive: true })
+    await mkdir(trashPath, { recursive: true })
+    await writeFile(originalPath, 'live original')
+    await writeFile(path.join(trashPath, path.basename(originalPath)), 'trash copy')
+    const record = trashRecord({
+      id: 'restore-collision',
+      originalPaths: [originalPath],
+      trashPath,
+    })
+    service['db'].insertTrash(record)
+
+    await expect(service.restoreTrash(record.id)).rejects.toThrow(/original path exists/)
+    expect(service['db'].getTrashRecord(record.id)?.id).toBe(record.id)
+  })
+
+  it('covers missing recovery metadata helpers through direct undo execution', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await service.init()
+
+    await expect(
+      service['performRecoveryUndo'](
+        recoveryRecord({
+          undo: { kind: 'restore-archive', available: true, label: 'Missing archive id' },
+          metadata: {},
+        }),
+      ),
+    ).rejects.toThrow(/metadata is missing archiveId/)
+    await expect(
+      service['performRecoveryUndo'](
+        recoveryRecord({
+          undo: {
+            kind: 'restore-pre-restore-trash',
+            available: true,
+            label: 'Missing trash record',
+          },
+          metadata: {},
+        }),
+      ),
+    ).rejects.toThrow(/metadata is missing trashRecord/)
+  })
+
+  it('covers direct unsupported recovery undo branches', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await service.init()
+    await expect(
+      service['performRecoveryUndo'](
+        recoveryRecord({
+          undo: { kind: 'none', available: true, label: 'No direct undo' },
+        }),
+      ),
+    ).rejects.toThrow(/no undo action/)
+    await expect(
+      service['performRecoveryUndo'](
+        recoveryRecord({
+          undo: { kind: 'future-kind' as never, available: true, label: 'Future undo' },
+        }),
+      ),
+    ).rejects.toThrow(/Unsupported recovery undo action/)
+  })
+
+  it('purges expired Trash metadata without checkpoints when paths are already gone', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await service.init()
+    const record = trashRecord({
+      id: 'missing-expired-trash',
+      title: 'Missing expired Trash',
+      trashPath: path.join(userDataPath, 'Trash', 'already-gone'),
+      deletedAt: '2026-01-01T00:00:00.000Z',
+    })
+    service['db'].insertTrash(record)
+
+    const purged = await service.purgeExpiredTrash()
+
+    expect(purged.map((item) => item.id)).toEqual([record.id])
+    expect(service['db'].getTrashRecord(record.id)).toBeUndefined()
+    const recovery = service.getRecoveryRecords().find((item) => item.operation === 'purge-trash')
+    expect(recovery).toEqual(
+      expect.objectContaining({
+        status: 'completed',
+        undo: expect.objectContaining({
+          kind: 'restore-purged-trash',
+          available: false,
+          reason: 'No on-disk Trash paths existed when purge ran.',
+        }),
+        metadata: expect.objectContaining({ purgedTrash: [] }),
+      }),
+    )
   })
 })
 
