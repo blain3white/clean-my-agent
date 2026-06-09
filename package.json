@@ -1,7 +1,7 @@
 {
   "name": "clean-my-agent",
   "productName": "Clean My Agent",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Clean, back up, and move your AI coding sessions.",
   "license": "MIT",
   "repository": {
