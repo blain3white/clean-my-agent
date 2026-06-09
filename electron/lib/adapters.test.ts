@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { AgentAdapter, adapterFor, adapters } from './adapters'
 import type { AppSettings } from '../../src/shared/types'
-import { scannerProviderFor, scannerProviders } from './scanner-providers'
+import { rootsForPlatform, scannerProviderFor, scannerProviders } from './scanner-providers'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -575,6 +575,27 @@ describe('adapterFor', () => {
     expect(adapters.map((adapter) => adapter.source)).toEqual(
       scannerProviders.map((provider) => provider.source),
     )
+  })
+
+  it('selects Windows default roots for providers with platform-specific storage', () => {
+    const cursorRoots = rootsForPlatform(scannerProviderFor('cursor')!, 'win32')
+    expect(cursorRoots).toEqual([
+      '~/AppData/Roaming/Cursor/User/workspaceStorage',
+      '~/AppData/Roaming/Cursor/User/globalStorage',
+    ])
+
+    const opencodeRoots = rootsForPlatform(scannerProviderFor('opencode')!, 'win32')
+    expect(opencodeRoots).toEqual(
+      expect.arrayContaining([
+        '~/.opencode',
+        '~/AppData/Local/opencode',
+        '~/AppData/Roaming/opencode',
+        '~/AppData/Roaming/ai.opencode.desktop/opencode',
+      ]),
+    )
+
+    const geminiRoots = rootsForPlatform(scannerProviderFor('gemini')!, 'win32')
+    expect(geminiRoots).toEqual(['~/.gemini'])
   })
 
   it('uses provider parser overrides for scan and universal export', async () => {

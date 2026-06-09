@@ -24,7 +24,7 @@ import {
   type JsonRecord,
 } from './agent-storage-formats'
 import { expandHome, hashId, listFiles, pathSize, readable, safeReadText } from './files'
-import { scannerProviders } from './scanner-providers'
+import { rootsForPlatform, scannerProviders } from './scanner-providers'
 import type {
   AgentScannerProvider,
   ScannerProviderCandidate,
@@ -1061,7 +1061,7 @@ export class AgentAdapter {
 
   roots(settings: AppSettings): string[] {
     const configured = settings.scanRoots[this.provider.source]
-    return (configured?.length ? configured : this.provider.roots).map(expandHome)
+    return (configured?.length ? configured : rootsForPlatform(this.provider)).map(expandHome)
   }
 
   async recentCandidates(settings: AppSettings, limit: number): Promise<SessionFileCandidate[]> {

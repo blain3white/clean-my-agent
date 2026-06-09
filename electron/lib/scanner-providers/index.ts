@@ -5,7 +5,7 @@ import { cursorScannerProvider } from './cursor'
 import { customScannerProvider } from './custom'
 import { geminiScannerProvider } from './gemini'
 import { opencodeScannerProvider } from './opencode'
-import type { AgentScannerProvider } from './types'
+import type { AgentScannerProvider, ScannerPlatform } from './types'
 
 export type {
   AgentScannerProvider,
@@ -24,4 +24,12 @@ export const scannerProviders: AgentScannerProvider[] = [
 
 export function scannerProviderFor(source: AgentSource): AgentScannerProvider | undefined {
   return scannerProviders.find((provider) => provider.source === source)
+}
+
+export function rootsForPlatform(
+  provider: AgentScannerProvider,
+  platform: ScannerPlatform = process.platform,
+): string[] {
+  const roots = [...provider.roots, ...(provider.platformRoots?.[platform] ?? [])]
+  return roots.filter((root, index) => roots.indexOf(root) === index)
 }

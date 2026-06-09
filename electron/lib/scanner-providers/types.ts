@@ -31,10 +31,24 @@ export type ScannerProviderCandidate = {
   mtimeMs: number
 }
 
+export type ScannerPlatform =
+  | 'aix'
+  | 'android'
+  | 'darwin'
+  | 'freebsd'
+  | 'haiku'
+  | 'linux'
+  | 'openbsd'
+  | 'sunos'
+  | 'win32'
+  | 'cygwin'
+  | 'netbsd'
+
 export type AgentScannerProvider = {
   source: AgentSource
   name: string
   roots: string[]
+  platformRoots?: Partial<Record<ScannerPlatform, string[]>>
   patterns: string[]
   note: string
   parserName?: string

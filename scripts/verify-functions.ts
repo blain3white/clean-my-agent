@@ -7,11 +7,15 @@ import type { AgentSource } from '../src/shared/types'
 
 const sources: AgentSource[] = ['codex', 'claude', 'cursor', 'gemini', 'opencode', 'custom']
 
+function slashPath(filePath: string): string {
+  return filePath.replace(/\\/g, '/')
+}
+
 async function writeSession(root: string, source: AgentSource, daysOld: number, name = 'session') {
   const dir = path.join(root, source)
   await mkdir(dir, { recursive: true })
   const filePath = path.join(dir, `${source}-${name}.jsonl`)
-  const workspace = path.join('/tmp', 'clean-my-agent-fixture', source)
+  const workspace = path.join(os.tmpdir(), 'clean-my-agent-fixture', source)
   const date = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000)
   const timestamp = date.toISOString()
   const referencedFile = path.join(workspace, 'src', 'auth.ts')
@@ -148,7 +152,7 @@ async function main() {
           typeof item === 'object' &&
           item !== null &&
           'path' in item &&
-          String(item.path).endsWith('/codex/src/auth.ts')
+          slashPath(String(item.path)).endsWith('/codex/src/auth.ts')
         )
       }),
     'scan metadata should retain relay file references for reports',
@@ -235,13 +239,13 @@ async function main() {
     'relay JSON should include extracted commands',
   )
   assert.ok(
-    relay.files.some((item) => item.path.endsWith('/codex/src/auth.ts')),
+    relay.files.some((item) => slashPath(item.path).endsWith('/codex/src/auth.ts')),
     'relay JSON should include extracted file references',
   )
   assert.ok(
     relay.attachments.some(
       (item) =>
-        item.path.endsWith('/codex/artifacts/auth-flow.png') &&
+        slashPath(item.path).endsWith('/codex/artifacts/auth-flow.png') &&
         item.mediaType === 'image/png' &&
         item.sizeBytes === 2048,
     ),
