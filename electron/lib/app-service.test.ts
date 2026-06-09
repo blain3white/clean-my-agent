@@ -433,6 +433,26 @@ describe('getSnapshot and rescan', () => {
     )
   })
 
+  it('snapshot backfills missing storage state and search text from old cached sessions', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await writeJsonlSession(fixtureRoot, 'codex')
+    const snapshot = await service.rescan()
+    const session = snapshot.sessions.find((s) => s.source === 'codex')
+    assert.ok(session)
+    service['db'].replaceSessions([
+      {
+        ...session,
+        storageState: undefined as never,
+        searchText: undefined,
+      },
+    ])
+
+    const after = await service.getSnapshot(false)
+    const restored = after.sessions.find((item) => item.id === session.id)
+    expect(restored?.storageState).toBe('live')
+    expect(restored?.searchText).toContain('rare migration needle')
+  })
+
   it('aggregates usage events by the configured usage timezone', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     try {
