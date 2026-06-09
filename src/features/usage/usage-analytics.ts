@@ -260,12 +260,16 @@ function sessionCostTokenTotal(sessions: SessionRecord[]): number {
   }, 0)
 }
 
-function sessionCostTokenTotalForDates(sessions: SessionRecord[], dates: Set<string>): number {
+function sessionCostTokenTotalForDates(
+  sessions: SessionRecord[],
+  dates: Set<string>,
+  timezone: string,
+): number {
   return sessions.reduce((total, session) => {
     if (typeof session.tokens.costUsd !== 'number' || session.tokens.costUsd <= 0) return total
     return (
       total +
-      sessionDateTokenEntries(session).reduce(
+      sessionDateTokenEntries(session, timezone).reduce(
         (sum, [date, tokens]) => sum + (dates.has(date) ? tokens : 0),
         0,
       )
@@ -282,11 +286,11 @@ export function costForTokenShare(tokens: number, totalTokens: number, totalCost
   return (tokens / totalTokens) * totalCost
 }
 
-function costByDateFromSessions(sessions: SessionRecord[]): Map<string, number> {
+function costByDateFromSessions(sessions: SessionRecord[], timezone: string): Map<string, number> {
   const costs = new Map<string, number>()
   for (const session of sessions) {
     if (typeof session.tokens.costUsd !== 'number' || session.tokens.costUsd <= 0) continue
-    const entries = sessionDateTokenEntries(session)
+    const entries = sessionDateTokenEntries(session, timezone)
     const total = entries.reduce((sum, [, tokens]) => sum + tokens, 0)
     if (total <= 0) continue
 
@@ -575,10 +579,11 @@ function rangeSessionsForUsage(
   sessions: SessionRecord[],
   range: UsagePageRange,
   dateKeys: Set<string>,
+  timezone: string,
 ): SessionRecord[] {
   if (range === 'all') return sessions
   return sessions.filter((session) =>
-    dateKeys.has(dateKeyFromTime(new Date(session.lastUpdated).getTime())),
+    sessionDateTokenEntries(session, timezone).some(([date]) => dateKeys.has(date)),
   )
 }
 
@@ -714,12 +719,13 @@ function buildUsageHeatmapData(
   range: UsagePageRange,
   sessions: SessionRecord[],
   costByDate: Map<string, number>,
+  timezone: string,
 ): { rows: UsageHeatmapRow[]; cells: UsageHeatmapCell[] } {
   const rows = buildUsageHeatmapRows(usage, range)
   const sessionsByDateHour = new Map<string, number>()
   for (const session of sessions) {
     const updated = new Date(session.lastUpdated)
-    const date = dateKeyFromTime(updated.getTime())
+    const date = dateKeyFromTime(updated.getTime(), timezone)
     const hour = updated.getHours()
     const key = `${date}:${hour}`
     sessionsByDateHour.set(key, (sessionsByDateHour.get(key) ?? 0) + 1)
@@ -811,6 +817,7 @@ function buildProjectUsageRows(
   usage: UsagePoint[],
   totalTokens: number,
   dateKeys: Set<string>,
+  timezone: string,
   includeAllDates = false,
 ): ProjectUsage[] {
   const trendDates = usage.slice(-7).map((point) => point.date)
@@ -839,7 +846,7 @@ function buildProjectUsageRows(
     }
     acc[key].projectPath ??= session.projectPath
 
-    const entries = sessionDateTokenEntries(session)
+    const entries = sessionDateTokenEntries(session, timezone)
     const sessionEntryTotal = entries.reduce((total, [, tokens]) => total + tokens, 0)
     entries.forEach(([date, tokens]) => {
       if (!includeAllDates && !dateKeys.has(date)) return
@@ -873,21 +880,25 @@ function buildProjectUsageRows(
     .sort((a, b) => b.cost - a.cost || b.tokens - a.tokens)
 }
 
-export function buildUsageAnalytics(snapshot: DashboardSnapshot, range: UsagePageRange) {
+export function buildUsageAnalytics(
+  snapshot: DashboardSnapshot,
+  range: UsagePageRange,
+  timezone = 'UTC',
+) {
   const selectedUsage = usageForPageRange(snapshot.usage, range)
   const priorUsage = priorUsageForPageRange(snapshot.usage, range)
   const selectedDateKeys = new Set(selectedUsage.map((point) => point.date))
   const priorDateKeys = new Set(priorUsage.map((point) => point.date))
-  const rangeSessions = rangeSessionsForUsage(snapshot.sessions, range, selectedDateKeys)
-  const priorSessions = rangeSessionsForUsage(snapshot.sessions, range, priorDateKeys)
+  const rangeSessions = rangeSessionsForUsage(snapshot.sessions, range, selectedDateKeys, timezone)
+  const priorSessions = rangeSessionsForUsage(snapshot.sessions, range, priorDateKeys, timezone)
   const usageTokens = usageTotalForPoints(selectedUsage)
   const priorUsageTokens = usageTotalForPoints(priorUsage)
-  const sessionTokens = sessionTokenTotalForDates(snapshot.sessions, selectedDateKeys)
-  const priorSessionTokens = sessionTokenTotalForDates(snapshot.sessions, priorDateKeys)
+  const sessionTokens = sessionTokenTotalForDates(snapshot.sessions, selectedDateKeys, timezone)
+  const priorSessionTokens = sessionTokenTotalForDates(snapshot.sessions, priorDateKeys, timezone)
   const totalTokens = usageTokens || sessionTokens || sessionTokenTotal(rangeSessions)
   const priorTokens =
     range === 'all' ? 0 : priorUsageTokens || priorSessionTokens || sessionTokenTotal(priorSessions)
-  const allCostByDate = costByDateFromSessions(snapshot.sessions)
+  const allCostByDate = costByDateFromSessions(snapshot.sessions, timezone)
   const estimatedCost =
     range === 'all'
       ? sessionCostTotal(rangeSessions)
@@ -899,7 +910,7 @@ export function buildUsageAnalytics(snapshot: DashboardSnapshot, range: UsagePag
           100,
           ((range === 'all'
             ? sessionCostTokenTotal(rangeSessions)
-            : sessionCostTokenTotalForDates(snapshot.sessions, selectedDateKeys)) /
+            : sessionCostTokenTotalForDates(snapshot.sessions, selectedDateKeys, timezone)) /
             Math.max(1, totalTokens)) *
             100,
         )
@@ -909,7 +920,13 @@ export function buildUsageAnalytics(snapshot: DashboardSnapshot, range: UsagePag
     totalTokens / Math.max(1, selectedUsage.length || usageDaysForPageRange(snapshot.usage, range))
   const tokenMix = usageTokenMixFromSessions(rangeSessions, totalTokens)
   const dailyTrend = attachDailyCosts(buildDailyUsageTrend(selectedUsage, tokenMix), allCostByDate)
-  const heatmap = buildUsageHeatmapData(selectedUsage, range, rangeSessions, allCostByDate)
+  const heatmap = buildUsageHeatmapData(
+    selectedUsage,
+    range,
+    rangeSessions,
+    allCostByDate,
+    timezone,
+  )
   const peakWindows = buildPeakWindows(heatmap.cells, totalTokens)
   const forecast = buildUsageForecasts(snapshot.usage, allCostByDate, snapshot.generatedAt)
   const peakHour = peakWindows[0] ?? {
@@ -938,6 +955,7 @@ export function buildUsageAnalytics(snapshot: DashboardSnapshot, range: UsagePag
     selectedUsage,
     totalTokens,
     selectedDateKeys,
+    timezone,
     range === 'all',
   )
 
@@ -986,20 +1004,21 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
-function dateKeyFromIso(value: string | undefined): string | undefined {
+function dateKeyFromIso(value: string | undefined, timezone = 'UTC'): string | undefined {
   if (!value) return undefined
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return undefined
-  return dateKeyFromTime(date.getTime())
+  return dateKeyFromTime(date.getTime(), timezone)
 }
 
 function isDateInReportRange(
   value: string | undefined,
   dateKeys: Set<string>,
   includeAllDates: boolean,
+  timezone: string,
 ): boolean {
   if (includeAllDates) return true
-  const date = dateKeyFromIso(value)
+  const date = dateKeyFromIso(value, timezone)
   return !date || dateKeys.has(date)
 }
 
@@ -1007,17 +1026,19 @@ function hasSessionTokensInRange(
   session: SessionRecord,
   dateKeys: Set<string>,
   includeAllDates: boolean,
+  timezone: string,
 ): boolean {
   if (includeAllDates) return true
-  return sessionDateTokenEntries(session).some(([date]) => dateKeys.has(date))
+  return sessionDateTokenEntries(session, timezone).some(([date]) => dateKeys.has(date))
 }
 
 function sessionTokensInRange(
   session: SessionRecord,
   dateKeys: Set<string>,
   includeAllDates: boolean,
+  timezone: string,
 ): number {
-  return sessionDateTokenEntries(session).reduce((total, [date, tokens]) => {
+  return sessionDateTokenEntries(session, timezone).reduce((total, [date, tokens]) => {
     if (!includeAllDates && !dateKeys.has(date)) return total
     return total + tokens
   }, 0)
@@ -1027,9 +1048,10 @@ function sessionCostInRange(
   session: SessionRecord,
   dateKeys: Set<string>,
   includeAllDates: boolean,
+  timezone: string,
 ): number {
   if (typeof session.tokens.costUsd !== 'number' || session.tokens.costUsd <= 0) return 0
-  const entries = sessionDateTokenEntries(session)
+  const entries = sessionDateTokenEntries(session, timezone)
   const entryTotal = entries.reduce((total, [, tokens]) => total + tokens, 0)
   const tokens = entries.reduce((total, [date, value]) => {
     if (!includeAllDates && !dateKeys.has(date)) return total
@@ -1111,16 +1133,21 @@ function pushReportHighlight(highlights: string[], value: string | undefined): v
   if (value && highlights.length < 4) highlights.push(value)
 }
 
-export function buildUsageReport(snapshot: DashboardSnapshot, range: UsagePageRange): UsageReport {
-  const analytics = buildUsageAnalytics(snapshot, range)
+export function buildUsageReport(
+  snapshot: DashboardSnapshot,
+  range: UsagePageRange,
+  timezone = 'UTC',
+): UsageReport {
+  const analytics = buildUsageAnalytics(snapshot, range, timezone)
   const selectedUsage = analytics.selectedUsage
   const selectedDateKeys = analytics.selectedDateKeys
   const includeAllDates = range === 'all'
   const sessions = snapshot.sessions.filter((session) =>
-    hasSessionTokensInRange(session, selectedDateKeys, includeAllDates),
+    hasSessionTokensInRange(session, selectedDateKeys, includeAllDates, timezone),
   )
   const totalTokens = sessions.reduce(
-    (total, session) => total + sessionTokensInRange(session, selectedDateKeys, includeAllDates),
+    (total, session) =>
+      total + sessionTokensInRange(session, selectedDateKeys, includeAllDates, timezone),
     0,
   )
   const projectMap = new Map<
@@ -1175,14 +1202,21 @@ export function buildUsageReport(snapshot: DashboardSnapshot, range: UsagePageRa
 
   for (const session of sessions) {
     const project = ensureProject(session)
-    project.tokens += sessionTokensInRange(session, selectedDateKeys, includeAllDates)
-    project.cost += sessionCostInRange(session, selectedDateKeys, includeAllDates)
+    project.tokens += sessionTokensInRange(session, selectedDateKeys, includeAllDates, timezone)
+    project.cost += sessionCostInRange(session, selectedDateKeys, includeAllDates, timezone)
     project.sessions.add(session.id)
 
     for (const item of relayFilesFromMetadata(session.metadata)) {
       const rawPath = stringValue(item.path)
       if (!rawPath || isSensitiveReportPath(rawPath)) continue
-      if (!isDateInReportRange(stringValue(item.lastSeenAt), selectedDateKeys, includeAllDates)) {
+      if (
+        !isDateInReportRange(
+          stringValue(item.lastSeenAt),
+          selectedDateKeys,
+          includeAllDates,
+          timezone,
+        )
+      ) {
         continue
       }
       const fullPath = joinProjectPath(session.projectPath, rawPath)
@@ -1230,7 +1264,14 @@ export function buildUsageReport(snapshot: DashboardSnapshot, range: UsagePageRa
     for (const item of relayCommandsFromMetadata(session.metadata)) {
       const rawCommand = stringValue(item.command)
       if (!rawCommand) continue
-      if (!isDateInReportRange(stringValue(item.createdAt), selectedDateKeys, includeAllDates)) {
+      if (
+        !isDateInReportRange(
+          stringValue(item.createdAt),
+          selectedDateKeys,
+          includeAllDates,
+          timezone,
+        )
+      ) {
         continue
       }
       const command = redactSensitiveCommand(rawCommand)
@@ -1343,7 +1384,8 @@ export function buildUsageReport(snapshot: DashboardSnapshot, range: UsagePageRa
     summary: {
       totalTokens,
       estimatedCost: sessions.reduce(
-        (total, session) => total + sessionCostInRange(session, selectedDateKeys, includeAllDates),
+        (total, session) =>
+          total + sessionCostInRange(session, selectedDateKeys, includeAllDates, timezone),
         0,
       ),
       activeSessions: sessions.length,
@@ -1444,8 +1486,12 @@ function csvFromRows(rows: string[][]): string {
     .join('\n')
 }
 
-export function exportUsageCsv(snapshot: DashboardSnapshot, range: UsagePageRange): void {
-  const analytics = buildUsageAnalytics(snapshot, range)
+export function exportUsageCsv(
+  snapshot: DashboardSnapshot,
+  range: UsagePageRange,
+  timezone = 'UTC',
+): void {
+  const analytics = buildUsageAnalytics(snapshot, range, timezone)
   downloadText(
     `clean-my-agent-usage-${range}.csv`,
     csvFromRows([
@@ -1482,8 +1528,9 @@ export function exportUsageCsv(snapshot: DashboardSnapshot, range: UsagePageRang
 export function exportUsageReportMarkdown(
   snapshot: DashboardSnapshot,
   range: UsagePageRange,
+  timezone = 'UTC',
 ): void {
-  const report = buildUsageReport(snapshot, range)
+  const report = buildUsageReport(snapshot, range, timezone)
   downloadText(
     `clean-my-agent-report-${range}.md`,
     usageReportMarkdown(report),

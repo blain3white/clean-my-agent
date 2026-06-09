@@ -9,4 +9,13 @@ describe('dateKeyFromTime', () => {
   it('handles the Unix epoch', () => {
     expect(dateKeyFromTime(0)).toBe('1970-01-01')
   })
+
+  it('formats date keys in the requested timezone', () => {
+    expect(dateKeyFromTime(new Date('2026-06-08T18:30:00.000Z').getTime(), 'UTC')).toBe(
+      '2026-06-08',
+    )
+    expect(dateKeyFromTime(new Date('2026-06-08T18:30:00.000Z').getTime(), 'Asia/Shanghai')).toBe(
+      '2026-06-09',
+    )
+  })
 })

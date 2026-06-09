@@ -30,7 +30,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { sourceColors } from '@/lib/agent-colors'
 import { formatCost } from '@/lib/format'
-import type { DashboardSnapshot } from '@/shared/types'
+import type { AppSettings, DashboardSnapshot } from '@/shared/types'
 import type { UsagePageRange } from '@/features/usage/ranges'
 import {
   buildUsageAnalytics,
@@ -996,10 +996,12 @@ function UsageReportCard({
   report,
   snapshot,
   range,
+  timezone,
 }: {
   report: UsageReport
   snapshot: DashboardSnapshot
   range: UsagePageRange
+  timezone: string
 }) {
   const topProjects = report.projects.slice(0, 4)
   const topFiles = report.files.slice(0, 6)
@@ -1014,7 +1016,7 @@ function UsageReportCard({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => exportUsageReportMarkdown(snapshot, range)}
+            onClick={() => exportUsageReportMarkdown(snapshot, range, timezone)}
             className="gap-1.5 text-white/65 hover:bg-white/7 hover:text-white"
           >
             <Download className="size-3.5" />
@@ -1239,15 +1241,23 @@ export function UsageView({
   snapshot,
   range,
   loading,
+  settings,
   onSelectProject,
 }: {
   snapshot: DashboardSnapshot
   range: UsagePageRange
   loading: boolean
+  settings: AppSettings
   onSelectProject: (project?: ProjectUsage) => void
 }) {
-  const analytics = useMemo(() => buildUsageAnalytics(snapshot, range), [snapshot, range])
-  const report = useMemo(() => buildUsageReport(snapshot, range), [snapshot, range])
+  const analytics = useMemo(
+    () => buildUsageAnalytics(snapshot, range, settings.usageTimezone),
+    [snapshot, range, settings.usageTimezone],
+  )
+  const report = useMemo(
+    () => buildUsageReport(snapshot, range, settings.usageTimezone),
+    [snapshot, range, settings.usageTimezone],
+  )
 
   if (loading) return <UsageLoadingView />
   if (analytics.summary.totalTokens <= 0 && analytics.summary.activeSessions <= 0) {
@@ -1338,7 +1348,12 @@ export function UsageView({
         <TokenMixCard mix={analytics.tokenMix} />
       </section>
 
-      <UsageReportCard report={report} snapshot={snapshot} range={range} />
+      <UsageReportCard
+        report={report}
+        snapshot={snapshot}
+        range={range}
+        timezone={settings.usageTimezone}
+      />
     </div>
   )
 }

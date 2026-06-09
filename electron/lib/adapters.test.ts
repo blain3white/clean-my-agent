@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, truncate, utimes, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, truncate, utimes, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -372,7 +372,7 @@ describe('unreadable and missing roots', () => {
     expect(state.installed).toBe(false)
     expect(state.readable).toBe(false)
     expect(sessions).toHaveLength(0)
-    expect(state.diagnostics?.some((item) => item.code === 'root-not-readable')).toBe(true)
+    expect(state.diagnostics?.some((item) => item.code === 'root-missing')).toBe(true)
   })
 
   it('recentCandidates returns empty array for missing roots', async () => {
@@ -380,6 +380,37 @@ describe('unreadable and missing roots', () => {
     const adapter = makeAdapter('codex', [missingRoot])
     const candidates = await adapter.recentCandidates(makeSettings(missingRoot), 10)
     expect(candidates).toHaveLength(0)
+  })
+
+  it('does not warn about optional missing roots when another root is readable', async () => {
+    const root = await makeTmpDir('mixed-readable-roots')
+    const missingRoot = path.join(tmpBase, 'missing-optional-' + Date.now())
+    const adapter = makeAdapter('codex', [root, missingRoot])
+    const { state } = await adapter.scan({
+      ...makeSettings(root),
+      scanRoots: { codex: [root, missingRoot] },
+    })
+
+    expect(state.installed).toBe(true)
+    expect(state.readable).toBe(true)
+    expect(state.diagnostics?.some((item) => item.code === 'root-missing')).toBe(false)
+  })
+
+  it('reports existing unreadable roots as permission-blocked', async () => {
+    const root = await makeTmpDir('permission-blocked-root')
+    const adapter = makeAdapter('codex', [root])
+
+    try {
+      await chmod(root, 0o000)
+      const { state } = await adapter.scan(makeSettings(root))
+
+      expect(state.installed).toBe(false)
+      expect(state.readable).toBe(false)
+      expect(state.diagnostics?.some((item) => item.code === 'root-permission-blocked')).toBe(true)
+      expect(state.diagnostics?.some((item) => item.code === 'root-missing')).toBe(false)
+    } finally {
+      await chmod(root, 0o700)
+    }
   })
 })
 

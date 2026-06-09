@@ -43,7 +43,7 @@ import {
 
 const oneDayMs = 24 * 60 * 60 * 1000
 const usageHistoryDays = 365
-const scanSchemaVersion = 3
+const scanSchemaVersion = 4
 const maxPathLength = 4096
 const maxRetentionDays = 36_500
 const relayModes: AppSettings['defaultRelayMode'][] = [
@@ -1381,9 +1381,8 @@ export class AppService {
     }
 
     sessions.forEach((session) => {
-      const usageByDate =
-        usageEventsByDateFromMetadata(session.metadata, timezone) ??
-        usageByDateFromMetadata(session.metadata)
+      const usageEventsByDate = usageEventsByDateFromMetadata(session.metadata, timezone)
+      const usageByDate = usageEventsByDate ?? usageByDateFromMetadata(session.metadata)
       if (usageByDate && Object.keys(usageByDate).length > 0) {
         Object.entries(usageByDate).forEach(([key, tokens]) => {
           const point = points.get(key)

@@ -1382,15 +1382,15 @@ function OverviewEmptyState({
 }) {
   const rootDiagnostics = snapshot.agents.flatMap((agent) =>
     (agent.diagnostics ?? [])
-      .filter((diagnostic) => diagnostic.code === 'root-not-readable')
+      .filter(
+        (diagnostic) =>
+          diagnostic.code === 'root-permission-blocked' || diagnostic.code === 'root-not-readable',
+      )
       .map((diagnostic) => ({
         agent: agent.name,
         path: diagnostic.path,
         message: diagnostic.message,
       })),
-  )
-  const configuredUnreadable = snapshot.agents.filter(
-    (agent) => agent.rootPaths.length > 0 && !agent.readable,
   )
   const hasConfiguredRoots = snapshot.agents.some((agent) => agent.rootPaths.length > 0)
   const scanIssue =
@@ -1403,12 +1403,12 @@ function OverviewEmptyState({
         title: 'Local scan failed',
         body: 'Clean My Agent kept the previous data untouched. Retry the scan after checking the error below.',
       }
-    : rootDiagnostics.length > 0 || configuredUnreadable.length > 0
+    : rootDiagnostics.length > 0
       ? {
           icon: FolderX,
           tone: 'warning' as const,
-          title: 'Folders are missing or blocked',
-          body: 'Some agent roots could not be read. The folder may not exist anymore, or macOS permissions may need attention.',
+          title: 'Folder access is blocked',
+          body: 'Some agent roots exist but cannot be read. Grant folder access, then scan again.',
         }
       : hasConfiguredRoots
         ? {
@@ -1428,13 +1428,7 @@ function OverviewEmptyState({
     ? [{ agent: 'Last run', path: scanIssue.detail, message: 'Scan error' }]
     : rootDiagnostics.length > 0
       ? rootDiagnostics
-      : configuredUnreadable.flatMap((agent) =>
-          agent.rootPaths.map((path) => ({
-            agent: agent.name,
-            path,
-            message: 'Missing or not readable',
-          })),
-        )
+      : []
 
   return (
     <div className="space-y-4">

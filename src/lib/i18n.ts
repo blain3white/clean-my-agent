@@ -450,7 +450,9 @@ const en = {
   'settings.issueScanBody':
     'The app could not read local agent data. Review folder access and scan again.',
   'settings.issueRetry': 'Retry',
-  'settings.providerFolderBlocked': 'Folder missing or permission blocked',
+  'settings.providerFolderBlocked': 'Folder access blocked',
+  'settings.providerFolderBlockedHelp':
+    'Grant Full Disk Access to Clean My Agent, or add this exact folder with the picker, then rescan.',
   'settings.showDemoData': 'Show demo data',
   'settings.showDemoDataDescription': 'Use curated values for visual review',
   'settings.exportDiagnostics': 'Export diagnostics',
@@ -812,7 +814,9 @@ const zh: Partial<Record<TranslationKey, string>> = {
   'settings.issueScanTitle': '本地扫描失败',
   'settings.issueScanBody': '应用无法读取本地 Agent 数据。检查目录权限后再扫描。',
   'settings.issueRetry': '重试',
-  'settings.providerFolderBlocked': '目录不存在或权限不足',
+  'settings.providerFolderBlocked': '目录权限受限',
+  'settings.providerFolderBlockedHelp':
+    '在系统设置里给 Clean My Agent 开启完全磁盘访问权限，或用选择器添加这个具体目录，然后重新扫描。',
   'settings.showDemoData': '显示演示数据',
   'settings.showDemoDataDescription': '使用精选数据进行视觉检查',
   'settings.exportDiagnostics': '导出诊断报告',

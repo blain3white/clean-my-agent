@@ -31,6 +31,20 @@ function makeSession(overrides: Partial<SessionRecord> = {}): SessionRecord {
 }
 
 describe('sessionDateTokenEntries', () => {
+  it('uses usageEvents in the selected timezone before legacy usageByDate', () => {
+    expect(
+      sessionDateTokenEntries(
+        makeSession({
+          metadata: {
+            usageByDate: { '2026-06-08': 400 },
+            usageEvents: [{ timestamp: '2026-06-08T18:30:00.000Z', tokens: 450 }],
+          },
+        }),
+        'Asia/Shanghai',
+      ),
+    ).toEqual([['2026-06-09', 450]])
+  })
+
   it('uses positive usageByDate entries when present', () => {
     expect(
       sessionDateTokenEntries(
@@ -71,6 +85,12 @@ describe('sessionDateTokenEntries', () => {
     expect(sessionDateTokenEntries(makeSession({ metadata: { usageByDate: {} } }))).toEqual([
       ['2026-06-06', 1000],
     ])
+    expect(
+      sessionDateTokenEntries(
+        makeSession({ lastUpdated: '2026-06-08T18:30:00.000Z' }),
+        'Asia/Shanghai',
+      ),
+    ).toEqual([['2026-06-09', 1000]])
   })
 
   it('falls back when usageByDate is not a plain object', () => {
@@ -99,6 +119,19 @@ describe('sessionTokenTotalForDates', () => {
     ]
 
     expect(sessionTokenTotalForDates(sessions, new Set(['2026-06-02']))).toBe(700)
+  })
+
+  it('sums usage events in the selected timezone', () => {
+    const sessions = [
+      makeSession({
+        metadata: {
+          usageByDate: { '2026-06-08': 450 },
+          usageEvents: [{ timestamp: '2026-06-08T18:30:00.000Z', tokens: 450 }],
+        },
+      }),
+    ]
+
+    expect(sessionTokenTotalForDates(sessions, new Set(['2026-06-09']), 'Asia/Shanghai')).toBe(450)
   })
 
   it('returns zero when no dates match', () => {

@@ -505,6 +505,36 @@ describe('getSnapshot and rescan', () => {
     }
   })
 
+  it('prefers usage event timestamps over legacy usageByDate buckets', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-06-09T12:00:00.000Z'))
+      const service = await initServiceWithScan(fixtureRoot, userDataPath)
+      service.updateSettings({ usageTimezone: 'Asia/Shanghai' })
+      await writeJsonlSession(fixtureRoot, 'codex')
+      const snapshot = await service.rescan()
+      const session = snapshot.sessions.find((s) => s.source === 'codex')
+      assert.ok(session)
+
+      service['db'].replaceSessions([
+        {
+          ...session,
+          metadata: {
+            ...session.metadata,
+            usageByDate: { '2026-06-08': 450 },
+            usageEvents: [{ timestamp: '2026-06-08T18:30:00.000Z', tokens: 450 }],
+          },
+        },
+      ])
+
+      const usage = (await service.getSnapshot(false)).usage
+      expect(usage.find((point) => point.date === '2026-06-08')?.codex).toBe(0)
+      expect(usage.find((point) => point.date === '2026-06-09')?.codex).toBe(450)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('disabled providers are not scanned, shown, or suggested for cleanup', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
     service.updateSettings({

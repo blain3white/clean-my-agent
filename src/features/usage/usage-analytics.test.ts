@@ -222,6 +222,36 @@ describe('buildUsageAnalytics', () => {
     expect(analytics.trends.totalTokens).toContain('vs prior period')
   })
 
+  it('uses usage event timestamps for project analytics in the configured timezone', () => {
+    const usage = [usagePoint('2026-06-09', { codex: 450 })]
+    const snapshot = makeSnapshot(usage, [
+      makeSession({
+        lastUpdated: '2026-06-08T18:30:00.000Z',
+        tokens: {
+          input: 100,
+          output: 100,
+          cached: 250,
+          total: 450,
+          costUsd: 9,
+          estimated: false,
+        },
+        metadata: {
+          usageByDate: { '2026-06-08': 450 },
+          usageEvents: [{ timestamp: '2026-06-08T18:30:00.000Z', tokens: 450 }],
+        },
+      }),
+    ])
+
+    const analytics = buildUsageAnalytics(snapshot, '7d', 'Asia/Shanghai')
+
+    expect(analytics.summary.activeSessions).toBe(1)
+    expect(analytics.summary.estimatedCost).toBeCloseTo(9)
+    expect(analytics.projectRows.find((row) => row.project === 'clean-my-agent')).toMatchObject({
+      tokens: 450,
+      cost: 9,
+    })
+  })
+
   it('forecasts current week and month usage and flags abnormal increases', () => {
     const mayUsage = Array.from({ length: 31 }, (_, index) =>
       usagePoint(`2026-05-${String(index + 1).padStart(2, '0')}`, { codex: 1_000 }),
@@ -435,6 +465,46 @@ describe('buildUsageReport', () => {
       'OPENAI_API_KEY=[redacted] pnpm test -- --token [redacted]',
     )
     expect(report.highlights.join('\n')).toContain('clean-my-agent led')
+  })
+
+  it('uses the configured timezone when building project reports', () => {
+    const usage = [usagePoint('2026-06-09', { codex: 450 })]
+    const snapshot = makeSnapshot(usage, [
+      makeSession({
+        lastUpdated: '2026-06-08T18:30:00.000Z',
+        tokens: {
+          input: 100,
+          output: 100,
+          cached: 250,
+          total: 450,
+          costUsd: 9,
+          estimated: false,
+        },
+        metadata: {
+          usageByDate: { '2026-06-08': 450 },
+          usageEvents: [{ timestamp: '2026-06-08T18:30:00.000Z', tokens: 450 }],
+          relayFiles: [
+            { path: '/repo/clean-my-agent/src/report.ts', lastSeenAt: '2026-06-08T18:30:00.000Z' },
+          ],
+          relayCommands: [{ command: 'pnpm check', createdAt: '2026-06-08T18:30:00.000Z' }],
+        },
+      }),
+    ])
+
+    const report = buildUsageReport(snapshot, '7d', 'Asia/Shanghai')
+
+    expect(report.summary).toMatchObject({
+      totalTokens: 450,
+      estimatedCost: 9,
+      activeSessions: 1,
+      fileCount: 1,
+      commandCount: 1,
+    })
+    expect(report.projects[0]).toMatchObject({
+      project: 'clean-my-agent',
+      tokens: 450,
+      cost: 9,
+    })
   })
 
   it('renders markdown report sections', () => {

@@ -1,6 +1,6 @@
 import path from 'node:path'
-import { createReadStream } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { constants, createReadStream } from 'node:fs'
+import { access, stat } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import type {
   AgentScanDiagnostic,
@@ -110,6 +110,29 @@ function pushDiagnostic(diagnostics: AgentScanDiagnostic[], diagnostic: AgentSca
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : 'Unknown error'
+}
+
+function errorCode(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : undefined
+}
+
+async function rootAccess(
+  root: string,
+): Promise<{ root: string; exists: boolean; readable: boolean }> {
+  try {
+    await access(root, constants.R_OK)
+    return { root, exists: true, readable: true }
+  } catch (readError) {
+    try {
+      await access(root, constants.F_OK)
+      return { root, exists: true, readable: false }
+    } catch (existsError) {
+      const code = errorCode(existsError) ?? errorCode(readError)
+      return { root, exists: code === 'EACCES' || code === 'EPERM', readable: false }
+    }
+  }
 }
 
 function isLikelyPath(value: string): boolean {
@@ -1051,18 +1074,28 @@ export class AgentAdapter {
     settings: AppSettings,
   ): Promise<{ state: AgentInstallState; sessions: SessionRecord[] }> {
     const roots = this.roots(settings)
-    const rootChecks = await Promise.all(
-      roots.map(async (root) => ({ root, isReadable: await readable(root) })),
-    )
-    const readableRoots = rootChecks.filter((item) => item.isReadable).map((item) => item.root)
+    const rootChecks = await Promise.all(roots.map(rootAccess))
+    const readableRoots = rootChecks.filter((item) => item.readable).map((item) => item.root)
     const diagnostics: AgentScanDiagnostic[] = []
     rootChecks
-      .filter((item) => !item.isReadable)
+      .filter((item) => !item.readable)
       .forEach((item) => {
+        if (!item.exists) {
+          if (readableRoots.length === 0) {
+            pushDiagnostic(diagnostics, {
+              level: 'info',
+              code: 'root-missing',
+              message: 'Scan root does not exist.',
+              path: item.root,
+            })
+          }
+          return
+        }
+
         pushDiagnostic(diagnostics, {
           level: 'warning',
-          code: 'root-not-readable',
-          message: 'Scan root is missing or not readable.',
+          code: 'root-permission-blocked',
+          message: 'Scan root exists but is not readable. Grant folder access and scan again.',
           path: item.root,
         })
       })

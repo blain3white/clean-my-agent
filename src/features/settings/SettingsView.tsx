@@ -508,7 +508,9 @@ export function SettingsView({
             const enabled = settings.enabledProviders[source] !== false
             const detected = enabled && Boolean(agent?.readable)
             const rootIssue = agent?.diagnostics?.find(
-              (diagnostic) => diagnostic.code === 'root-not-readable',
+              (diagnostic) =>
+                diagnostic.code === 'root-permission-blocked' ||
+                diagnostic.code === 'root-not-readable',
             )
 
             return (
@@ -537,6 +539,9 @@ export function SettingsView({
                         <div className="font-medium">{t('settings.providerFolderBlocked')}</div>
                         <div className="mt-0.5 truncate opacity-70">
                           {rootIssue.path ?? rootIssue.message}
+                        </div>
+                        <div className="mt-1 leading-relaxed opacity-75">
+                          {t('settings.providerFolderBlockedHelp')}
                         </div>
                       </div>
                     </div>

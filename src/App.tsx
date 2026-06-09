@@ -98,6 +98,7 @@ function App() {
             snapshot={dashboard.snapshot}
             range={usageRange}
             loading={dashboard.loading}
+            settings={dashboard.settings}
             onSelectProject={(project) => {
               setSessionProjectQuery(project?.projectPath ?? project?.project ?? '')
               setActiveView('sessions')
@@ -174,7 +175,9 @@ function App() {
               }
               onOverviewRangeChange={setOverviewRange}
               onUsageRangeChange={setUsageRange}
-              onUsageExport={() => exportUsageCsv(dashboard.snapshot, usageRange)}
+              onUsageExport={() =>
+                exportUsageCsv(dashboard.snapshot, usageRange, dashboard.settings.usageTimezone)
+              }
               onRescan={dashboard.rescan}
             />
             <div
