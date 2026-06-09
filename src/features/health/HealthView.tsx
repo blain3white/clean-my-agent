@@ -1,6 +1,7 @@
 import { AgentGlyph } from '@/components/agent-glyph'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
+import { agentHealthStatusKey } from '@/app/sidebar-model'
 import { formatBytes } from '@/lib/format'
 import { useI18n } from '@/lib/i18n-context'
 import type { AgentScanDiagnostic, DashboardSnapshot } from '@/shared/types'
@@ -13,6 +14,14 @@ function diagnosticTone(level: AgentScanDiagnostic['level']): string {
 
 export function HealthView({ snapshot }: { snapshot: DashboardSnapshot }) {
   const { t } = useI18n()
+
+  if (snapshot.agents.length === 0) {
+    return (
+      <div className="rounded-lg border border-white/8 bg-white/[0.03] px-4 py-6 text-sm text-white/55">
+        {t('health.noAgents')}
+      </div>
+    )
+  }
 
   return (
     <div className="grid grid-cols-2 gap-4">
@@ -30,7 +39,7 @@ export function HealthView({ snapshot }: { snapshot: DashboardSnapshot }) {
                       : 'bg-amber-400/10 text-amber-300'
                   }
                 >
-                  {agent.readable ? t('status.readable') : t('status.notFound')}
+                  {t(agentHealthStatusKey(agent))}
                 </Badge>
               </div>
               <div className="mt-2 text-xs text-white/42">

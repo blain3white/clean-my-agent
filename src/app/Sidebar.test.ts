@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { visibleSidebarAgents } from './sidebar-model'
+import { navItems } from './navigation'
+import { agentHealthStatusKey, sidebarUtilityItems, visibleSidebarAgents } from './sidebar-model'
 import type { AgentInstallState, AgentSource, DashboardSnapshot } from '@/shared/types'
 
 function agent(source: AgentSource, patch: Partial<AgentInstallState> = {}): AgentInstallState {
@@ -39,5 +40,25 @@ describe('visibleSidebarAgents', () => {
     visibleCustomStates.forEach((customAgent) => {
       expect(visibleSidebarAgents(snapshot([customAgent]))).toEqual([customAgent])
     })
+  })
+})
+
+describe('sidebarUtilityItems', () => {
+  it('exposes hidden health and relay views outside the primary nav list', () => {
+    const primaryNavIds = navItems.filter((item) => !item.hiddenInSidebar).map((item) => item.id)
+
+    expect(primaryNavIds).not.toContain('health')
+    expect(primaryNavIds).not.toContain('relay')
+    expect(sidebarUtilityItems.map((item) => item.id)).toEqual(['health', 'relay'])
+  })
+})
+
+describe('agentHealthStatusKey', () => {
+  it('distinguishes missing, installed-unreadable, and readable agents', () => {
+    expect(agentHealthStatusKey(agent('codex'))).toBe('status.notFound')
+    expect(agentHealthStatusKey(agent('codex', { installed: true }))).toBe('status.unreadable')
+    expect(agentHealthStatusKey(agent('codex', { installed: true, readable: true }))).toBe(
+      'status.readable',
+    )
   })
 })
