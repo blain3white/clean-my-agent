@@ -5,6 +5,7 @@ export type { ManagedSkill, SkillCategory, SkillStatus }
 
 export type SkillStatusFilter = 'all' | SkillStatus
 export type SkillOwnerFilter = 'all' | AgentSource
+export type SkillsEmptyStateKind = 'scan-error' | 'no-matches' | 'empty'
 
 export function filterSkills(
   skills: ManagedSkill[],
@@ -33,6 +34,32 @@ export function summarizeVisibleSkills(skills: ManagedSkill[]) {
     visibleCount: skills.length,
     totalSizeKb: skills.reduce((total, skill) => total + skill.sizeKb, 0),
   }
+}
+
+export function getSkillsEmptyStateKind(
+  scanError: boolean,
+  totalSkills: number,
+  visibleSkills: number,
+): SkillsEmptyStateKind | undefined {
+  if (visibleSkills > 0) return undefined
+  if (scanError) return 'scan-error'
+  return totalSkills > 0 ? 'no-matches' : 'empty'
+}
+
+export function skillsEmptyStateTitleKey(kind: SkillsEmptyStateKind): TranslationKey {
+  if (kind === 'scan-error') return 'skills.scanErrorTitle'
+  if (kind === 'no-matches') return 'skills.noMatchesTitle'
+  return 'skills.emptyTitle'
+}
+
+export function skillsEmptyStateBodyKey(kind: SkillsEmptyStateKind): TranslationKey {
+  if (kind === 'scan-error') return 'skills.scanErrorBody'
+  if (kind === 'no-matches') return 'skills.noMatchesBody'
+  return 'skills.emptyBody'
+}
+
+export function shouldShowSkillsPagination(totalSkills: number, visibleSkills: number): boolean {
+  return totalSkills > 0 && visibleSkills > 0
 }
 
 export function statusLabelKey(status: SkillStatus) {
