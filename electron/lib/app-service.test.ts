@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, stat, truncate, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, truncate, utimes, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -404,6 +404,25 @@ describe('getSnapshot and rescan', () => {
     expect(after.sessions.some((s) => s.source === 'codex')).toBe(true)
   })
 
+  it('refreshRecentSessions includes the newest candidate when a limit is requested', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const olderPath = await writeJsonlSession(fixtureRoot, 'codex', {
+      filename: 'older-session.jsonl',
+      contentExtra: ' older refresh candidate',
+    })
+    const newerPath = await writeJsonlSession(fixtureRoot, 'codex', {
+      filename: 'newer-session.jsonl',
+      contentExtra: ' newer refresh candidate',
+    })
+    const base = new Date('2026-02-01T12:00:00.000Z')
+    await utimes(olderPath, base, base)
+    await utimes(newerPath, new Date(base.getTime() + 60_000), new Date(base.getTime() + 60_000))
+
+    const after = await service.refreshRecentSessions(2)
+
+    expect(after.sessions.map((session) => session.storagePath)).toEqual([newerPath, olderPath])
+  })
+
   it('snapshot overview aggregates totalTokens across sessions', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
     await writeJsonlSession(fixtureRoot, 'codex')
@@ -737,6 +756,9 @@ describe('exportDiagnostics', () => {
 
     await rm(sessionPath)
     await expect(service.archiveSession(session.id)).rejects.toThrow(/Session file not found/)
+    await expect(service.exportSession('bad session id', 'json')).rejects.toThrow(
+      /non-empty identifier/,
+    )
 
     const exportPath = await service.exportDiagnostics()
     const raw = await readFile(exportPath, 'utf8')
@@ -747,6 +769,7 @@ describe('exportDiagnostics', () => {
     expect(report.scanSources.some((source) => source.source === 'codex')).toBe(true)
     expect(report.performance.some((metric) => metric.operation === 'app.rescan')).toBe(true)
     expect(report.errorLogs.some((entry) => entry.operation === 'session.archive')).toBe(true)
+    expect(report.errorLogs.some((entry) => entry.operation === 'session.export')).toBe(true)
     expect(report.privacy).toEqual({
       fullPaths: 'redacted',
       sessionContent: 'excluded',
@@ -910,7 +933,14 @@ describe('archiveSession', () => {
     const session = snapshot.sessions.find((s) => s.source === 'codex')
     assert.ok(session)
 
-    await service.archiveSession(session.id)
+    const archive = await service.archiveSession(session.id)
+    service['db'].insertArchive({
+      ...archive,
+      session: {
+        ...archive.session,
+        searchText: undefined as never,
+      },
+    })
     const after = await service.getSnapshot(false)
     const archivedSession = after.sessions.find((s) => s.id === session.id)
     expect(archivedSession?.searchText).toContain('rare migration needle')
@@ -1107,11 +1137,25 @@ describe('scanCleanup', () => {
     const snapshot = await service.rescan()
     const session = snapshot.sessions.find((s) => s.storagePath === logPath)
     assert.ok(session)
+    const regularLargePath = path.join(fixtureRoot, 'gemini', 'large-session.jsonl')
+    service['db'].replaceSessions([
+      ...snapshot.sessions,
+      {
+        ...session,
+        id: `${session.id}:regular-large`,
+        storagePath: regularLargePath,
+        sizeBytes: 51 * 1024 * 1024,
+        backupStatus: 'none',
+      },
+    ])
 
     const beforeBackup = await service.scanCleanup()
     const highRisk = beforeBackup.find((c) => c.kind === 'large-log')
     expect(highRisk?.risk).toBe('high')
     expect(highRisk?.backedUp).toBe(false)
+    const regularLarge = beforeBackup.find((c) => c.paths.includes(regularLargePath))
+    expect(regularLarge?.kind).toBe('old-session')
+    expect(regularLarge?.risk).toBe('high')
 
     await service.backupSession(session.id)
     const afterBackup = await service.scanCleanup()
@@ -1141,6 +1185,17 @@ describe('scanCleanup', () => {
             '1999-01-01': 99,
           },
           usageEvents: [],
+        },
+      },
+      {
+        ...session,
+        id: `${session.id}:outside-history`,
+        lastUpdated: '1999-01-01T00:00:00.000Z',
+        metadata: {},
+        tokens: {
+          total: 77,
+          input: 77,
+          output: 0,
         },
       },
     ])
