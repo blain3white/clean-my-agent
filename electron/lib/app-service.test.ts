@@ -139,11 +139,6 @@ function trashRecord(patch: Partial<TrashRecord> = {}): TrashRecord {
   }
 }
 
-function saveRecovery(service: AppService, record: RecoveryRecord): RecoveryRecord {
-  service['db'].upsertRecovery(record)
-  return record
-}
-
 function testHashId(parts: Array<string | number | undefined>): string {
   return createHash('sha256')
     .update(parts.filter((part) => part !== undefined).join('|'))
