@@ -4,6 +4,7 @@ import {
   buildSessionTimeline,
   countTimelineEvents,
   filterTimelineEvents,
+  sessionActionLabel,
 } from './session-detail-model'
 
 function makeDocument(): UniversalRelayDocument {
@@ -104,5 +105,21 @@ describe('session detail model', () => {
       'assistant',
     ])
     expect(filterTimelineEvents(events, 'tool')).toHaveLength(1)
+  })
+
+  it('builds action labels with session title and agent context', () => {
+    const session = makeDocument().session
+
+    expect(sessionActionLabel('Export universal relay JSON', session)).toBe(
+      'Export universal relay JSON for Session (Codex)',
+    )
+  })
+
+  it('falls back to the session id when action labels have an empty title', () => {
+    const session = { ...makeDocument().session, title: '   ' }
+
+    expect(sessionActionLabel('Backup session', session)).toBe(
+      'Backup session for session-1 (Codex)',
+    )
   })
 })

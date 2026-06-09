@@ -1,4 +1,5 @@
-import type { UniversalRelayDocument, UniversalRelayMessage } from '@/shared/types'
+import { agentLabel } from '@/lib/format'
+import type { SessionRecord, UniversalRelayDocument, UniversalRelayMessage } from '@/shared/types'
 
 export const sessionDetailFilters = [
   'all',
@@ -32,6 +33,12 @@ export type SessionTimelineEvent = {
 }
 
 export type SessionTimelineCounts = Record<SessionDetailFilter, number>
+
+export function sessionActionLabel(action: string, session: SessionRecord): string {
+  const title = session.title.trim() || session.id
+  const agent = agentLabel[session.source]
+  return `${action} for ${title} (${agent})`
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))

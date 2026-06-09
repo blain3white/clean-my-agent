@@ -33,6 +33,7 @@ import type {
   UniversalRelayDocument,
 } from '@/shared/types'
 import { SessionDetailDrawer } from './SessionDetailDrawer'
+import { sessionActionLabel } from './session-detail-model'
 
 export function SessionsView({
   sessions,
@@ -110,6 +111,9 @@ export function SessionsView({
               <div className="relative">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-white/35" />
                 <Input
+                  aria-label="Search sessions"
+                  autoComplete="off"
+                  name="session-search"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder={t('sessions.searchPlaceholder')}
@@ -117,6 +121,9 @@ export function SessionsView({
                 />
               </div>
               <select
+                aria-label="Filter sessions by agent"
+                name="session-agent-filter"
+                autoComplete="off"
                 value={agent}
                 onChange={(event) => setAgent(event.target.value as 'all' | AgentSource)}
                 className="h-8 rounded-lg border border-white/10 bg-white/5 px-2 text-xs text-white outline-none"
@@ -170,6 +177,20 @@ export function SessionsView({
                 ) : (
                   filtered.slice(0, 80).map((session) => {
                     const archive = archivesBySessionId.get(session.id)
+                    const backupLabel =
+                      session.storageState === 'archived'
+                        ? sessionActionLabel('Backup unavailable for archived session', session)
+                        : sessionActionLabel(t('sessions.backupTooltip'), session)
+                    const vaultAction =
+                      session.storageState === 'archived' && archive
+                        ? t('sessions.restoreTooltip')
+                        : t('sessions.archiveTooltip')
+                    const vaultLabel = sessionActionLabel(vaultAction, session)
+                    const exportLabel = sessionActionLabel(
+                      t('sessions.exportMarkdownTooltip'),
+                      session,
+                    )
+                    const relayLabel = sessionActionLabel(t('sessions.exportRelayTooltip'), session)
                     return (
                       <TableRow
                         key={session.id}
@@ -234,6 +255,8 @@ export function SessionsView({
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button
+                                  aria-label={backupLabel}
+                                  title={backupLabel}
                                   variant="ghost"
                                   size="icon-xs"
                                   onClick={() => void onBackup(session.id)}
@@ -248,6 +271,8 @@ export function SessionsView({
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button
+                                  aria-label={vaultLabel}
+                                  title={vaultLabel}
                                   variant="ghost"
                                   size="icon-xs"
                                   onClick={() =>
@@ -273,6 +298,8 @@ export function SessionsView({
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button
+                                  aria-label={exportLabel}
+                                  title={exportLabel}
                                   variant="ghost"
                                   size="icon-xs"
                                   onClick={() => void onExport(session.id)}
@@ -286,6 +313,8 @@ export function SessionsView({
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button
+                                  aria-label={relayLabel}
+                                  title={relayLabel}
                                   variant="ghost"
                                   size="icon-xs"
                                   onClick={() => void onRelay(session.id)}
