@@ -3,9 +3,14 @@ import type { ManagedSkill } from '@/shared/types'
 import {
   categoryLabelKey,
   filterSkills,
+  getSkillsEmptyStateKind,
+  shouldShowSkillsPagination,
+  skillsEmptyStateBodyKey,
+  skillsEmptyStateTitleKey,
   statusLabelKey,
   summarizeVisibleSkills,
 } from './skills-data'
+import { mockSkillsSnapshot } from '@/lib/mock-data'
 
 const skill = (overrides: Partial<ManagedSkill> = {}): ManagedSkill => ({
   id: 'codex-review',
@@ -79,6 +84,34 @@ describe('skills data model', () => {
 
     expect(summary.visibleCount).toBe(4)
     expect(summary.totalSizeKb).toBe(102)
+  })
+
+  it('provides demo skills for renderer-only fallback', () => {
+    expect(mockSkillsSnapshot.skills.length).toBeGreaterThan(0)
+    expect(mockSkillsSnapshot.summary.totalSkills).toBe(mockSkillsSnapshot.skills.length)
+    expect(mockSkillsSnapshot.skills.some((item) => item.content.includes('SKILL.md'))).toBe(true)
+    expect(mockSkillsSnapshot.skills.some((item) => item.location.length > 80)).toBe(true)
+  })
+
+  it('separates scan errors, empty roots, and no-match states', () => {
+    expect(getSkillsEmptyStateKind(true, 0, 0)).toBe('scan-error')
+    expect(skillsEmptyStateTitleKey('scan-error')).toBe('skills.scanErrorTitle')
+    expect(skillsEmptyStateBodyKey('scan-error')).toBe('skills.scanErrorBody')
+
+    expect(getSkillsEmptyStateKind(false, 0, 0)).toBe('empty')
+    expect(skillsEmptyStateTitleKey('empty')).toBe('skills.emptyTitle')
+    expect(skillsEmptyStateBodyKey('empty')).toBe('skills.emptyBody')
+
+    expect(getSkillsEmptyStateKind(false, 4, 0)).toBe('no-matches')
+    expect(skillsEmptyStateTitleKey('no-matches')).toBe('skills.noMatchesTitle')
+    expect(skillsEmptyStateBodyKey('no-matches')).toBe('skills.noMatchesBody')
+    expect(getSkillsEmptyStateKind(false, 4, 2)).toBeUndefined()
+  })
+
+  it('hides pagination for empty, error, and no-match results', () => {
+    expect(shouldShowSkillsPagination(0, 0)).toBe(false)
+    expect(shouldShowSkillsPagination(4, 0)).toBe(false)
+    expect(shouldShowSkillsPagination(4, 2)).toBe(true)
   })
 
   it('builds stable i18n keys for status and category labels', () => {

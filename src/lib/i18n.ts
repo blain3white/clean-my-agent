@@ -215,9 +215,12 @@ const en = {
   'skills.loadingBody': 'Reading SKILL.md files from your local agent skill folders.',
   'skills.emptyTitle': 'No local skills found',
   'skills.emptyBody':
-    'Skills appear here after a SKILL.md file is discovered in a supported local skill folder.',
+    'Skills appear here after a SKILL.md file is discovered in a supported local skill folder. Check skill roots in Settings, then refresh.',
   'skills.noMatchesTitle': 'No matching skills',
   'skills.noMatchesBody': 'Try another search, owner, or status filter.',
+  'skills.scanErrorTitle': 'Could not scan local skills',
+  'skills.scanErrorBody':
+    'Open the desktop app or refresh this window. If the issue continues, check configured skill roots in Settings.',
   'skills.emptyDetailsTitle': 'No skill selected',
   'skills.emptyDetailsBody':
     'Select a discovered local skill to inspect its source, agents, and metadata.',
@@ -887,9 +890,13 @@ const zhExtra: Partial<Record<TranslationKey, string>> = {
   'skills.loadingTitle': '正在扫描本地技能',
   'skills.loadingBody': '正在读取本地 Agent 技能目录中的 SKILL.md 文件。',
   'skills.emptyTitle': '未发现本地技能',
-  'skills.emptyBody': '在支持的本地技能目录中发现 SKILL.md 后，技能会显示在这里。',
+  'skills.emptyBody':
+    '在支持的本地技能目录中发现 SKILL.md 后，技能会显示在这里。请检查设置中的技能根目录，然后刷新。',
   'skills.noMatchesTitle': '没有匹配的技能',
   'skills.noMatchesBody': '试试其他搜索词、所属 Agent 或状态筛选。',
+  'skills.scanErrorTitle': '无法扫描本地技能',
+  'skills.scanErrorBody':
+    '请启用桌面应用或刷新此窗口。如果问题仍然存在，请检查设置中的技能根目录。',
   'skills.emptyDetailsTitle': '未选择技能',
   'skills.emptyDetailsBody': '选择一个已发现的本地技能来查看来源、关联 Agent 和元数据。',
   'skills.scanError': '无法扫描本地技能。',

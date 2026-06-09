@@ -31,9 +31,14 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { agentLabel } from '@/lib/format'
 import type { TranslationKey } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n-context'
+import { mockSkillsSnapshot } from '@/lib/mock-data'
 import { agentSources, type SkillsSnapshot, type SkillsSummary } from '@/shared/types'
 import {
   filterSkills,
+  getSkillsEmptyStateKind,
+  shouldShowSkillsPagination,
+  skillsEmptyStateBodyKey,
+  skillsEmptyStateTitleKey,
   statusLabelKey,
   type ManagedSkill,
   type SkillOwnerFilter,
@@ -318,7 +323,9 @@ function DetailField({ label, value }: { label: string; value: string | number }
   return (
     <div className="grid grid-cols-[112px_1fr] gap-4 text-sm">
       <dt className="text-white/45">{label}</dt>
-      <dd className="text-white/62">{value}</dd>
+      <dd className="min-w-0 break-words text-white/62" title={String(value)}>
+        {value}
+      </dd>
     </div>
   )
 }
@@ -434,7 +441,7 @@ function SkillsDetailDrawer({
   )
 }
 
-export function SkillsView() {
+export function SkillsView({ mockDataEnabled = false }: { mockDataEnabled?: boolean }) {
   const { t, formatRelative } = useI18n()
   const [query, setQuery] = useState('')
   const [owner, setOwner] = useState<SkillOwnerFilter>('all')
@@ -445,6 +452,22 @@ export function SkillsView() {
   const [activeSkillId, setActiveSkillId] = useState<string>()
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(() => new Set())
   const loadSkills = useCallback(async () => {
+    if (mockDataEnabled) {
+      setSnapshot(mockSkillsSnapshot)
+      setActiveSkillId((current) =>
+        current && mockSkillsSnapshot.skills.some((skill) => skill.id === current)
+          ? current
+          : undefined,
+      )
+      setSelectedSkillIds((current) => {
+        const availableIds = new Set(mockSkillsSnapshot.skills.map((skill) => skill.id))
+        return new Set(Array.from(current).filter((skillId) => availableIds.has(skillId)))
+      })
+      setScanError(false)
+      setLoading(false)
+      return
+    }
+
     if (!window.cleanMyAgent?.getSkills) {
       setSnapshot(emptySnapshot())
       setScanError(true)
@@ -472,7 +495,7 @@ export function SkillsView() {
     } finally {
       setLoading(false)
     }
-  }, [t])
+  }, [mockDataEnabled, t])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -494,8 +517,13 @@ export function SkillsView() {
     visibleSkillIds.length > 0 && selectedVisibleCount === visibleSkillIds.length
   const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected
   const hasSelection = selectedSkillIds.size > 0
-  const hasSkills = snapshot.skills.length > 0
   const hasVisibleSkills = visibleSkills.length > 0
+  const emptyStateKind = getSkillsEmptyStateKind(
+    scanError,
+    snapshot.skills.length,
+    visibleSkills.length,
+  )
+  const showPagination = shouldShowSkillsPagination(snapshot.skills.length, visibleSkills.length)
   const toggleSkillSelection = useCallback((skillId: string) => {
     setSelectedSkillIds((current) => {
       const next = new Set(current)
@@ -686,21 +714,13 @@ export function SkillsView() {
             </tbody>
           </table>
 
-          {!loading && !hasVisibleSkills && (
+          {!loading && emptyStateKind && (
             <div className="skills-empty-state">
               <div className="text-sm font-semibold text-white">
-                {scanError
-                  ? t('skills.scanError')
-                  : hasSkills
-                    ? t('skills.noMatchesTitle')
-                    : t('skills.emptyTitle')}
+                {t(skillsEmptyStateTitleKey(emptyStateKind))}
               </div>
               <p className="mt-2 text-sm text-white/45">
-                {scanError
-                  ? t('skills.loadingBody')
-                  : hasSkills
-                    ? t('skills.noMatchesBody')
-                    : t('skills.emptyBody')}
+                {t(skillsEmptyStateBodyKey(emptyStateKind))}
               </p>
             </div>
           )}
@@ -712,38 +732,40 @@ export function SkillsView() {
             </div>
           )}
 
-          <div className="skills-pagination">
-            <span>
-              {t('skills.showing', {
-                start: visibleSkills.length > 0 ? 1 : 0,
-                end: visibleSkills.length,
-                count: snapshot.summary.totalSkills,
-              })}
-            </span>
-            <div className="ml-auto flex items-center gap-2">
-              <button type="button" className="skills-page-button">
-                ‹
-              </button>
-              {[1, 2, 3].map((page) => (
-                <button
-                  key={page}
-                  type="button"
-                  className={`skills-page-button ${page === 1 ? 'active' : ''}`}
-                >
-                  {page}
+          {showPagination && (
+            <div className="skills-pagination">
+              <span>
+                {t('skills.showing', {
+                  start: 1,
+                  end: visibleSkills.length,
+                  count: snapshot.summary.totalSkills,
+                })}
+              </span>
+              <div className="ml-auto flex items-center gap-2">
+                <button type="button" className="skills-page-button">
+                  ‹
                 </button>
-              ))}
-              <button type="button" className="skills-page-button">
-                ...
-              </button>
-              <button type="button" className="skills-page-button">
-                6
-              </button>
-              <button type="button" className="skills-page-button">
-                ›
-              </button>
+                {[1, 2, 3].map((page) => (
+                  <button
+                    key={page}
+                    type="button"
+                    className={`skills-page-button ${page === 1 ? 'active' : ''}`}
+                  >
+                    {page}
+                  </button>
+                ))}
+                <button type="button" className="skills-page-button">
+                  ...
+                </button>
+                <button type="button" className="skills-page-button">
+                  6
+                </button>
+                <button type="button" className="skills-page-button">
+                  ›
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </section>
 

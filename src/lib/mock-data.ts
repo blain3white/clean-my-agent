@@ -1,6 +1,7 @@
 import type {
   AgentSource,
   DashboardSnapshot,
+  SkillsSnapshot,
   SessionRecord,
   UniversalRelayDocument,
 } from '@/shared/types'
@@ -276,6 +277,104 @@ const usage = Array.from({ length: 30 }, (_, index) => {
     total: codex + claude + cursor + gemini + opencode + custom,
   }
 })
+
+export const mockSkillsSnapshot: SkillsSnapshot = {
+  generatedAt: now.toISOString(),
+  summary: {
+    totalSkills: 4,
+    weeklyDelta: 2,
+    linkedAgents: 2,
+    linkedAgentTotal: 5,
+    backups: 1,
+    backupPercent: 25,
+    recentlyChanged: 3,
+  },
+  skills: [
+    {
+      id: 'demo-skill-gitnexus-review',
+      name: 'GitNexus PR Review',
+      description:
+        'Review pull requests with impact analysis, changed execution flows, test gaps, and maintainer-ready risk notes.',
+      content:
+        '# GitNexus PR Review\n\nUse this skill when reviewing a pull request that needs code intelligence, risk triage, and concise maintainer feedback.\n\n## Checklist\n\n- Inspect changed symbols and execution flows.\n- Flag regressions before style suggestions.\n- Confirm tests cover the affected behavior.',
+      ownerAgent: 'codex',
+      category: 'engineering',
+      updatedAt: ago(1.6),
+      sizeKb: 18,
+      status: 'synced',
+      linkedAgents: ['codex', 'claude'],
+      version: 'local',
+      createdAt: ago(24 * 31),
+      lastBackupAt: ago(6),
+      usageCount: 42,
+      location: '~/.codex/skills/gitnexus-pr-review/SKILL.md',
+      accent: 'violet',
+      icon: 'review',
+    },
+    {
+      id: 'demo-skill-browser-uat',
+      name: 'Browser UAT Runner',
+      description:
+        'Drive local renderer builds through browser screenshots, keyboard paths, and focused acceptance checks.',
+      content:
+        '# Browser UAT Runner\n\nUse this skill for local UI acceptance testing. Capture desktop and mobile screenshots, verify empty states, and record the exact route tested.',
+      ownerAgent: 'claude',
+      category: 'design',
+      updatedAt: ago(8),
+      sizeKb: 24,
+      status: 'synced',
+      linkedAgents: ['claude', 'codex', 'cursor'],
+      version: 'local',
+      createdAt: ago(24 * 18),
+      usageCount: 27,
+      location: '~/.claude/skills/browser-uat-runner/SKILL.md',
+      accent: 'blue',
+      icon: 'image',
+    },
+    {
+      id: 'demo-skill-release-flow',
+      name: 'Clean My Agent Release Flow',
+      description:
+        'Run release checks, package validation, changelog generation, and CI follow-through for Clean My Agent.',
+      content:
+        '# Clean My Agent Release Flow\n\nUse this skill when preparing release work. Run the local gate, verify packaging outputs, and keep branch policy notes visible.',
+      ownerAgent: 'codex',
+      category: 'docs',
+      updatedAt: ago(26),
+      sizeKb: 31,
+      status: 'backed-up',
+      linkedAgents: ['codex'],
+      version: 'local',
+      createdAt: ago(24 * 44),
+      lastBackupAt: ago(3),
+      usageCount: 15,
+      location: '~/.codex/skills/clean-my-agent-release-flow/SKILL.md',
+      accent: 'green',
+      icon: 'spec',
+    },
+    {
+      id: 'demo-skill-long-path',
+      name: 'Long Path Fixture',
+      description:
+        'Renderer-only fixture with a deliberately long description and path so details, wrapping, and accessibility checks have realistic content to inspect.',
+      content:
+        '# Long Path Fixture\n\nThis SKILL.md demo exists to exercise long text, long local paths, and detail panel wrapping without scanning a real filesystem.',
+      ownerAgent: 'gemini',
+      category: 'productivity',
+      updatedAt: ago(52),
+      sizeKb: 9,
+      status: 'local',
+      linkedAgents: ['gemini'],
+      version: 'local',
+      createdAt: ago(24 * 7),
+      usageCount: 8,
+      location:
+        '~/.gemini/skills/demo-renderer-only-fixtures/very-long-skill-folder-name-for-accessibility-and-path-wrapping/SKILL.md',
+      accent: 'amber',
+      icon: 'search',
+    },
+  ],
+}
 
 export const mockSnapshot: DashboardSnapshot = {
   generatedAt: now.toISOString(),

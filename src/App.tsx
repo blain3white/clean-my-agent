@@ -91,7 +91,7 @@ function App() {
           />
         )
       case 'skills':
-        return <SkillsView />
+        return <SkillsView mockDataEnabled={dashboard.mockDataEnabled} />
       case 'usage':
         return (
           <UsageView
