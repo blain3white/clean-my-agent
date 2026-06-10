@@ -5,15 +5,14 @@ on:
     tags:
       - 'v*.*.*'
 
-permissions:
-  contents: write
-  pull-requests: write
-
 jobs:
   macos:
     name: Build macOS release
     runs-on: macos-15
     timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
 
     steps:
       - name: Checkout
@@ -145,36 +144,10 @@ jobs:
           git fetch origin "${release_branch}"
           git switch --force-create "${release_branch}" "origin/${release_branch}"
 
-          cat > Casks/clean-my-agent.rb <<EOF
-          cask "clean-my-agent" do
-            version "${version}"
-            sha256 "${dmg_sha256}"
-
-            url "https://github.com/blain3white/clean-my-agent/releases/download/v#{version}/Clean-My-Agent-mac-arm64.dmg",
-                verified: "github.com/blain3white/clean-my-agent/"
-            name "Clean My Agent"
-            desc "Clean, back up, and move your AI coding sessions"
-            homepage "https://github.com/blain3white/clean-my-agent"
-
-            livecheck do
-              url :url
-              strategy :github_latest
-            end
-
-            depends_on arch: :arm64
-
-            app "Clean My Agent.app"
-
-            zap trash: [
-              "~/Library/Application Support/Clean My Agent",
-              "~/Library/Logs/Clean My Agent",
-              "~/Library/Preferences/com.cleanmyagent.app.plist",
-              "~/Library/Saved Application State/com.cleanmyagent.app.savedState",
-            ]
-          end
-          EOF
-
-          sed -i '' 's/^          //' Casks/clean-my-agent.rb
+          export CASK_VERSION="${version}"
+          export CASK_SHA256="${dmg_sha256}"
+          perl -0pi -e 's/^  version ".*"$/  version "$ENV{CASK_VERSION}"/m' Casks/clean-my-agent.rb
+          perl -0pi -e 's/^  sha256 ".*"$/  sha256 "$ENV{CASK_SHA256}"/m' Casks/clean-my-agent.rb
 
           if git diff --quiet -- Casks/clean-my-agent.rb; then
             echo "Homebrew cask is already up to date."
