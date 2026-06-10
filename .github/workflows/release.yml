@@ -168,9 +168,27 @@ jobs:
 
           update_branch="automation/homebrew-cask-${GITHUB_REF_NAME}"
           git push --force-with-lease origin "HEAD:${update_branch}"
+          pr_title="Update Homebrew cask for ${GITHUB_REF_NAME}"
+          pr_body="Updates the Clean My Agent Homebrew cask to ${GITHUB_REF_NAME} after the release workflow published the macOS DMG."
+          existing_pr="$(gh pr list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --base "${release_branch}" \
+            --head "${update_branch}" \
+            --json number \
+            --jq '.[0].number // empty')"
+
+          if [ -n "${existing_pr}" ]; then
+            gh pr edit "${existing_pr}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${pr_title}" \
+              --body "${pr_body}"
+            echo "Updated existing Homebrew cask PR #${existing_pr}."
+            exit 0
+          fi
+
           gh pr create \
             --repo "${GITHUB_REPOSITORY}" \
             --base "${release_branch}" \
             --head "${update_branch}" \
-            --title "Update Homebrew cask for ${GITHUB_REF_NAME}" \
-            --body "Updates the Clean My Agent Homebrew cask to ${GITHUB_REF_NAME} after the release workflow published the macOS DMG."
+            --title "${pr_title}" \
+            --body "${pr_body}"
