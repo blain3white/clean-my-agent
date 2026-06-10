@@ -10,7 +10,20 @@ Clean My Agent 是一个本地优先的桌面应用，用于清理、备份、�
 
 ## 下载
 
-从 GitHub Releases 下载最新的 macOS Apple Silicon DMG：
+使用 Homebrew 安装最新的 macOS Apple Silicon 构建：
+
+```sh
+brew tap blain3white/clean-my-agent
+brew install --cask clean-my-agent
+```
+
+之后可以这样更新：
+
+```sh
+brew upgrade --cask clean-my-agent
+```
+
+也可以从 GitHub Releases 下载最新 DMG：
 
 [下载 Clean My Agent for macOS](https://github.com/blain3white/clean-my-agent/releases/latest/download/Clean-My-Agent-mac-arm64.dmg)
 

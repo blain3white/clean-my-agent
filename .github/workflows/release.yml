@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   macos:
@@ -129,3 +130,72 @@ jobs:
             --title "Clean My Agent ${GITHUB_REF_NAME}" \
             --notes-file release-notes.md \
             --verify-tag
+
+      - name: Update Homebrew cask tap
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          version="${GITHUB_REF_NAME#v}"
+          dmg_sha256="$(shasum -a 256 release/Clean-My-Agent-mac-arm64.dmg | awk '{print $1}')"
+          release_branch="${RELEASE_BRANCH:-main}"
+
+          git fetch origin "${release_branch}"
+          git switch --force-create "${release_branch}" "origin/${release_branch}"
+
+          cat > Casks/clean-my-agent.rb <<EOF
+          cask "clean-my-agent" do
+            version "${version}"
+            sha256 "${dmg_sha256}"
+
+            url "https://github.com/blain3white/clean-my-agent/releases/download/v#{version}/Clean-My-Agent-mac-arm64.dmg",
+                verified: "github.com/blain3white/clean-my-agent/"
+            name "Clean My Agent"
+            desc "Clean, back up, and move your AI coding sessions"
+            homepage "https://github.com/blain3white/clean-my-agent"
+
+            livecheck do
+              url :url
+              strategy :github_latest
+            end
+
+            depends_on arch: :arm64
+
+            app "Clean My Agent.app"
+
+            zap trash: [
+              "~/Library/Application Support/Clean My Agent",
+              "~/Library/Logs/Clean My Agent",
+              "~/Library/Preferences/com.cleanmyagent.app.plist",
+              "~/Library/Saved Application State/com.cleanmyagent.app.savedState",
+            ]
+          end
+          EOF
+
+          sed -i '' 's/^          //' Casks/clean-my-agent.rb
+
+          if git diff --quiet -- Casks/clean-my-agent.rb; then
+            echo "Homebrew cask is already up to date."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/clean-my-agent.rb
+          git commit -m "Update Homebrew cask for ${GITHUB_REF_NAME}"
+
+          if git push origin "HEAD:${release_branch}"; then
+            echo "Updated Homebrew cask on ${release_branch}."
+            exit 0
+          fi
+
+          update_branch="automation/homebrew-cask-${GITHUB_REF_NAME}"
+          git push --force-with-lease origin "HEAD:${update_branch}"
+          gh pr create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --base "${release_branch}" \
+            --head "${update_branch}" \
+            --title "Update Homebrew cask for ${GITHUB_REF_NAME}" \
+            --body "Updates the Clean My Agent Homebrew cask to ${GITHUB_REF_NAME} after the release workflow published the macOS DMG."
