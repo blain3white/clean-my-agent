@@ -46,7 +46,7 @@ import {
 
 const oneDayMs = 24 * 60 * 60 * 1000
 const usageHistoryDays = 365
-const scanSchemaVersion = 4
+const scanSchemaVersion = 5
 const maxPathLength = 4096
 const maxRetentionDays = 36_500
 const relayModes: AppSettings['defaultRelayMode'][] = [
@@ -478,6 +478,10 @@ function usageEventsByDateFromMetadata(
   })
 
   return Object.keys(usageByDate).length > 0 ? usageByDate : undefined
+}
+
+function isForkedCodexSession(session: SessionRecord): boolean {
+  return session.source === 'codex' && typeof session.metadata.codexForkedFromId === 'string'
 }
 
 function markdownForSession(session: SessionRecord): string {
@@ -2085,6 +2089,8 @@ export class AppService {
     }
 
     sessions.forEach((session) => {
+      if (isForkedCodexSession(session)) return
+
       const usageEventsByDate = usageEventsByDateFromMetadata(session.metadata, timezone)
       const usageByDate = usageEventsByDate ?? usageByDateFromMetadata(session.metadata)
       if (usageByDate && Object.keys(usageByDate).length > 0) {

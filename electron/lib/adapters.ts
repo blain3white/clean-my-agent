@@ -606,6 +606,19 @@ function addTokens(target: TokenUsage, usage: TokenUsage): void {
   target.estimated = target.estimated && usage.estimated
 }
 
+function captureCodexSessionMetadata(record: JsonRecord, metadata: JsonRecord): void {
+  if (record.type !== 'session_meta') return
+  const payload = toRecord(record.payload)
+  if (!payload) return
+
+  metadata.codexThreadId ??= asString(payload.id)
+  metadata.codexThreadSource ??= asString(payload.thread_source)
+  metadata.codexForkedFromId ??= asString(payload.forked_from_id) ?? asString(payload.forkedFromId)
+  metadata.codexParentThreadId ??=
+    asString(payload.parent_thread_id) ?? asString(payload.parentThreadId)
+  metadata.codexAgentNickname ??= asString(payload.agent_nickname)
+}
+
 function extractUsage(
   value: unknown,
   seenUsageIds = new Set<string>(),
@@ -952,6 +965,9 @@ async function parseJsonLike(filePath: string): Promise<ParsedSession> {
           if (message) messages.push(message)
         }
         const record = toRecord(json)
+        if (record && metadata.sourceFormat === 'codex-jsonl') {
+          captureCodexSessionMetadata(record, metadata)
+        }
         currentModel = record ? (modelHintFromRecord(record) ?? currentModel) : currentModel
         const usage = extractUsage(json, seenUsageIds, currentModel)
         addTokens(tokens, usage)

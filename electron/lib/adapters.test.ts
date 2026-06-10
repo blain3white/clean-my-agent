@@ -135,6 +135,50 @@ describe('codex JSONL parsing', () => {
     ])
   })
 
+  it('marks Codex fork metadata without dropping session tokens', async () => {
+    const root = await makeTmpDir('codex-fork-metadata')
+    const filePath = path.join(root, 'fork.jsonl')
+    await writeFile(
+      filePath,
+      [
+        JSON.stringify({
+          type: 'session_meta',
+          timestamp: '2026-06-10T03:53:29.000Z',
+          payload: {
+            id: 'child-thread',
+            cwd: '/workspace/forked',
+            thread_source: 'user',
+            forked_from_id: 'parent-thread',
+            parent_thread_id: 'parent-thread',
+          },
+        }),
+        JSON.stringify({
+          type: 'event_msg',
+          timestamp: '2026-06-10T03:53:30.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              last_token_usage: {
+                input_tokens: 100,
+                output_tokens: 20,
+                total_tokens: 120,
+              },
+            },
+          },
+        }),
+      ].join('\n') + '\n',
+    )
+
+    const adapter = makeAdapter('codex', [root])
+    const { sessions } = await adapter.scan(makeSettings(root))
+
+    expect(sessions[0].metadata.codexThreadId).toBe('child-thread')
+    expect(sessions[0].metadata.codexForkedFromId).toBe('parent-thread')
+    expect(sessions[0].metadata.codexParentThreadId).toBe('parent-thread')
+    expect(sessions[0].metadata.codexThreadSource).toBe('user')
+    expect(sessions[0].tokens.total).toBe(120)
+  })
+
   it('records only timestamped positive usage events', async () => {
     const root = await makeTmpDir('codex-usage-events')
     const filePath = path.join(root, 'session.jsonl')

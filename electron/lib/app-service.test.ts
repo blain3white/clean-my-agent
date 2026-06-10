@@ -611,6 +611,55 @@ describe('getSnapshot and rescan', () => {
     }
   })
 
+  it('excludes Codex fork replay sessions from daily usage buckets', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-06-10T12:00:00.000Z'))
+      const service = await initServiceWithScan(fixtureRoot, userDataPath)
+      service.updateSettings({ usageTimezone: 'Asia/Shanghai' })
+      const codexRoot = path.join(fixtureRoot, 'codex')
+      await mkdir(codexRoot, { recursive: true })
+      await writeFile(
+        path.join(codexRoot, 'fork.jsonl'),
+        [
+          JSON.stringify({
+            type: 'session_meta',
+            timestamp: '2026-06-10T03:53:29.000Z',
+            payload: {
+              id: 'child-thread',
+              cwd: '/workspace/forked',
+              forked_from_id: 'parent-thread',
+              parent_thread_id: 'parent-thread',
+            },
+          }),
+          JSON.stringify({
+            type: 'event_msg',
+            timestamp: '2026-06-10T03:53:30.000Z',
+            payload: {
+              type: 'token_count',
+              info: {
+                last_token_usage: {
+                  input_tokens: 400,
+                  output_tokens: 100,
+                  total_tokens: 500,
+                },
+              },
+            },
+          }),
+        ].join('\n') + '\n',
+      )
+
+      const snapshot = await service.rescan()
+      const fork = snapshot.sessions.find((session) => session.metadata.codexForkedFromId)
+      assert.ok(fork)
+
+      expect(fork.tokens.total).toBe(500)
+      expect(snapshot.usage.find((point) => point.date === '2026-06-10')?.codex).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('disabled providers are not scanned, shown, or suggested for cleanup', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
     service.updateSettings({
