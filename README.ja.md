@@ -10,7 +10,20 @@ Codex、Claude Code、Cursor、Gemini、OpenCode のローカルセッション�
 
 ## ダウンロード
 
-GitHub Releases から最新の macOS Apple Silicon DMG をダウンロードしてください。
+Homebrew で最新の macOS Apple Silicon ビルドをインストールできます。
+
+```sh
+brew tap blain3white/clean-my-agent
+brew install --cask clean-my-agent
+```
+
+以後の更新は次のコマンドで行えます。
+
+```sh
+brew upgrade --cask clean-my-agent
+```
+
+または GitHub Releases から最新の DMG をダウンロードしてください。
 
 [Clean My Agent for macOS をダウンロード](https://github.com/blain3white/clean-my-agent/releases/latest/download/Clean-My-Agent-mac-arm64.dmg)
 

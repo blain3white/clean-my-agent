@@ -113,4 +113,5 @@ direct maintainer merge for this integration, but direct merges should be limite
 to release operations with a green `develop` run, reviewed release notes, and no
 force push. Tag releases from `main` with semantic version tags such as
 `v0.1.0`; the tag version must match `package.json` so GitHub Actions can build
-and publish the release.
+and publish the release. The release workflow also updates the repository tap's
+`Casks/clean-my-agent.rb` file after the DMG is published.

@@ -10,7 +10,20 @@ Elle analyse les sessions locales de Codex, Claude Code, Cursor, Gemini et OpenC
 
 ## Téléchargement
 
-Téléchargez le dernier DMG macOS Apple Silicon depuis GitHub Releases :
+Installez la dernière version macOS Apple Silicon avec Homebrew :
+
+```sh
+brew tap blain3white/clean-my-agent
+brew install --cask clean-my-agent
+```
+
+Mettez-la ensuite à jour avec :
+
+```sh
+brew upgrade --cask clean-my-agent
+```
+
+Ou téléchargez le dernier DMG depuis GitHub Releases :
 
 [Télécharger Clean My Agent pour macOS](https://github.com/blain3white/clean-my-agent/releases/latest/download/Clean-My-Agent-mac-arm64.dmg)
 

@@ -54,7 +54,10 @@ Release flow:
    merge only for a release operation.
 5. Tag the release from `main` with the matching semantic version, such as
    `v0.1.0`.
-6. The release workflow builds the macOS DMG and publishes the GitHub Release.
+6. The release workflow builds the macOS DMG, publishes the GitHub Release, and
+   updates `Casks/clean-my-agent.rb` on `main` with the released DMG checksum.
+   If branch protection blocks the workflow from pushing that commit directly,
+   it opens a maintainer PR with the same cask update.
 
 Direct release merges should record the source branch SHA, target branch SHA,
 merge SHA, tag, and release workflow URL in the maintainer handoff. Do not force
