@@ -82,7 +82,7 @@ jobs:
           echo "GITNEXUS_REPORT_PATH=${report_path}" >> "${GITHUB_ENV}"
 
       - name: Write GitNexus summary to PR
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs')
