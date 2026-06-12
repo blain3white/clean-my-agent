@@ -779,6 +779,82 @@ describe('backupSession', () => {
     expect(info.size).toBe(backup.sizeBytes)
   })
 
+  it('includes matching Claude Desktop metadata when backing up Claude transcripts', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const transcriptPath = await writeJsonlSession(fixtureRoot, 'claude', {
+      filename: 'claude-visible-session.jsonl',
+    })
+    const metadataDir = path.join(
+      fixtureRoot,
+      'Library',
+      'Application Support',
+      'Claude',
+      'claude-code-sessions',
+      'account-1',
+      'org-1',
+    )
+    await mkdir(metadataDir, { recursive: true })
+    await writeFile(
+      path.join(metadataDir, 'local_visible.json'),
+      JSON.stringify({
+        sessionId: 'local-visible',
+        cliSessionId: 'claude-visible-session',
+        title: 'Visible in Desktop',
+      }),
+    )
+    await writeFile(
+      path.join(metadataDir, 'local_other.json'),
+      JSON.stringify({
+        sessionId: 'local-other',
+        cliSessionId: 'other-session',
+        title: 'Not this transcript',
+      }),
+    )
+
+    const homeSpy = vi.spyOn(os, 'homedir').mockReturnValue(fixtureRoot)
+    try {
+      const snapshot = await service.rescan()
+      const session = snapshot.sessions.find((s) => s.source === 'claude')
+      assert.ok(session)
+
+      const backup = await service.backupSession(session.id)
+
+      expect((await stat(backup.backupPath)).isDirectory()).toBe(true)
+      expect(
+        await readFile(
+          path.join(backup.backupPath, 'session', path.basename(transcriptPath)),
+          'utf8',
+        ),
+      ).toContain('Investigate rare migration needle')
+      const metadataBackupPath = path.join(
+        backup.backupPath,
+        'claude-code-sessions',
+        'account-1',
+        'org-1',
+        'local_visible.json',
+      )
+      expect(JSON.parse(await readFile(metadataBackupPath, 'utf8'))).toMatchObject({
+        cliSessionId: 'claude-visible-session',
+        title: 'Visible in Desktop',
+      })
+      await expect(
+        readFile(
+          path.join(
+            backup.backupPath,
+            'claude-code-sessions',
+            'account-1',
+            'org-1',
+            'local_other.json',
+          ),
+          'utf8',
+        ),
+      ).rejects.toThrow()
+      expect(backup.sizeBytes).toBeGreaterThan((await stat(transcriptPath)).size)
+    } finally {
+      homeSpy.mockRestore()
+    }
+  })
+
   it('marks the session as backed-up after backupSession', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
     await writeJsonlSession(fixtureRoot, 'codex')
