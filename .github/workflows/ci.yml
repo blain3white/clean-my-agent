@@ -77,7 +77,7 @@ jobs:
           } | tee "${report_path}"
 
           test -s "${report_path}"
-          grep -q "Risk level:" "${report_path}"
+          grep -Eq "Risk level:|No changes detected\\." "${report_path}"
           cat "${report_path}" >> "${GITHUB_STEP_SUMMARY}"
           echo "GITNEXUS_REPORT_PATH=${report_path}" >> "${GITHUB_ENV}"
 
@@ -126,7 +126,7 @@ jobs:
               if (
                 markerPattern.test(verifiedBody) &&
                 verifiedBody.includes('## GitNexus Report') &&
-                verifiedBody.includes('Risk level:')
+                (verifiedBody.includes('Risk level:') || verifiedBody.includes('No changes detected.'))
               ) {
                 return
               }
