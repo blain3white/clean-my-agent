@@ -37,9 +37,11 @@ import {
   hashFile,
   hashId,
   homeDir,
+  listFiles,
   movePath,
   pathSize,
   removePath,
+  safeReadText,
   sanitizeName,
   writeJson,
 } from './files'
@@ -61,6 +63,7 @@ const maxDiagnosticOperations = 120
 const maxRecentDiagnosticOperations = 50
 const maxDiagnosticErrors = 50
 const maxDiagnosticTextLength = 500
+const claudeDesktopMetadataPattern = '**/local_*.json'
 const agentLabels: Record<AgentSource, string> = {
   codex: 'Codex',
   claude: 'Claude Code',
@@ -85,6 +88,29 @@ function roundDuration(value: number): number {
 function diagnosticPathId(value?: string): string | undefined {
   if (!value) return undefined
   return hashId(['diagnostic-path', expandHome(value)])
+}
+
+function uniquePaths(paths: string[]): string[] {
+  return paths.filter((item, index) => paths.indexOf(item) === index)
+}
+
+function claudeDesktopSessionRoots(): string[] {
+  const home = os.homedir()
+  return uniquePaths(
+    [
+      process.env.APPDATA
+        ? path.join(process.env.APPDATA, 'Claude', 'claude-code-sessions')
+        : undefined,
+      path.join(home, 'AppData', 'Roaming', 'Claude', 'claude-code-sessions'),
+      path.join(home, 'Library', 'Application Support', 'Claude', 'claude-code-sessions'),
+      path.join(home, '.config', 'Claude', 'claude-code-sessions'),
+    ].filter((item): item is string => Boolean(item)),
+  )
+}
+
+function sessionFileId(session: SessionRecord): string {
+  const extension = path.extname(session.storagePath)
+  return path.basename(session.storagePath, extension)
 }
 
 function redactDiagnosticText(value: string): string {
@@ -708,8 +734,20 @@ export class AppService {
       const createdAt = new Date().toISOString()
       const backupRoot = path.join(this.userDataPath, 'Backups', session.source)
       const extension = path.extname(session.storagePath)
-      const filename = `${sanitizeName(session.title)}-${session.id}${extension || '.backup'}`
+      const claudeMetadataFiles = await this.findClaudeDesktopMetadataFiles(session)
+      const filename = claudeMetadataFiles.length
+        ? `${sanitizeName(session.title)}-${session.id}`
+        : `${sanitizeName(session.title)}-${session.id}${extension || '.backup'}`
       const backupPath = path.join(backupRoot, filename)
+      const backupTargets = [
+        { label: 'Original session', path: session.storagePath, role: 'source' as const },
+        ...claudeMetadataFiles.map((file) => ({
+          label: 'Claude Desktop metadata',
+          path: file.path,
+          role: 'source' as const,
+        })),
+        { label: 'Backup copy', path: backupPath, role: 'backup' as const },
+      ]
 
       const recovery = this.startRecovery({
         operation: 'backup',
@@ -720,14 +758,23 @@ export class AppService {
         targetTitle: session.title,
         source: session.source,
         risk: 'low',
-        paths: [
-          { label: 'Original session', path: session.storagePath, role: 'source' },
-          { label: 'Backup copy', path: backupPath, role: 'backup' },
-        ],
+        paths: backupTargets,
       })
 
       try {
-        await copyPath(session.storagePath, backupPath)
+        if (claudeMetadataFiles.length) {
+          await copyPath(
+            session.storagePath,
+            path.join(backupPath, 'session', path.basename(session.storagePath)),
+          )
+          await Promise.all(
+            claudeMetadataFiles.map((file) =>
+              copyPath(file.path, path.join(backupPath, 'claude-code-sessions', file.relativePath)),
+            ),
+          )
+        } else {
+          await copyPath(session.storagePath, backupPath)
+        }
         const record: BackupRecord = {
           id: hashId([session.id, backupPath, createdAt]),
           sessionId: session.id,
@@ -755,6 +802,33 @@ export class AppService {
         throw error
       }
     })
+  }
+
+  private async findClaudeDesktopMetadataFiles(
+    session: SessionRecord,
+  ): Promise<Array<{ path: string; relativePath: string }>> {
+    if (session.source !== 'claude' || path.extname(session.storagePath) !== '.jsonl') return []
+
+    const cliSessionId = sessionFileId(session)
+    const matches: Array<{ path: string; relativePath: string }> = []
+    for (const root of claudeDesktopSessionRoots()) {
+      const files = await listFiles(root, [claudeDesktopMetadataPattern], 5000)
+      for (const filePath of files) {
+        try {
+          const metadata = JSON.parse(await safeReadText(filePath, 500_000)) as {
+            cliSessionId?: unknown
+          }
+          if (metadata.cliSessionId !== cliSessionId) continue
+          matches.push({
+            path: filePath,
+            relativePath: path.relative(expandHome(root), filePath),
+          })
+        } catch {
+          continue
+        }
+      }
+    }
+    return matches
   }
 
   async archiveSession(sessionId: string): Promise<ArchiveRecord> {
