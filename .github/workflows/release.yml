@@ -5,14 +5,16 @@ on:
     tags:
       - 'v*.*.*'
 
-permissions:
-  contents: write
-
 jobs:
   macos:
     name: Build macOS release
     runs-on: macos-15
     timeout-minutes: 30
+    permissions:
+      # Required for gh release create and pushing cask update commits.
+      contents: write
+      # Required for gh pr create when branch protection blocks direct pushes.
+      pull-requests: write
 
     steps:
       - name: Checkout
@@ -129,3 +131,64 @@ jobs:
             --title "Clean My Agent ${GITHUB_REF_NAME}" \
             --notes-file release-notes.md \
             --verify-tag
+
+      - name: Update Homebrew cask tap
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          version="${GITHUB_REF_NAME#v}"
+          dmg_sha256="$(shasum -a 256 release/Clean-My-Agent-mac-arm64.dmg | awk '{print $1}')"
+          release_branch="${RELEASE_BRANCH:-main}"
+
+          git fetch origin "${release_branch}"
+          git switch --force-create "${release_branch}" "origin/${release_branch}"
+
+          export CASK_VERSION="${version}"
+          export CASK_SHA256="${dmg_sha256}"
+          perl -0pi -e 's/^  version ".*"$/  version "$ENV{CASK_VERSION}"/m' Casks/clean-my-agent.rb
+          perl -0pi -e 's/^  sha256 ".*"$/  sha256 "$ENV{CASK_SHA256}"/m' Casks/clean-my-agent.rb
+
+          if git diff --quiet -- Casks/clean-my-agent.rb; then
+            echo "Homebrew cask is already up to date."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/clean-my-agent.rb
+          git commit -m "Update Homebrew cask for ${GITHUB_REF_NAME}"
+
+          if git push origin "HEAD:${release_branch}"; then
+            echo "Updated Homebrew cask on ${release_branch}."
+            exit 0
+          fi
+
+          update_branch="automation/homebrew-cask-${GITHUB_REF_NAME}"
+          git push --force-with-lease origin "HEAD:${update_branch}"
+          pr_title="Update Homebrew cask for ${GITHUB_REF_NAME}"
+          pr_body="Updates the Clean My Agent Homebrew cask to ${GITHUB_REF_NAME} after the release workflow published the macOS DMG."
+          existing_pr="$(gh pr list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --base "${release_branch}" \
+            --head "${update_branch}" \
+            --json number \
+            --jq '.[0].number // empty')"
+
+          if [ -n "${existing_pr}" ]; then
+            gh pr edit "${existing_pr}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${pr_title}" \
+              --body "${pr_body}"
+            echo "Updated existing Homebrew cask PR #${existing_pr}."
+            exit 0
+          fi
+
+          gh pr create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --base "${release_branch}" \
+            --head "${update_branch}" \
+            --title "${pr_title}" \
+            --body "${pr_body}"
