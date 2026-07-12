@@ -429,6 +429,12 @@ const en = {
   'settings.excludedFolders': 'Excluded folders',
   'settings.excludedFoldersDescription': 'Manage custom scan exclusions',
   'settings.excludedFolderCount': '{count} excluded folder(s)',
+  'settings.worktreeFolders': 'Worktree folders',
+  'settings.worktreeFoldersDescription':
+    'Folders where you keep git worktrees; abandoned ones become cleanup candidates',
+  'settings.worktreeFolderCount': '{count} worktree folder(s)',
+  'settings.worktreeGitUnavailable': 'Git not found; worktree cleanup skipped.',
+  'settings.worktreeStatusFailed': 'Could not verify some worktrees; they were skipped.',
   'settings.manage': 'Manage',
   'settings.clear': 'Clear',
   'settings.sounds': 'Sounds',
@@ -515,6 +521,8 @@ const en = {
   'toast.trashPurgeError': 'Could not purge expired Trash.',
   'toast.trashRestoreLiveOnly': 'Trash restore is only available with live local data.',
   'toast.trashRestored': 'Session restored from Trash',
+  'toast.worktreeRestored':
+    'Worktree restored as a plain folder; re-link with “git worktree add” if needed.',
   'toast.trashRestoreError': 'Could not restore Trash item.',
   'toast.recoveryDesktopOnly': 'Recovery tools are available in the desktop app',
   'toast.recoveryDiagnosed': 'Recovery diagnostics refreshed',
@@ -820,6 +828,12 @@ const zh: Partial<Record<TranslationKey, string>> = {
   'settings.excludedFolders': '排除文件夹',
   'settings.excludedFoldersDescription': '管理自定义扫描排除项',
   'settings.excludedFolderCount': '已排除 {count} 个文件夹',
+  'settings.worktreeFolders': 'Worktree 文件夹',
+  'settings.worktreeFoldersDescription':
+    '存放 git worktree 的文件夹；其中废弃的 worktree 会成为清理候选',
+  'settings.worktreeFolderCount': '{count} 个 worktree 文件夹',
+  'settings.worktreeGitUnavailable': '未找到 Git；已跳过 worktree 清理。',
+  'settings.worktreeStatusFailed': '部分 worktree 状态无法验证，已跳过。',
   'settings.manage': '管理',
   'settings.clear': '清空',
   'settings.sounds': '音效',
@@ -1003,6 +1017,8 @@ const zhExtra: Partial<Record<TranslationKey, string>> = {
   'toast.trashPurgeError': '无法清理过期回收站。',
   'toast.trashRestoreLiveOnly': '回收站恢复仅适用于实时本地数据。',
   'toast.trashRestored': '会话已从回收站恢复',
+  'toast.worktreeRestored':
+    'Worktree 已作为普通文件夹恢复；如需使用，请用 “git worktree add” 重新关联。',
   'toast.trashRestoreError': '无法恢复回收站项目。',
   'toast.recoveryDesktopOnly': '恢复工具仅在桌面应用中可用',
   'toast.recoveryDiagnosed': '恢复诊断已刷新',
@@ -1384,6 +1400,14 @@ const jaExtra: Partial<Record<TranslationKey, string>> = {
   'settings.sevenDays': '7日',
   'settings.excludedFolders': '除外フォルダ',
   'settings.excludedFoldersDescription': 'カスタムスキャン除外を管理します',
+  'settings.worktreeFolders': 'ワークツリーフォルダ',
+  'settings.worktreeFoldersDescription':
+    'git worktree を置くフォルダ。放棄された worktree はクリーンアップ候補になります',
+  'settings.worktreeFolderCount': '{count} 個の worktree フォルダ',
+  'settings.worktreeGitUnavailable':
+    'Git が見つかりません。worktree クリーンアップをスキップしました。',
+  'settings.worktreeStatusFailed':
+    '一部の worktree の状態を検証できませんでした。スキップしました。',
   'settings.sounds': 'サウンド',
   'settings.soundEffects': 'サウンド効果',
   'settings.toggleSoundEffects': 'サウンド効果を切り替え',
@@ -1820,6 +1844,13 @@ const frExtra: Partial<Record<TranslationKey, string>> = {
   'settings.sevenDays': '7 jours',
   'settings.excludedFolders': 'Dossiers exclus',
   'settings.excludedFoldersDescription': 'Gérer les exclusions d’analyse personnalisées',
+  'settings.worktreeFolders': 'Dossiers de worktrees',
+  'settings.worktreeFoldersDescription':
+    'Dossiers où vous gardez vos git worktrees ; les worktrees abandonnés deviennent des candidats de nettoyage',
+  'settings.worktreeFolderCount': '{count} dossier(s) de worktree',
+  'settings.worktreeGitUnavailable': 'Git introuvable ; nettoyage des worktrees ignoré.',
+  'settings.worktreeStatusFailed':
+    'Impossible de vérifier certains worktrees ; ils ont été ignorés.',
   'settings.sounds': 'Sons',
   'settings.soundEffects': 'Effets sonores',
   'settings.toggleSoundEffects': 'Basculer les effets sonores',

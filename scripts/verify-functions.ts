@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, stat, utimes, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import assert from 'node:assert/strict'
@@ -335,6 +336,73 @@ async function main() {
     expectedStaleTokenTotal,
     'stale scan cache should be invalidated automatically',
   )
+
+  // ---------------------------------------------------------------------
+  // Worktree cleanup: scan → suggest → Trash → prune → restore
+  // ---------------------------------------------------------------------
+  const gitAvailable = spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0
+  assert.ok(gitAvailable, 'git must be available for the worktree smoke test')
+
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), 'cma-worktree-root-'))
+  const parentRepo = await mkdtemp(path.join(os.tmpdir(), 'cma-worktree-parent-'))
+  const runGit = (args: string[], cwd: string) => spawnSync('git', args, { cwd, encoding: 'utf8' })
+  // Initialise a parent repo with one commit.
+  assert.equal(runGit(['init', '-q'], parentRepo).status, 0, 'git init should succeed')
+  await writeFile(path.join(parentRepo, 'README.md'), 'hello\n')
+  assert.equal(runGit(['add', 'README.md'], parentRepo).status, 0)
+  assert.equal(
+    runGit(
+      ['-c', 'user.email=smoke@test', '-c', 'user.name=Smoke', 'commit', '-q', '-m', 'init'],
+      parentRepo,
+    ).status,
+    0,
+    'git commit should succeed',
+  )
+  // Add a linked worktree under the worktree root.
+  const worktreeDir = path.join(worktreeRoot, 'feature-smoke')
+  assert.equal(
+    runGit(['worktree', 'add', worktreeDir, '-b', 'feature-smoke'], parentRepo).status,
+    0,
+    'git worktree add should succeed',
+  )
+  // Make the worktree stale by setting its mtime far in the past.
+  const staleDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
+  await utimes(worktreeDir, staleDate, staleDate)
+
+  const worktreeService = new AppService({
+    userDataPath: await mkdtemp(path.join(os.tmpdir(), 'cma-worktree-userdata-')),
+    openPath: async () => undefined,
+  })
+  await worktreeService.init()
+  worktreeService.updateSettings({
+    cleanupRetentionDays: 0,
+    worktreeRoots: [worktreeRoot],
+    scanRoots: {},
+    exportDirectory: path.join(os.tmpdir(), 'cma-worktree-exports'),
+  })
+
+  const wtCleanup = await worktreeService.scanCleanup()
+  const wtCandidate = wtCleanup.find((item) => item.kind === 'stale-worktree')
+  assert.ok(wtCandidate, 'abandoned worktree should appear as a stale-worktree candidate')
+  assert.equal(wtCandidate.risk, 'low', 'clean stale worktree should be low-risk')
+  assert.equal(wtCandidate.backedUp, true, 'clean worktree is regenerable from git')
+
+  const [wtTrash] = await worktreeService.moveCleanupToTrash([wtCandidate.id])
+  assert.ok(wtTrash, 'worktree candidate should move to Trash')
+  assert.equal(wtTrash.kind, 'stale-worktree', 'trash record should carry the worktree kind')
+  await assert.rejects(stat(worktreeDir), undefined, 'worktree directory should be moved out')
+
+  // Prune should have cleared the parent repo's stale worktree registration.
+  const worktreeList = runGit(['worktree', 'list'], parentRepo).stdout
+  assert.ok(
+    !worktreeList.includes('feature-smoke'),
+    'parent repo should no longer list the trashed worktree after prune',
+  )
+
+  // Restore brings the directory back (as a plain folder, not re-linked).
+  const restoredKind = await worktreeService.restoreTrash(wtTrash.id)
+  assert.equal(restoredKind, 'stale-worktree', 'restore should return the worktree kind')
+  assert.ok((await stat(worktreeDir)).isDirectory(), 'worktree directory should be restored')
 
   console.log('Function verification passed')
 }

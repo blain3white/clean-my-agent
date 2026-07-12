@@ -110,6 +110,8 @@ export type CleanupKind =
   | 'temp-file'
   | 'orphan-session'
   | 'invalid-cache'
+  | 'stale-worktree'
+  | 'dirty-worktree'
 
 export type CleanupCandidate = {
   id: string
@@ -131,6 +133,7 @@ export type TrashRecord = {
   candidateId: string
   title: string
   source?: AgentSource
+  kind?: CleanupKind
   originalPaths: string[]
   trashPath: string
   sizeBytes: number
@@ -258,6 +261,7 @@ export type DashboardSnapshot = {
   recovery: RecoveryRecord[]
   usage: UsagePoint[]
   storage: StorageSlice[]
+  worktreeDiagnostics?: AgentScanDiagnostic[]
 }
 
 export type SkillStatus = 'synced' | 'local' | 'backed-up'
@@ -351,6 +355,7 @@ export type AppSettings = {
   checkForUpdates: boolean
   defaultRelayMode: 'full-context' | 'fit-to-window' | 'manual-select'
   exportDirectory: string
+  worktreeRoots: string[]
 }
 
 export type ThemePreference = 'system' | 'light' | 'dark'
@@ -481,7 +486,7 @@ export type CleanMyAgentApi = {
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<TrashRecord[]>
   purgeExpiredTrash: () => Promise<TrashRecord[]>
-  restoreTrash: (trashId: string) => Promise<void>
+  restoreTrash: (trashId: string) => Promise<CleanupKind | undefined>
   getRecoveryRecords: () => Promise<RecoveryRecord[]>
   diagnoseRecovery: (recoveryId: string) => Promise<RecoveryRecord>
   undoRecovery: (recoveryId: string) => Promise<RecoveryRecord>
