@@ -6,6 +6,7 @@ export const agentLabel: Record<AgentSource, string> = {
   cursor: 'Cursor',
   gemini: 'Gemini',
   opencode: 'OpenCode',
+  pi: 'Pi',
   custom: 'Custom',
 }
 
@@ -15,6 +16,7 @@ export const agentAccent: Record<AgentSource, string> = {
   cursor: 'text-slate-200 bg-slate-400/12 ring-slate-300/22',
   gemini: 'text-sky-300 bg-sky-400/12 ring-sky-400/20',
   opencode: 'text-blue-300 bg-blue-400/12 ring-blue-300/20',
+  pi: 'text-cyan-300 bg-cyan-400/12 ring-cyan-400/20',
   custom: 'text-emerald-300 bg-emerald-400/12 ring-emerald-400/20',
 }
 

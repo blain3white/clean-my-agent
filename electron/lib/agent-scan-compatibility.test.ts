@@ -9,7 +9,7 @@ import {
   type RealWorldAgentFixtureLibrary,
 } from './fixtures/real-world-agent-sessions'
 
-const sources = ['codex', 'claude', 'cursor', 'gemini', 'opencode'] as const
+const sources = ['codex', 'claude', 'cursor', 'gemini', 'opencode', 'pi'] as const
 
 let tmpBase: string
 

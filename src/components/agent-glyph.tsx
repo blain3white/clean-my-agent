@@ -18,6 +18,7 @@ export function AgentGlyph({ source }: { source: AgentSource }) {
     cursor: <CursorIcon {...iconProps} />,
     gemini: <GeminiIcon {...iconProps} />,
     opencode: <OpenCodeIcon {...iconProps} />,
+    pi: <Bot className="size-4" />,
     custom: <Bot className="size-4" />,
   }[source]
 

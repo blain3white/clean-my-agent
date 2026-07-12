@@ -86,7 +86,7 @@ const allTargets: Array<{
   },
 ]
 
-const agentSources = ['codex', 'claude', 'cursor', 'gemini', 'opencode', 'custom'] as const
+const agentSources = ['codex', 'claude', 'cursor', 'gemini', 'opencode', 'pi', 'custom'] as const
 
 function selectCases<T extends string>(allCases: T[], envName: string) {
   const raw = process.env[envName]
@@ -247,6 +247,7 @@ function createLargeSnapshot(): DashboardSnapshot {
       cursor: base.cursor * multiplier,
       gemini: base.gemini * multiplier,
       opencode: base.opencode * multiplier,
+      pi: base.pi * multiplier,
       custom: base.custom * multiplier,
       total: base.total * multiplier,
     }

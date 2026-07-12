@@ -642,18 +642,25 @@ function extractUsage(
       'prompt_tokens',
       'promptTokens',
       'inputTokens',
+      'input',
     ])
     const output = numberFromRecord(record, [
       'output_tokens',
       'completion_tokens',
       'completionTokens',
       'outputTokens',
+      'output',
     ])
     const cacheCreation = numberFromRecord(record, [
       'cache_creation_input_tokens',
       'cacheCreationInputTokens',
+      'cacheWrite',
     ])
-    const cacheRead = numberFromRecord(record, ['cache_read_input_tokens', 'cacheReadInputTokens'])
+    const cacheRead = numberFromRecord(record, [
+      'cache_read_input_tokens',
+      'cacheReadInputTokens',
+      'cacheRead',
+    ])
     const legacyCached = numberFromRecord(record, [
       'cached_tokens',
       'cached_input_tokens',

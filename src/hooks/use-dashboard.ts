@@ -69,6 +69,7 @@ const agentNames: Record<AgentSource, string> = {
   cursor: 'Cursor',
   gemini: 'Gemini',
   opencode: 'OpenCode',
+  pi: 'Pi',
   custom: 'Custom',
 }
 
