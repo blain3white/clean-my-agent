@@ -359,6 +359,7 @@ export type AppSettings = {
   defaultRelayMode: 'full-context' | 'fit-to-window' | 'manual-select'
   exportDirectory: string
   worktreeRoots: string[]
+  worktreeScanDefaultRoots: boolean
 }
 
 export type ThemePreference = 'system' | 'light' | 'dark'

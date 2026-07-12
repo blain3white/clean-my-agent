@@ -801,6 +801,20 @@ export function SettingsView({
               </>
             }
           />
+          <SettingsRow
+            icon={Folder}
+            title={t('settings.worktreeScanDefaultRoots')}
+            description={t('settings.worktreeScanDefaultRootsDescription')}
+            trailing={
+              <SwitchControl
+                checked={settings.worktreeScanDefaultRoots}
+                onCheckedChange={(checked) =>
+                  void onSettingsChange({ worktreeScanDefaultRoots: checked }, { rescan: true })
+                }
+                label={t('settings.worktreeScanDefaultRoots')}
+              />
+            }
+          />
         </SettingsPanel>
       </SettingsSection>
 

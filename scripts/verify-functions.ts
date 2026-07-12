@@ -147,6 +147,7 @@ async function main() {
       sources.map((source) => [source, [path.join(fixtureRoot, source)]]),
     ),
     exportDirectory: path.join(userDataPath, 'Exports'),
+    worktreeScanDefaultRoots: false,
   })
 
   const snapshot = await service.rescan()
@@ -424,6 +425,7 @@ async function main() {
   worktreeService.updateSettings({
     cleanupRetentionDays: 0,
     worktreeRoots: [worktreeRoot],
+    worktreeScanDefaultRoots: false,
     scanRoots: {},
     exportDirectory: path.join(os.tmpdir(), 'cma-worktree-exports'),
   })
