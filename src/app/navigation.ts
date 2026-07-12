@@ -2,6 +2,7 @@ import {
   ArrowRightLeft,
   BarChart3,
   Database,
+  GitBranch,
   HeartPulse,
   LayoutDashboard,
   Settings,
@@ -17,6 +18,7 @@ export type ViewId =
   | 'usage'
   | 'relay'
   | 'health'
+  | 'worktrees'
   | 'settings'
 
 export const navItems: Array<{
@@ -29,6 +31,7 @@ export const navItems: Array<{
   { id: 'sessions', labelKey: 'nav.sessions', icon: Database },
   { id: 'skills', labelKey: 'nav.skills', icon: Database },
   { id: 'cleanup', labelKey: 'nav.cleanup', icon: Trash2 },
+  { id: 'worktrees', labelKey: 'nav.worktrees', icon: GitBranch },
   { id: 'usage', labelKey: 'nav.usage', icon: BarChart3 },
   { id: 'relay', labelKey: 'nav.relay', icon: ArrowRightLeft, hiddenInSidebar: true },
   { id: 'health', labelKey: 'nav.health', icon: HeartPulse, hiddenInSidebar: true },
