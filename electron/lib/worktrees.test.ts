@@ -9,6 +9,7 @@ import {
   pruneWorktrees,
   resolveParentRepoFromWorktree,
   createRealGitRunner,
+  defaultWorktreeRoots,
 } from './worktrees'
 import type { GitRunner } from './worktrees'
 
@@ -352,6 +353,165 @@ describe('scanWorktrees', () => {
   })
 })
 
+describe('scanWorktrees default roots + two-level layout', () => {
+  // A flexible fs that derives listings from a set of worktree paths, so it can
+  // model both `<root>/<name>` and `<root>/<group>/<name>` layouts, including
+  // agent-default roots.
+  function layoutFs(
+    worktrees: Array<{
+      dir: string
+      gitdir?: string
+      mtimeMs: number
+      sizeBytes: number
+      noGit?: boolean
+      isGitDir?: boolean
+    }>,
+  ): WorktreeFs {
+    const byDir = new Map(worktrees.map((w) => [path.resolve(w.dir), w]))
+    const allDirs = new Set(worktrees.map((w) => path.resolve(w.dir)))
+    const childrenOf = (root: string) => {
+      const resolved = path.resolve(root)
+      const result = new Set<string>()
+      for (const dir of allDirs) {
+        if (path.dirname(dir) === resolved) result.add(path.basename(dir))
+        else if (dir.startsWith(resolved + path.sep)) {
+          // intermediate group directory: expose the next path segment
+          const rel = path.relative(resolved, dir).split(path.sep)
+          if (rel.length > 1) result.add(rel[0])
+        }
+      }
+      return Array.from(result)
+    }
+    return {
+      readDir: vi.fn(async (root: string) => childrenOf(root)),
+      statGitEntry: vi.fn(async (dir: string) => {
+        const w = byDir.get(path.resolve(dir))
+        if (!w) return { kind: 'none' as const }
+        if (w.noGit) return { kind: 'none' as const }
+        if (w.isGitDir) return { kind: 'directory' as const }
+        return {
+          kind: 'file' as const,
+          content: w.gitdir ?? `gitdir: /fake/.git/worktrees/${path.basename(dir)}`,
+        }
+      }),
+      statWorktree: vi.fn(async (dir: string) => {
+        const w = byDir.get(path.resolve(dir))
+        if (!w) throw new Error(`no fixture for ${dir}`)
+        return { mtimeMs: w.mtimeMs, sizeBytes: w.sizeBytes }
+      }),
+    }
+  }
+
+  it('discovers worktrees nested two levels deep (<root>/<group>/<repo>)', async () => {
+    const fs = layoutFs([{ dir: '/wt/0e92/clean-my-agent', mtimeMs: staleMs, sizeBytes: 100 }])
+    const runner = makeRunner({ status: async () => ({ stdout: '', stderr: '', code: 0 }) })
+    const result = await scanWorktrees({
+      roots: ['/wt'],
+      retentionDays: 7,
+      excludedFolders: [],
+      includeDefaultRoots: false,
+      now,
+      fs,
+      runner,
+    })
+    expect(result.candidates).toHaveLength(1)
+    expect(result.candidates[0].paths[0]).toBe(path.resolve('/wt/0e92/clean-my-agent'))
+    expect(result.candidates[0].kind).toBe('stale-worktree')
+  })
+
+  it('discovers both single-level and two-level worktrees under the same root', async () => {
+    const fs = layoutFs([
+      { dir: '/wt/isea-release-main', mtimeMs: staleMs, sizeBytes: 50 },
+      { dir: '/wt/0e92/clean-my-agent', mtimeMs: staleMs, sizeBytes: 100 },
+    ])
+    const runner = makeRunner({ status: async () => ({ stdout: '', stderr: '', code: 0 }) })
+    const result = await scanWorktrees({
+      roots: ['/wt'],
+      retentionDays: 7,
+      excludedFolders: [],
+      includeDefaultRoots: false,
+      now,
+      fs,
+      runner,
+    })
+    expect(result.candidates).toHaveLength(2)
+    const paths = result.candidates.map((c) => c.paths[0]).sort()
+    expect(paths).toEqual([
+      path.resolve('/wt/0e92/clean-my-agent'),
+      path.resolve('/wt/isea-release-main'),
+    ])
+  })
+
+  it('scans agent-default roots automatically when no roots are configured', async () => {
+    // Model a worktree living under the codex default root.
+    const codexRoot = path.join(os.homedir(), '.codex', 'worktrees')
+    const fs = layoutFs([
+      { dir: path.join(codexRoot, 'abc1', 'clean-my-agent'), mtimeMs: staleMs, sizeBytes: 100 },
+    ])
+    const runner = makeRunner({ status: async () => ({ stdout: '', stderr: '', code: 0 }) })
+    const result = await scanWorktrees({
+      roots: [],
+      retentionDays: 7,
+      excludedFolders: [],
+      now,
+      fs,
+      runner,
+    })
+    expect(result.candidates).toHaveLength(1)
+    expect(result.candidates[0].paths[0]).toBe(path.join(codexRoot, 'abc1', 'clean-my-agent'))
+  })
+
+  it('includeDefaultRoots: false skips agent-default roots', async () => {
+    const codexRoot = path.join(os.homedir(), '.codex', 'worktrees')
+    const fs = layoutFs([
+      { dir: path.join(codexRoot, 'abc1', 'clean-my-agent'), mtimeMs: staleMs, sizeBytes: 100 },
+      { dir: '/custom/wt', mtimeMs: staleMs, sizeBytes: 100 },
+    ])
+    const runner = makeRunner({ status: async () => ({ stdout: '', stderr: '', code: 0 }) })
+    const result = await scanWorktrees({
+      roots: ['/custom'],
+      retentionDays: 7,
+      excludedFolders: [],
+      includeDefaultRoots: false,
+      now,
+      fs,
+      runner,
+    })
+    expect(result.candidates).toHaveLength(1)
+    expect(result.candidates[0].paths[0]).toBe(path.resolve('/custom/wt'))
+  })
+
+  it('honours excludedFolders for two-level worktrees', async () => {
+    const fs = layoutFs([
+      { dir: '/wt/keep/clean-my-agent', mtimeMs: staleMs, sizeBytes: 100 },
+      { dir: '/wt/scan/isea', mtimeMs: staleMs, sizeBytes: 100 },
+    ])
+    const runner = makeRunner({ status: async () => ({ stdout: '', stderr: '', code: 0 }) })
+    const result = await scanWorktrees({
+      roots: ['/wt'],
+      retentionDays: 7,
+      excludedFolders: ['/wt/keep'],
+      includeDefaultRoots: false,
+      now,
+      fs,
+      runner,
+    })
+    expect(result.candidates).toHaveLength(1)
+    expect(result.candidates[0].paths[0]).toBe(path.resolve('/wt/scan/isea'))
+  })
+})
+
+describe('defaultWorktreeRoots', () => {
+  it('returns the agent-default worktree locations', () => {
+    const home = os.homedir()
+    const roots = defaultWorktreeRoots()
+    expect(roots).toContain(path.join(home, '.codex', 'worktrees'))
+    expect(roots).toContain(path.join(home, '.claude', 'worktrees'))
+    expect(roots).toContain(path.join(home, '.cursor', 'worktrees'))
+    expect(roots).toContain(path.join(home, '.config', 'superpowers', 'worktrees'))
+  })
+})
+
 describe('resolveParentRepo', () => {
   it('extracts the parent repo from a gitdir pointer', () => {
     const content = 'gitdir: /home/me/proj/.git/worktrees/feature-a'
@@ -418,6 +578,7 @@ describe('scanWorktrees (real git + fs)', () => {
       roots: [root],
       retentionDays: 7,
       excludedFolders: [],
+      includeDefaultRoots: false,
       now: Date.now(),
     })
     const candidate = result.candidates.find((c) => c.paths[0] === wtDir)
@@ -449,6 +610,7 @@ describe('scanWorktrees (real git + fs)', () => {
       roots: [root],
       retentionDays: 7,
       excludedFolders: [],
+      includeDefaultRoots: false,
       now: Date.now(),
     })
     const candidate = result.candidates.find((c) => c.paths[0] === wtDir)
@@ -471,6 +633,7 @@ describe('scanWorktrees (real git + fs)', () => {
         roots: [root],
         retentionDays: 7,
         excludedFolders: [],
+        includeDefaultRoots: false,
         now: Date.now(),
       })
       expect(result.candidates).toEqual([])

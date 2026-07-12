@@ -37,9 +37,11 @@ export type WorktreeFs = {
 }
 
 export type ScanWorktreesOptions = {
-  roots: string[]
+  roots?: string[]
   retentionDays: number
   excludedFolders: string[]
+  /** When true (default), agent-default worktree roots (~/.<agent>/worktrees, superpowers) are scanned alongside `roots`. */
+  includeDefaultRoots?: boolean
   now?: number
   fs?: WorktreeFs
   runner?: GitRunner
@@ -63,6 +65,29 @@ function isInsidePath(filePath: string, parentPath: string): boolean {
   const file = normalizeForCompare(filePath)
   const parent = normalizeForCompare(parentPath)
   return file === parent || file.startsWith(`${parent}${path.sep}`)
+}
+
+/**
+ * Default locations where coding agents and skill systems keep their git
+ * worktrees. Each agent typically parks worktrees under `~/.<agent>/worktrees/`;
+ * the superpowers skill system uses `~/.config/superpowers/worktrees/`. Only
+ * roots that actually exist on disk are returned.
+ */
+export function defaultWorktreeRoots(): string[] {
+  const home = expandHome('~')
+  const candidates = [
+    path.join(home, '.codex', 'worktrees'),
+    path.join(home, '.claude', 'worktrees'),
+    path.join(home, '.cursor', 'worktrees'),
+    path.join(home, '.gemini', 'worktrees'),
+    path.join(home, '.opencode', 'worktrees'),
+    path.join(home, '.pi', 'worktrees'),
+    path.join(home, '.config', 'superpowers', 'worktrees'),
+  ]
+  // Filter synchronously by existence via a cached check is not available
+  // without fs; callers resolve existence through the fs adapter. We return
+  // all candidates and let the scan skip missing ones (readDir throws → skipped).
+  return candidates
 }
 
 /** Production filesystem adapter backed by node:fs. */
@@ -195,7 +220,10 @@ export async function scanWorktrees(options: ScanWorktreesOptions): Promise<Work
   const diagnostics: AgentScanDiagnostic[] = []
   const candidates: CleanupCandidate[] = []
 
-  const roots = options.roots.map((root) => expandHome(root)).filter(Boolean)
+  // Combine the agent-default worktree roots with any the user configured.
+  const userRoots = (options.roots ?? []).map((root) => expandHome(root)).filter(Boolean)
+  const defaults = options.includeDefaultRoots === false ? [] : defaultWorktreeRoots()
+  const roots = Array.from(new Set([...defaults, ...userRoots])).map((root) => expandHome(root))
   if (roots.length === 0) return { candidates, diagnostics }
 
   if (!(await runner.available())) {
@@ -208,53 +236,73 @@ export async function scanWorktrees(options: ScanWorktreesOptions): Promise<Work
   }
 
   const retentionMs = options.retentionDays * oneDayMs
+  const excluded = options.excludedFolders
 
-  // Discover candidate worktrees across all roots.
+  /** If `dir` is a linked worktree past retention, record it as discovered. */
+  const tryRecordWorktree = async (dir: string): Promise<boolean> => {
+    if (excluded.some((e) => isInsidePath(dir, e))) return false
+    let gitEntry: GitEntryInfo
+    try {
+      gitEntry = await fs.statGitEntry(dir)
+    } catch {
+      return false
+    }
+    if (gitEntry.kind !== 'file' || !/^gitdir:/m.test(gitEntry.content)) {
+      // Not a linked worktree (standalone repo `.git` dir, or no `.git`).
+      return false
+    }
+    let stats: { mtimeMs: number; sizeBytes: number }
+    try {
+      stats = await fs.statWorktree(dir)
+    } catch {
+      pushDiagnostic(diagnostics, {
+        level: 'warning',
+        code: 'worktree-stat-failed',
+        message: 'Could not inspect worktree directory.',
+        path: dir,
+      })
+      return true
+    }
+    if (now - stats.mtimeMs <= retentionMs) return true // fresh, but it IS a worktree
+    discovered.push({ path: dir, mtimeMs: stats.mtimeMs, sizeBytes: stats.sizeBytes })
+    return true
+  }
+
+  // Discover candidate worktrees across all roots. Worktrees may sit either
+  // directly under a root (`<root>/<name>`) or one level deeper
+  // (`<root>/<group>/<name>`, e.g. codex's `~/.codex/worktrees/<hash>/<repo>`).
   const discovered: DiscoveredWorktree[] = []
   for (const root of roots) {
     let entries: string[]
     try {
       entries = await fs.readDir(root)
     } catch {
-      pushDiagnostic(diagnostics, {
-        level: 'warning',
-        code: 'worktree-root-unreadable',
-        message: 'Could not read worktree scan root.',
-        path: root,
-      })
+      // Missing default roots are expected (not every agent is installed);
+      // only diagnose unreadable roots the user explicitly configured.
+      if (userRoots.some((r) => normalizeForCompare(r) === normalizeForCompare(root))) {
+        pushDiagnostic(diagnostics, {
+          level: 'warning',
+          code: 'worktree-root-unreadable',
+          message: 'Could not read worktree scan root.',
+          path: root,
+        })
+      }
       continue
     }
 
     for (const entry of entries) {
       const dir = path.join(root, entry)
-      if (options.excludedFolders.some((excluded) => isInsidePath(dir, excluded))) continue
-
-      let gitEntry: GitEntryInfo
+      if (await tryRecordWorktree(dir)) continue
+      // Not a worktree at level 1 — descend one level into group folders.
+      let subEntries: string[]
       try {
-        gitEntry = await fs.statGitEntry(dir)
+        subEntries = await fs.readDir(dir)
       } catch {
         continue
       }
-      if (gitEntry.kind !== 'file' || !/^gitdir:/m.test(gitEntry.content)) {
-        // Not a linked worktree (standalone repo `.git` dir, or no `.git`).
-        continue
+      for (const sub of subEntries) {
+        await tryRecordWorktree(path.join(dir, sub))
       }
-
-      let stats: { mtimeMs: number; sizeBytes: number }
-      try {
-        stats = await fs.statWorktree(dir)
-      } catch {
-        pushDiagnostic(diagnostics, {
-          level: 'warning',
-          code: 'worktree-stat-failed',
-          message: 'Could not inspect worktree directory.',
-          path: dir,
-        })
-        continue
-      }
-
-      if (now - stats.mtimeMs <= retentionMs) continue // fresh
-      discovered.push({ path: dir, mtimeMs: stats.mtimeMs, sizeBytes: stats.sizeBytes })
     }
   }
 

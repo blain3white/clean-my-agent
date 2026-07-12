@@ -6,6 +6,17 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppService } from './app-service'
 import * as worktreesModule from './worktrees'
+
+// Default: worktree scanning is a no-op in app-service tests so they don't hit
+// the developer's real ~/.codex/worktrees. Worktree-specific tests override
+// scanWorktrees via vi.spyOn(worktreesModule, 'scanWorktrees').mockResolvedValue(...).
+vi.mock('./worktrees', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./worktrees')>()
+  return {
+    ...actual,
+    scanWorktrees: vi.fn(async () => ({ candidates: [], diagnostics: [] })),
+  }
+})
 import {
   agentSources,
   type AgentSource,
@@ -1538,7 +1549,7 @@ describe('scanCleanup', () => {
     }
   })
 
-  it('skips worktree scan silently when no worktree roots are configured', async () => {
+  it('does not require configured worktree roots (default roots are scanned)', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
     service.updateSettings({ cleanupRetentionDays: 0, worktreeRoots: [] })
     await writeJsonlSession(fixtureRoot, 'codex')
@@ -1546,8 +1557,9 @@ describe('scanCleanup', () => {
     const spy = vi.spyOn(worktreesModule, 'scanWorktrees')
     try {
       const candidates = await service.scanCleanup()
-      // scanWorktrees is still called (it short-circuits on empty roots), but
-      // no worktree candidates appear.
+      // scanWorktrees is still called (default agent roots are scanned even
+      // with no user-configured roots); in the test env it returns no
+      // candidates, so only session candidates appear.
       expect(candidates.every((c) => c.kind !== 'stale-worktree')).toBe(true)
       expect(candidates.some((c) => c.kind === 'old-session')).toBe(true)
     } finally {
