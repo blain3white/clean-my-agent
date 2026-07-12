@@ -73,6 +73,8 @@ describe('cleanup categories', () => {
     ['duplicate-backup', 'test'],
     ['temp-file', 'test'],
     ['invalid-cache', 'test'],
+    ['stale-worktree', 'worktree'],
+    ['dirty-worktree', 'worktree'],
   ] as const)('maps %s candidates to %s', (kind, expected) => {
     expect(cleanupCategoryForCandidate(candidate({ id: kind, kind }))).toBe(expected)
   })
@@ -87,6 +89,15 @@ describe('cleanup categories', () => {
     ).toEqual(['old', 'temp'])
   })
 
+  it('selects stale (low-risk) worktrees by default but never dirty (high-risk) ones', () => {
+    expect(
+      defaultCleanupSelection([
+        candidate({ id: 'stale', kind: 'stale-worktree', risk: 'low' }),
+        candidate({ id: 'dirty', kind: 'dirty-worktree', risk: 'high' }),
+      ]),
+    ).toEqual(['stale'])
+  })
+
   it('aggregates category summaries in a stable order', () => {
     const summaries = buildCleanupCategorySummaries([
       candidate({ id: 'large', kind: 'large-log', sizeBytes: 500 }),
@@ -95,7 +106,12 @@ describe('cleanup categories', () => {
       candidate({ id: 'duplicate', kind: 'duplicate-backup', sizeBytes: 50 }),
     ])
 
-    expect(summaries.map((summary) => summary.key)).toEqual(['large', 'inactive', 'test'])
+    expect(summaries.map((summary) => summary.key)).toEqual([
+      'large',
+      'inactive',
+      'test',
+      'worktree',
+    ])
     expect(summaries.find((summary) => summary.key === 'large')).toMatchObject({
       bytes: 500,
       count: 1,
@@ -108,12 +124,21 @@ describe('cleanup categories', () => {
       bytes: 150,
       count: 2,
     })
+    expect(summaries.find((summary) => summary.key === 'worktree')).toMatchObject({
+      bytes: 0,
+      count: 0,
+    })
   })
 
   it('returns zeroed summaries for empty input', () => {
     const summaries = buildCleanupCategorySummaries([])
 
-    expect(summaries.map((summary) => summary.key)).toEqual(['large', 'inactive', 'test'])
+    expect(summaries.map((summary) => summary.key)).toEqual([
+      'large',
+      'inactive',
+      'test',
+      'worktree',
+    ])
     expect(summaries.every((summary) => summary.bytes === 0 && summary.count === 0)).toBe(true)
   })
 })

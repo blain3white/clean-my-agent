@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppService } from './app-service'
+import * as worktreesModule from './worktrees'
 import {
   agentSources,
   type AgentSource,
@@ -1482,6 +1483,76 @@ describe('scanCleanup', () => {
       vi.useRealTimers()
     }
   })
+
+  it('merges worktree candidates with session candidates and sorts by size', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ cleanupRetentionDays: 0 }) // sessions are old
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await service.rescan()
+
+    const worktreeCandidate: CleanupCandidate = {
+      id: 'wt-big',
+      kind: 'stale-worktree',
+      title: 'feature-big',
+      sessionIds: [],
+      paths: ['/wt/feature-big'],
+      sizeBytes: 10_000_000,
+      risk: 'low',
+      recoverable: true,
+      backedUp: true,
+      reason: 'Untouched for more than 0 days; working tree is clean.',
+    }
+    const dirtyCandidate: CleanupCandidate = {
+      id: 'wt-dirty',
+      kind: 'dirty-worktree',
+      title: 'feature-dirty',
+      sessionIds: [],
+      paths: ['/wt/feature-dirty'],
+      sizeBytes: 500,
+      risk: 'high',
+      recoverable: true,
+      backedUp: false,
+      reason: 'Untouched for more than 0 days but has uncommitted changes.',
+    }
+    const spy = vi
+      .spyOn(worktreesModule, 'scanWorktrees')
+      .mockResolvedValue({ candidates: [worktreeCandidate, dirtyCandidate], diagnostics: [] })
+
+    try {
+      const candidates = await service.scanCleanup()
+      expect(spy).toHaveBeenCalled()
+      // Both worktree candidates are present alongside the session candidate.
+      const kinds = candidates.map((c) => c.kind)
+      expect(kinds).toContain('old-session')
+      expect(kinds).toContain('stale-worktree')
+      expect(kinds).toContain('dirty-worktree')
+      // Combined list is sorted by sizeBytes descending.
+      for (let i = 1; i < candidates.length; i += 1) {
+        expect(candidates[i - 1].sizeBytes).toBeGreaterThanOrEqual(candidates[i].sizeBytes)
+      }
+      // The largest worktree (10 MB) should sort ahead of the small session file.
+      expect(candidates[0].kind).toBe('stale-worktree')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('skips worktree scan silently when no worktree roots are configured', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ cleanupRetentionDays: 0, worktreeRoots: [] })
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await service.rescan()
+    const spy = vi.spyOn(worktreesModule, 'scanWorktrees')
+    try {
+      const candidates = await service.scanCleanup()
+      // scanWorktrees is still called (it short-circuits on empty roots), but
+      // no worktree candidates appear.
+      expect(candidates.every((c) => c.kind !== 'stale-worktree')).toBe(true)
+      expect(candidates.some((c) => c.kind === 'old-session')).toBe(true)
+    } finally {
+      spy.mockRestore()
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1645,6 +1716,91 @@ describe('moveCleanupToTrash', () => {
       ]),
     )
   })
+
+  it('moves a worktree candidate to Trash, prunes the parent repo, and records its kind', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    // Create a real directory standing in for the worktree so movePath works.
+    const worktreeDir = await mkdtemp(path.join(userDataPath, 'wt-'))
+    const worktreeCandidate: CleanupCandidate = {
+      id: 'wt-stale-1',
+      kind: 'stale-worktree',
+      title: 'feature-stale',
+      sessionIds: [],
+      paths: [worktreeDir],
+      sizeBytes: 1234,
+      risk: 'low',
+      recoverable: true,
+      backedUp: true,
+      reason: 'Untouched for more than 0 days; working tree is clean.',
+    }
+    const scanSpy = vi
+      .spyOn(worktreesModule, 'scanWorktrees')
+      .mockResolvedValue({ candidates: [worktreeCandidate], diagnostics: [] })
+    const resolveSpy = vi
+      .spyOn(worktreesModule, 'resolveParentRepoFromWorktree')
+      .mockResolvedValue({
+        parentRepo: '/fake/parent',
+        gitFileContent: 'gitdir: /fake/parent/.git/worktrees/x',
+      })
+    const pruneSpy = vi.spyOn(worktreesModule, 'pruneWorktrees').mockResolvedValue(true)
+
+    try {
+      const records = await service.moveCleanupToTrash([worktreeCandidate.id])
+      expect(records).toHaveLength(1)
+      expect(records[0].kind).toBe('stale-worktree')
+      // Original worktree directory is gone (moved into Trash).
+      await expect(stat(worktreeDir)).rejects.toThrow()
+      // Parent repo was pruned after the move.
+      expect(resolveSpy).toHaveBeenCalledWith(worktreeDir)
+      expect(pruneSpy).toHaveBeenCalledWith('/fake/parent')
+    } finally {
+      scanSpy.mockRestore()
+      resolveSpy.mockRestore()
+      pruneSpy.mockRestore()
+    }
+  }, 20_000)
+
+  it('keeps the Trash entry intact when prune fails (best-effort, non-blocking)', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const worktreeDir = await mkdtemp(path.join(userDataPath, 'wt-'))
+    const worktreeCandidate: CleanupCandidate = {
+      id: 'wt-stale-2',
+      kind: 'stale-worktree',
+      title: 'feature-stale-2',
+      sessionIds: [],
+      paths: [worktreeDir],
+      sizeBytes: 100,
+      risk: 'low',
+      recoverable: true,
+      backedUp: true,
+      reason: 'Untouched for more than 0 days; working tree is clean.',
+    }
+    const scanSpy = vi
+      .spyOn(worktreesModule, 'scanWorktrees')
+      .mockResolvedValue({ candidates: [worktreeCandidate], diagnostics: [] })
+    const resolveSpy = vi
+      .spyOn(worktreesModule, 'resolveParentRepoFromWorktree')
+      .mockResolvedValue({
+        parentRepo: '/fake/parent',
+        gitFileContent: 'gitdir: /fake/parent/.git/worktrees/x',
+      })
+    const pruneSpy = vi
+      .spyOn(worktreesModule, 'pruneWorktrees')
+      .mockRejectedValue(new Error('prune exploded'))
+
+    try {
+      const records = await service.moveCleanupToTrash([worktreeCandidate.id])
+      // The move still succeeded and the Trash record exists despite prune failure.
+      expect(records).toHaveLength(1)
+      expect(records[0].kind).toBe('stale-worktree')
+      await expect(stat(worktreeDir)).rejects.toThrow()
+      expect(pruneSpy).toHaveBeenCalled()
+    } finally {
+      scanSpy.mockRestore()
+      resolveSpy.mockRestore()
+      pruneSpy.mockRestore()
+    }
+  }, 20_000)
 })
 
 // ---------------------------------------------------------------------------
@@ -1721,7 +1877,8 @@ describe('restoreTrash', () => {
     }
     await rm(trashRecord.trashPath, { recursive: true, force: true })
 
-    await expect(service.restoreTrash(trashRecord.id)).resolves.toBeUndefined()
+    // restoreTrash resolves to the restored candidate's kind (a session kind here).
+    await expect(service.restoreTrash(trashRecord.id)).resolves.toBe(trashRecord.kind)
   })
 })
 
