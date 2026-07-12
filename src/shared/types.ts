@@ -235,7 +235,7 @@ export type UsagePoint = {
 }
 
 export type StorageSlice = {
-  source: AgentSource | 'archives' | 'backups' | 'trash' | 'logs' | 'cache'
+  source: AgentSource | 'archives' | 'backups' | 'trash' | 'logs' | 'cache' | 'other'
   label: string
   sizeBytes: number
   sessions?: number

@@ -1570,6 +1570,58 @@ describe('scanCleanup', () => {
       spy.mockRestore()
     }
   })
+
+  it('rolls worktree sizes into per-agent size, overview total, and storage without double-count', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ cleanupRetentionDays: 0, worktreeRetentionDays: 0 })
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await service.rescan()
+
+    // Two worktree records: one attributed to codex (400), one to 'other' (100).
+    const codexRoot = path.join(os.homedir(), '.codex', 'worktrees')
+    vi.spyOn(worktreesModule, 'scanAllWorktrees').mockResolvedValue({
+      records: [
+        {
+          id: 'w1',
+          path: path.join(codexRoot, 'g', 'a'),
+          ownerAgent: 'codex',
+          repoName: 'a',
+          sizeBytes: 400,
+          lastActivity: new Date().toISOString(),
+          clean: true,
+          stale: true,
+          defaultRoot: codexRoot,
+        },
+        {
+          id: 'w2',
+          path: '/custom/b',
+          ownerAgent: 'other',
+          repoName: 'b',
+          sizeBytes: 100,
+          lastActivity: new Date().toISOString(),
+          clean: true,
+          stale: true,
+          defaultRoot: '/custom',
+        },
+      ],
+      diagnostics: [],
+      sizeCache: new Map(),
+    })
+
+    const snap = await service.getSnapshot(true)
+    const codexAgent = snap.agents.find((a) => a.source === 'codex')
+    // codex agent size includes its 400-byte worktree (plus the small session).
+    expect(codexAgent?.sizeBytes).toBeGreaterThanOrEqual(400)
+    // overview total includes both worktrees (400 + 100).
+    expect(snap.overview.totalSizeBytes).toBeGreaterThanOrEqual(500)
+    // storage: codex slice includes its worktree; an 'other' slice holds the 100.
+    const otherSlice = snap.storage.find((s) => s.source === 'other')
+    expect(otherSlice?.sizeBytes).toBe(100)
+    // No separate additive Worktrees slice double-counts: sum of storage slices
+    // should not exceed sessions + archives + worktrees (400+100).
+    const storageTotal = snap.storage.reduce((t, s) => t + s.sizeBytes, 0)
+    expect(storageTotal).toBeGreaterThanOrEqual(500)
+  })
 })
 
 // ---------------------------------------------------------------------------

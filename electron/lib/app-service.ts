@@ -21,6 +21,7 @@ import type {
   TrashRecord,
   UsagePoint,
   WorktreeRecord,
+  WorktreeOwner,
   RiskLevel,
   UniversalRelayDocument,
   SkillsSnapshot,
@@ -691,6 +692,7 @@ export class AppService {
       const trash = this.db.getTrash()
       const recovery = this.db.getRecoveryRecords()
       const liveSessions = sessions.filter((session) => session.storageState === 'live')
+      const wtByOwner = this.worktreeSizeByOwner()
       const cleanup = [
         ...this.buildCleanupCandidates(liveSessions, backups),
         ...this.worktreeCandidates,
@@ -717,7 +719,7 @@ export class AppService {
             readable: providerEnabled ? (state?.readable ?? sourceSessions.length > 0) : false,
             rootPaths: state?.rootPaths ?? roots,
             sessionCount: sourceSessions.length,
-            sizeBytes: bytesFromRecords(liveSourceSessions),
+            sizeBytes: bytesFromRecords(liveSourceSessions) + (wtByOwner.get(adapter.source) ?? 0),
             lastScannedAt: providerEnabled ? (state?.lastScannedAt ?? lastScannedAt) : undefined,
             note: providerEnabled
               ? (state?.note ?? adapter.name)
@@ -739,7 +741,10 @@ export class AppService {
             (total, session) => total + (session.tokens.costUsd ?? 0),
             0,
           ),
-          totalSizeBytes: bytesFromRecords(liveSessions) + archiveBytes(archives),
+          totalSizeBytes:
+            bytesFromRecords(liveSessions) +
+            archiveBytes(archives) +
+            this.worktreeRecords.reduce((total, wt) => total + wt.sizeBytes, 0),
           highRiskCleanupCount: cleanup.filter((item) => item.risk === 'high').length,
         },
         agents,
@@ -2042,7 +2047,9 @@ export class AppService {
           rootIds: roots.map(diagnosticPathId).filter((item): item is string => Boolean(item)),
           sessionCount: sourceSessions.length,
           liveSessionCount: liveSourceSessions.length,
-          sizeBytes: bytesFromRecords(liveSourceSessions),
+          sizeBytes:
+            bytesFromRecords(liveSourceSessions) +
+            (this.worktreeSizeByOwner().get(adapter.source) ?? 0),
           scannedFiles: state?.scannedFiles,
           skippedFiles: state?.skippedFiles,
           lastScannedAt: state?.lastScannedAt,
@@ -2311,6 +2318,14 @@ export class AppService {
     return Array.from(points.values())
   }
 
+  private worktreeSizeByOwner(): Map<WorktreeOwner, number> {
+    const byOwner = new Map<WorktreeOwner, number>()
+    for (const wt of this.worktreeRecords) {
+      byOwner.set(wt.ownerAgent, (byOwner.get(wt.ownerAgent) ?? 0) + wt.sizeBytes)
+    }
+    return byOwner
+  }
+
   private buildStorage(
     sessions: SessionRecord[],
     archives: ArchiveRecord[],
@@ -2324,12 +2339,23 @@ export class AppService {
         bySource.set(session.source, [...(bySource.get(session.source) ?? []), session])
       })
 
+    const wtByOwner = this.worktreeSizeByOwner()
     const slices: StorageSlice[] = Array.from(bySource.entries()).map(([source, items]) => ({
       source,
       label: agentLabels[source],
-      sizeBytes: bytesFromRecords(items),
+      sizeBytes: bytesFromRecords(items) + (wtByOwner.get(source) ?? 0),
       sessions: items.length,
     }))
+
+    // Worktrees attributed to a non-agent owner (superpowers, user-configured roots).
+    const otherWorktreeBytes = wtByOwner.get('other') ?? 0
+    if (otherWorktreeBytes > 0) {
+      slices.push({
+        source: 'other',
+        label: 'Worktrees (other)',
+        sizeBytes: otherWorktreeBytes,
+      })
+    }
 
     slices.push({
       source: 'archives',
