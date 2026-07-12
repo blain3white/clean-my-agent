@@ -1,6 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import path from 'node:path'
-import { scanWorktrees, resolveParentRepo, pruneWorktrees } from './worktrees'
+import os from 'node:os'
+import { mkdtemp, writeFile, utimes } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import {
+  scanWorktrees,
+  resolveParentRepo,
+  pruneWorktrees,
+  resolveParentRepoFromWorktree,
+  createRealGitRunner,
+} from './worktrees'
 import type { GitRunner } from './worktrees'
 
 type Stub = {
@@ -239,6 +248,108 @@ describe('scanWorktrees', () => {
     })
     expect(result.candidates[0].title).toBe('feature-x')
   })
+
+  it('skips + diagnoses when statWorktree throws', async () => {
+    const fs = {
+      ...fakeFs([{ dir: '/wt/bad', mtimeMs: staleMs, sizeBytes: 100 }]),
+      statWorktree: vi.fn(async () => {
+        throw new Error('stat failed')
+      }),
+    }
+    const runner = makeRunner({})
+    const result = await scanWorktrees({
+      roots: ['/wt'],
+      retentionDays: 7,
+      excludedFolders: [],
+      now,
+      fs,
+      runner,
+    })
+    expect(result.candidates).toEqual([])
+    expect(result.diagnostics.some((d) => d.code === 'worktree-stat-failed')).toBe(true)
+  })
+
+  it('skips + diagnoses when git status throws (runner rejects)', async () => {
+    const fs = fakeFs([{ dir: '/wt/throwy', mtimeMs: staleMs, sizeBytes: 100 }])
+    const runner: GitRunner = {
+      available: async () => true,
+      run: vi.fn(async () => {
+        throw new Error('spawn ENOENT')
+      }),
+    }
+    const result = await scanWorktrees({
+      roots: ['/wt'],
+      retentionDays: 7,
+      excludedFolders: [],
+      now,
+      fs,
+      runner,
+    })
+    expect(result.candidates).toEqual([])
+    expect(result.diagnostics.some((d) => d.code === 'worktree-status-failed')).toBe(true)
+  })
+
+  it('skips when statGitEntry throws', async () => {
+    const fs = {
+      ...fakeFs([{ dir: '/wt/x', mtimeMs: staleMs, sizeBytes: 100 }]),
+      statGitEntry: vi.fn(async () => {
+        throw new Error('permission')
+      }),
+    }
+    const runner = makeRunner({})
+    const result = await scanWorktrees({
+      roots: ['/wt'],
+      retentionDays: 7,
+      excludedFolders: [],
+      now,
+      fs,
+      runner,
+    })
+    expect(result.candidates).toEqual([])
+  })
+
+  it('diagnoses an unreadable scan root and continues with others', async () => {
+    const goodFs = fakeFs([{ dir: '/wt/good', mtimeMs: staleMs, sizeBytes: 100 }])
+    const fs: typeof goodFs = {
+      ...goodFs,
+      readDir: vi.fn(async (root: string) => {
+        if (root === '/wt/bad') throw new Error('EACCES')
+        return goodFs.readDir(root)
+      }),
+    }
+    const runner = makeRunner({ status: async () => ({ stdout: '', stderr: '', code: 0 }) })
+    const result = await scanWorktrees({
+      roots: ['/wt/bad', '/wt'],
+      retentionDays: 7,
+      excludedFolders: [],
+      now,
+      fs,
+      runner,
+    })
+    expect(result.diagnostics.some((d) => d.code === 'worktree-root-unreadable')).toBe(true)
+    expect(result.candidates.some((c) => c.kind === 'stale-worktree')).toBe(true)
+  })
+
+  it('falls back to directory basename when branch lookup throws', async () => {
+    const fs = fakeFs([{ dir: '/wt/throwbranch', mtimeMs: staleMs, sizeBytes: 100 }])
+    const runner: GitRunner = {
+      available: async () => true,
+      run: vi.fn(async (args: string[]) => {
+        if (args[0] === 'status') return { command: 'status', stdout: '', stderr: '', code: 0 }
+        if (args[0] === 'rev-parse') throw new Error('git blew up')
+        return { command: args[0] ?? '', stdout: '', stderr: '', code: 0 }
+      }),
+    }
+    const result = await scanWorktrees({
+      roots: ['/wt'],
+      retentionDays: 7,
+      excludedFolders: [],
+      now,
+      fs,
+      runner,
+    })
+    expect(result.candidates[0].title).toBe('throwbranch')
+  })
 })
 
 describe('resolveParentRepo', () => {
@@ -275,6 +386,164 @@ describe('pruneWorktrees', () => {
     })
     const runner: GitRunner = { available: async () => true, run }
     const ok = await pruneWorktrees('/parent/repo', runner)
+    expect(ok).toBe(false)
+  })
+})
+
+const gitAvailable = (): boolean =>
+  spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0
+
+// These tests exercise the production fs + git adapters against a real temp git
+// repo, covering createRealFs / createRealGitRunner / runGit / the default
+// pruneWorktrees runner, and resolveParentRepoFromWorktree.
+describe('scanWorktrees (real git + fs)', () => {
+  it.skipIf(!gitAvailable())('detects a real stale+clean worktree end-to-end', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'wt-real-root-'))
+    const parent = await mkdtemp(path.join(os.tmpdir(), 'wt-real-parent-'))
+    const runGit = (args: string[], cwd: string) =>
+      spawnSync('git', args, { cwd, encoding: 'utf8' })
+    expect(runGit(['init', '-q'], parent).status).toBe(0)
+    await writeFile(path.join(parent, 'README.md'), 'hi\n')
+    expect(runGit(['add', 'README.md'], parent).status).toBe(0)
+    expect(
+      runGit(['-c', 'user.email=t@t', '-c', 'user.name=T', 'commit', '-q', '-m', 'init'], parent)
+        .status,
+    ).toBe(0)
+    const wtDir = path.join(root, 'feature')
+    expect(runGit(['worktree', 'add', wtDir, '-b', 'feature'], parent).status).toBe(0)
+    const stale = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
+    await utimes(wtDir, stale, stale)
+
+    const result = await scanWorktrees({
+      roots: [root],
+      retentionDays: 7,
+      excludedFolders: [],
+      now: Date.now(),
+    })
+    const candidate = result.candidates.find((c) => c.paths[0] === wtDir)
+    expect(candidate).toBeDefined()
+    expect(candidate?.kind).toBe('stale-worktree')
+    expect(candidate?.risk).toBe('low')
+    expect(candidate?.title).toBe('feature')
+  })
+
+  it.skipIf(!gitAvailable())('detects a real stale+dirty worktree', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'wt-real-root-'))
+    const parent = await mkdtemp(path.join(os.tmpdir(), 'wt-real-parent-'))
+    const runGit = (args: string[], cwd: string) =>
+      spawnSync('git', args, { cwd, encoding: 'utf8' })
+    expect(runGit(['init', '-q'], parent).status).toBe(0)
+    await writeFile(path.join(parent, 'README.md'), 'hi\n')
+    expect(runGit(['add', 'README.md'], parent).status).toBe(0)
+    expect(
+      runGit(['-c', 'user.email=t@t', '-c', 'user.name=T', 'commit', '-q', '-m', 'init'], parent)
+        .status,
+    ).toBe(0)
+    const wtDir = path.join(root, 'dirty')
+    expect(runGit(['worktree', 'add', wtDir, '-b', 'dirty'], parent).status).toBe(0)
+    await writeFile(path.join(wtDir, 'uncommitted.txt'), 'changes\n')
+    const stale = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
+    await utimes(wtDir, stale, stale)
+
+    const result = await scanWorktrees({
+      roots: [root],
+      retentionDays: 7,
+      excludedFolders: [],
+      now: Date.now(),
+    })
+    const candidate = result.candidates.find((c) => c.paths[0] === wtDir)
+    expect(candidate?.kind).toBe('dirty-worktree')
+    expect(candidate?.risk).toBe('high')
+  })
+
+  it.skipIf(!gitAvailable())(
+    'skips a standalone repo (.git directory) under the root',
+    async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'wt-real-root-'))
+      const clone = path.join(root, 'full-clone')
+      const runGit = (args: string[], cwd: string) =>
+        spawnSync('git', args, { cwd, encoding: 'utf8' })
+      expect(runGit(['init', '-q', clone]).status).toBe(0)
+      const stale = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
+      await utimes(clone, stale, stale)
+
+      const result = await scanWorktrees({
+        roots: [root],
+        retentionDays: 7,
+        excludedFolders: [],
+        now: Date.now(),
+      })
+      expect(result.candidates).toEqual([])
+    },
+  )
+})
+
+describe('resolveParentRepoFromWorktree (real fs)', () => {
+  it.skipIf(!gitAvailable())('reads the .git pointer and resolves the parent repo', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'wt-real-root-'))
+    const parent = await mkdtemp(path.join(os.tmpdir(), 'wt-real-parent-'))
+    const runGit = (args: string[], cwd: string) =>
+      spawnSync('git', args, { cwd, encoding: 'utf8' })
+    expect(runGit(['init', '-q'], parent).status).toBe(0)
+    await writeFile(path.join(parent, 'README.md'), 'hi\n')
+    expect(runGit(['add', 'README.md'], parent).status).toBe(0)
+    expect(
+      runGit(['-c', 'user.email=t@t', '-c', 'user.name=T', 'commit', '-q', '-m', 'init'], parent)
+        .status,
+    ).toBe(0)
+    const wtDir = path.join(root, 'feature')
+    expect(runGit(['worktree', 'add', wtDir, '-b', 'feature'], parent).status).toBe(0)
+
+    const resolved = await resolveParentRepoFromWorktree(wtDir)
+    // git may resolve the tmpdir through symlinks (e.g. /var -> /private/var on macOS).
+    const { realpath } = await import('node:fs/promises')
+    expect(resolved?.parentRepo).toBe(await realpath(parent))
+  })
+
+  it('returns null when the path has no .git pointer', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'wt-nogit-'))
+    await expect(resolveParentRepoFromWorktree(dir)).resolves.toBeNull()
+  })
+})
+
+describe('createRealGitRunner', () => {
+  it.skipIf(!gitAvailable())('detects git availability and runs commands', async () => {
+    const runner = createRealGitRunner()
+    expect(await runner.available()).toBe(true)
+    const result = await runner.run(['--version'], os.tmpdir())
+    expect(result.code).toBe(0)
+    expect(result.stdout).toMatch(/git version/)
+  })
+})
+
+describe('pruneWorktrees (real runner)', () => {
+  it.skipIf(!gitAvailable())('prunes a real stale worktree registration', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'wt-real-root-'))
+    const parent = await mkdtemp(path.join(os.tmpdir(), 'wt-real-parent-'))
+    const runGit = (args: string[], cwd: string) =>
+      spawnSync('git', args, { cwd, encoding: 'utf8' })
+    expect(runGit(['init', '-q'], parent).status).toBe(0)
+    await writeFile(path.join(parent, 'README.md'), 'hi\n')
+    expect(runGit(['add', 'README.md'], parent).status).toBe(0)
+    expect(
+      runGit(['-c', 'user.email=t@t', '-c', 'user.name=T', 'commit', '-q', '-m', 'init'], parent)
+        .status,
+    ).toBe(0)
+    const wtDir = path.join(root, 'feature')
+    expect(runGit(['worktree', 'add', wtDir, '-b', 'feature'], parent).status).toBe(0)
+    // Remove the directory directly so the registration becomes prunable.
+    const { rm } = await import('node:fs/promises')
+    await rm(wtDir, { recursive: true, force: true })
+
+    const ok = await pruneWorktrees(parent)
+    expect(ok).toBe(true)
+    const list = runGit(['worktree', 'list'], parent).stdout
+    expect(list).not.toContain('feature')
+  })
+
+  it.skipIf(!gitAvailable())('returns false for a non-repo path', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'wt-notrepo-'))
+    const ok = await pruneWorktrees(dir)
     expect(ok).toBe(false)
   })
 })
