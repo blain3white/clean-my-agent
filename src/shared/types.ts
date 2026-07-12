@@ -120,6 +120,7 @@ export type CleanupKind =
   | 'invalid-cache'
   | 'stale-worktree'
   | 'dirty-worktree'
+  | 'active-worktree'
 
 export type CleanupCandidate = {
   id: string
@@ -235,7 +236,7 @@ export type UsagePoint = {
 }
 
 export type StorageSlice = {
-  source: AgentSource | 'archives' | 'backups' | 'trash' | 'logs' | 'cache'
+  source: AgentSource | 'archives' | 'backups' | 'trash' | 'logs' | 'cache' | 'other'
   label: string
   sizeBytes: number
   sessions?: number
@@ -264,7 +265,24 @@ export type DashboardSnapshot = {
   recovery: RecoveryRecord[]
   usage: UsagePoint[]
   storage: StorageSlice[]
+  worktrees: WorktreeRecord[]
   worktreeDiagnostics?: AgentScanDiagnostic[]
+}
+
+export type WorktreeOwner = AgentSource | 'other'
+
+export type WorktreeRecord = {
+  id: string
+  path: string
+  ownerAgent: WorktreeOwner
+  repoName: string
+  branch?: string
+  sizeBytes: number
+  lastActivity: string
+  clean: boolean
+  stale: boolean
+  parentRepo?: string
+  defaultRoot: string
 }
 
 export type SkillStatus = 'synced' | 'local' | 'backed-up'
@@ -360,6 +378,7 @@ export type AppSettings = {
   exportDirectory: string
   worktreeRoots: string[]
   worktreeScanDefaultRoots: boolean
+  worktreeRetentionDays: number
 }
 
 export type ThemePreference = 'system' | 'light' | 'dark'
@@ -489,6 +508,7 @@ export type CleanMyAgentApi = {
   exportSession: (sessionId: string, format: ExportFormat) => Promise<string>
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<TrashRecord[]>
+  trashWorktree: (worktreePath: string) => Promise<TrashRecord | undefined>
   purgeExpiredTrash: () => Promise<TrashRecord[]>
   restoreTrash: (trashId: string) => Promise<CleanupKind | undefined>
   getRecoveryRecords: () => Promise<RecoveryRecord[]>

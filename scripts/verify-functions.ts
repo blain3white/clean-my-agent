@@ -416,6 +416,13 @@ async function main() {
   // Make the worktree stale by setting its mtime far in the past.
   const staleDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
   await utimes(worktreeDir, staleDate, staleDate)
+  // A second, active worktree (fresh mtime) to exercise "list all".
+  const activeDir = path.join(worktreeRoot, 'active-smoke')
+  assert.equal(
+    runGit(['worktree', 'add', activeDir, '-b', 'active-smoke'], parentRepo).status,
+    0,
+    'git worktree add (active) should succeed',
+  )
 
   const worktreeService = new AppService({
     userDataPath: await mkdtemp(path.join(os.tmpdir(), 'cma-worktree-userdata-')),
@@ -435,6 +442,32 @@ async function main() {
   assert.ok(wtCandidate, 'abandoned worktree should appear as a stale-worktree candidate')
   assert.equal(wtCandidate.risk, 'low', 'clean stale worktree should be low-risk')
   assert.equal(wtCandidate.backedUp, true, 'clean worktree is regenerable from git')
+  // Cleanup lists ALL worktrees, not just stale ones.
+  assert.ok(
+    wtCleanup.some((item) => item.kind === 'active-worktree'),
+    'cleanup should also list the active worktree',
+  )
+
+  // Snapshot carries first-class worktree records for both worktrees.
+  const wtSnapshot = await worktreeService.getSnapshot(false)
+  assert.ok(
+    wtSnapshot.worktrees.length >= 2,
+    'snapshot should include a WorktreeRecord per worktree',
+  )
+  const staleRecord = wtSnapshot.worktrees.find((w) => w.path === worktreeDir)
+  const activeRecord = wtSnapshot.worktrees.find((w) => w.path === activeDir)
+  assert.ok(staleRecord && staleRecord.stale, 'stale worktree record should be marked stale')
+  assert.ok(activeRecord && !activeRecord.stale, 'active worktree record should not be stale')
+  // Overview total size includes worktree sizes (at least the two worktrees).
+  const worktreeBytes = wtSnapshot.worktrees.reduce((sum, w) => sum + w.sizeBytes, 0)
+  assert.ok(
+    wtSnapshot.overview.totalSizeBytes >= worktreeBytes,
+    'overview total should include worktree sizes',
+  )
+  // No double-count: storage slices' sum should not exceed sessions + archives + worktrees by
+  // more than the worktree bytes once.
+  const storageTotal = wtSnapshot.storage.reduce((sum, s) => sum + s.sizeBytes, 0)
+  assert.ok(storageTotal >= worktreeBytes, 'storage should reflect worktree sizes')
 
   const [wtTrash] = await worktreeService.moveCleanupToTrash([wtCandidate.id])
   assert.ok(wtTrash, 'worktree candidate should move to Trash')

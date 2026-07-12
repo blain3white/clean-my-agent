@@ -57,6 +57,7 @@ type DashboardState = {
   exportDiagnostics: () => Promise<void>
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<void>
+  trashWorktree: (worktreePath: string) => Promise<void>
   restoreTrash: (trashId: string) => Promise<void>
   purgeExpiredTrash: () => Promise<void>
   diagnoseRecovery: (recoveryId: string) => Promise<RecoveryRecord | undefined>
@@ -107,6 +108,7 @@ const defaultSettings = (): AppSettings => ({
   exportDirectory: '',
   worktreeRoots: [],
   worktreeScanDefaultRoots: true,
+  worktreeRetentionDays: 30,
 })
 
 const mergeSettings = (settings?: Partial<AppSettings>): AppSettings => ({
@@ -156,6 +158,7 @@ const emptySnapshot = (): DashboardSnapshot => ({
   recovery: [],
   usage: [],
   storage: [],
+  worktrees: [],
 })
 
 const errorMessage = (error: unknown): string => {
@@ -682,6 +685,19 @@ export function useDashboard(): DashboardState {
             plural: records.length === 1 ? '' : 's',
           }),
         )
+        await load(true)
+      },
+      trashWorktree: async (worktreePath: string) => {
+        if (!window.cleanMyAgent) {
+          toast.info(t('toast.trashDesktopOnly'))
+          return
+        }
+        const record = await window.cleanMyAgent.trashWorktree(worktreePath)
+        if (record) {
+          toast.success(t('toast.worktreeTrashed'))
+        } else {
+          toast.error(t('toast.worktreeTrashError'))
+        }
         await load(true)
       },
       restoreTrash: async (trashId: string) => {

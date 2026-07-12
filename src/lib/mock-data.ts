@@ -577,4 +577,5 @@ export const mockSnapshot: DashboardSnapshot = {
     { source: 'opencode', label: 'OpenCode', sizeBytes: 3.0 * GB, sessions: 8 },
     { source: 'archives', label: 'Vault', sizeBytes: 1.7 * GB, sessions: 4 },
   ],
+  worktrees: [],
 }

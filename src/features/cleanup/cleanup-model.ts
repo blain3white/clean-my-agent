@@ -134,6 +134,12 @@ export const cleanupKindMeta: Record<
     icon: GitBranch,
     accent: 'text-amber-300 bg-amber-400/13 ring-amber-400/24',
   },
+  'active-worktree': {
+    category: 'worktree',
+    label: 'active worktree',
+    icon: GitBranch,
+    accent: 'text-sky-300 bg-sky-400/12 ring-sky-400/22',
+  },
 }
 
 export function cleanupCategoryForCandidate(candidate: CleanupCandidate): CleanupCategoryKey {
@@ -145,9 +151,9 @@ export function defaultCleanupSelection(candidates: CleanupCandidate[]): string[
     .filter((candidate) => {
       const category = cleanupCategoryForCandidate(candidate)
       if (category === 'inactive' || category === 'test') return true
-      // Worktree candidates are auto-selected only when low-risk (stale + clean).
-      // Dirty worktrees are high-risk and must be reviewed explicitly.
-      if (category === 'worktree') return candidate.risk !== 'high'
+      // Only abandoned worktrees (stale + clean) are auto-selected. Dirty and
+      // active worktrees are listed but must be reviewed explicitly.
+      if (category === 'worktree') return candidate.kind === 'stale-worktree'
       return false
     })
     .map((candidate) => candidate.id)
