@@ -8,6 +8,7 @@ import {
   type UsagePoint,
 } from '@/shared/types'
 import { agentLabel } from '@/lib/format'
+import { canonicalModelKey } from '@/shared/usage-pricing'
 import { usagePageRanges, type UsagePageRange } from '@/features/usage/ranges'
 
 export type UsageTokenType = 'input' | 'output' | 'cache' | 'tools'
@@ -40,6 +41,14 @@ export type TokenMix = {
 export type AgentUsage = {
   agent: string
   source: AgentSource
+  tokens: number
+  cost: number
+  share: number
+  hasTokenMetadata: boolean
+}
+export type ModelUsage = {
+  model: string
+  key: string
   tokens: number
   cost: number
   share: number
@@ -877,6 +886,43 @@ function buildAgentUsageRows(
   return rows.map((row) => ({ ...row, share: total > 0 ? (row.tokens / total) * 100 : 0 }))
 }
 
+function buildModelUsageRows(sessions: SessionRecord[]): ModelUsage[] {
+  const groups = new Map<
+    string,
+    { key: string; model: string; tokens: number; cost: number; hasTokenMetadata: boolean }
+  >()
+  for (const session of sessions) {
+    const key = canonicalModelKey(session.tokens.model)
+    const display = key ? key : 'Unknown model'
+    const existing = groups.get(key)
+    const sessionTokens = session.tokens.total
+    const sessionCost =
+      typeof session.tokens.costUsd === 'number' && session.tokens.costUsd > 0
+        ? session.tokens.costUsd
+        : 0
+    const hasTokenMetadata =
+      sessionTokens + session.tokens.input + session.tokens.output + session.tokens.cached > 0
+    if (existing) {
+      existing.tokens += sessionTokens
+      existing.cost += sessionCost
+      existing.hasTokenMetadata = existing.hasTokenMetadata || hasTokenMetadata
+    } else {
+      groups.set(key, {
+        key,
+        model: display,
+        tokens: sessionTokens,
+        cost: sessionCost,
+        hasTokenMetadata,
+      })
+    }
+  }
+  const rows = Array.from(groups.values())
+  const total = rows.reduce((sum, row) => sum + row.tokens, 0)
+  return rows
+    .map((row) => ({ ...row, share: total > 0 ? (row.tokens / total) * 100 : 0 }))
+    .sort((a, b) => b.tokens - a.tokens)
+}
+
 function buildProjectUsageRows(
   sessions: SessionRecord[],
   usage: UsagePoint[],
@@ -1038,6 +1084,7 @@ export function buildUsageAnalytics(
     },
   }
   const agentRows = buildAgentUsageRows(snapshot, rangeSessions, selectedUsage)
+  const modelRows = buildModelUsageRows(rangeSessions)
   const projectRows = buildProjectUsageRows(
     snapshot.sessions,
     selectedUsage,
@@ -1057,6 +1104,7 @@ export function buildUsageAnalytics(
     peakWindows,
     forecast,
     agentRows,
+    modelRows,
     projectRows,
     trends: {
       totalTokens: usageTrendDetail(totalTokens, priorTokens, 'tokens'),
