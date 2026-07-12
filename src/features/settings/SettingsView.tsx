@@ -742,6 +742,21 @@ export function SettingsView({
             }
           />
           <SettingsRow
+            icon={GitBranch}
+            title={t('settings.worktreeRetention')}
+            description={t('settings.worktreeRetentionDescription')}
+            trailing={
+              <NativeSelect
+                label={t('settings.worktreeRetention')}
+                value={String(settings.worktreeRetentionDays)}
+                options={retentionOptions}
+                onChange={(value) =>
+                  void onSettingsChange({ worktreeRetentionDays: Number(value) }, { rescan: true })
+                }
+              />
+            }
+          />
+          <SettingsRow
             icon={Folder}
             title={t('settings.excludedFolders')}
             description={

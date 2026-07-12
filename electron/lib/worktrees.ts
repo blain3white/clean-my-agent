@@ -1,7 +1,12 @@
 import path from 'node:path'
 import os from 'node:os'
 import { spawn } from 'node:child_process'
-import type { AgentScanDiagnostic, CleanupCandidate } from '../../src/shared/types'
+import type {
+  AgentScanDiagnostic,
+  CleanupCandidate,
+  WorktreeOwner,
+  WorktreeRecord,
+} from '../../src/shared/types'
 import { expandHome, hashId } from './files'
 
 const oneDayMs = 24 * 60 * 60 * 1000
@@ -53,6 +58,37 @@ type DiscoveredWorktree = {
   sizeBytes: number
 }
 
+type DiscoveredWorktreeFull = DiscoveredWorktree & {
+  ownerAgent: WorktreeOwner
+  defaultRoot: string
+  parentRepo?: string
+}
+
+export type WorktreeSizeCacheEntry = {
+  sizeBytes: number
+  mtimeMs: number
+}
+
+export type WorktreeSizeCache = Map<string, WorktreeSizeCacheEntry>
+
+export type ScanAllWorktreesResult = {
+  records: WorktreeRecord[]
+  diagnostics: AgentScanDiagnostic[]
+  sizeCache: WorktreeSizeCache
+}
+
+export type ScanAllWorktreesOptions = {
+  roots?: string[]
+  retentionDays: number
+  excludedFolders: string[]
+  includeDefaultRoots?: boolean
+  /** Persisted size cache (path → {sizeBytes, mtimeMs}); reused when mtime is unchanged. */
+  sizeCache?: WorktreeSizeCache
+  now?: number
+  fs?: WorktreeFs
+  runner?: GitRunner
+}
+
 function pushDiagnostic(diagnostics: AgentScanDiagnostic[], diagnostic: AgentScanDiagnostic): void {
   if (diagnostics.length < maxDiagnostics) diagnostics.push(diagnostic)
 }
@@ -67,27 +103,28 @@ function isInsidePath(filePath: string, parentPath: string): boolean {
   return file === parent || file.startsWith(`${parent}${path.sep}`)
 }
 
+export type WorktreeRootEntry = {
+  path: string
+  ownerAgent: WorktreeOwner
+}
+
 /**
  * Default locations where coding agents and skill systems keep their git
  * worktrees. Each agent typically parks worktrees under `~/.<agent>/worktrees/`;
  * the superpowers skill system uses `~/.config/superpowers/worktrees/`. Only
- * roots that actually exist on disk are returned.
+ * roots that actually exist on disk are scanned (missing ones are skipped).
  */
-export function defaultWorktreeRoots(): string[] {
+export function defaultWorktreeRoots(): WorktreeRootEntry[] {
   const home = expandHome('~')
-  const candidates = [
-    path.join(home, '.codex', 'worktrees'),
-    path.join(home, '.claude', 'worktrees'),
-    path.join(home, '.cursor', 'worktrees'),
-    path.join(home, '.gemini', 'worktrees'),
-    path.join(home, '.opencode', 'worktrees'),
-    path.join(home, '.pi', 'worktrees'),
-    path.join(home, '.config', 'superpowers', 'worktrees'),
+  return [
+    { path: path.join(home, '.codex', 'worktrees'), ownerAgent: 'codex' },
+    { path: path.join(home, '.claude', 'worktrees'), ownerAgent: 'claude' },
+    { path: path.join(home, '.cursor', 'worktrees'), ownerAgent: 'cursor' },
+    { path: path.join(home, '.gemini', 'worktrees'), ownerAgent: 'gemini' },
+    { path: path.join(home, '.opencode', 'worktrees'), ownerAgent: 'opencode' },
+    { path: path.join(home, '.pi', 'worktrees'), ownerAgent: 'pi' },
+    { path: path.join(home, '.config', 'superpowers', 'worktrees'), ownerAgent: 'other' },
   ]
-  // Filter synchronously by existence via a cached check is not available
-  // without fs; callers resolve existence through the fs adapter. We return
-  // all candidates and let the scan skip missing ones (readDir throws → skipped).
-  return candidates
 }
 
 /** Production filesystem adapter backed by node:fs. */
@@ -213,6 +250,168 @@ export async function resolveParentRepoFromWorktree(worktreePath: string): Promi
   }
 }
 
+/**
+ * Scan all linked worktrees (not just stale) and return first-class WorktreeRecords,
+ * with sizes cached by mtime (recomputed only when mtime changes or a worktree is new).
+ * Clean/dirty is refreshed on every scan (git status --porcelain, concurrency limit).
+ * ownerAgent is attributed by the default root the worktree lives under; user-configured
+ * roots and non-agent defaults are "other".
+ */
+export async function scanAllWorktrees(
+  options: ScanAllWorktreesOptions,
+): Promise<ScanAllWorktreesResult> {
+  const now = options.now ?? Date.now()
+  const fs = options.fs ?? createRealFs()
+  const runner = options.runner ?? createRealGitRunner()
+  const diagnostics: AgentScanDiagnostic[] = []
+  const sizeCache: WorktreeSizeCache = options.sizeCache ? new Map(options.sizeCache) : new Map()
+  const records: WorktreeRecord[] = []
+
+  const userRoots = (options.roots ?? []).map((root) => expandHome(root)).filter(Boolean)
+  const defaultEntries = options.includeDefaultRoots === false ? [] : defaultWorktreeRoots()
+  // Build root → ownerAgent map. User-configured roots are "other".
+  const rootOwners = new Map<string, WorktreeOwner>()
+  for (const entry of defaultEntries)
+    rootOwners.set(normalizeForCompare(entry.path), entry.ownerAgent)
+  for (const root of userRoots) rootOwners.set(normalizeForCompare(root), 'other')
+  const roots = Array.from(new Set([...defaultEntries.map((e) => e.path), ...userRoots])).map(
+    (root) => expandHome(root),
+  )
+  if (roots.length === 0) return { records, diagnostics, sizeCache }
+
+  if (!(await runner.available())) {
+    pushDiagnostic(diagnostics, {
+      level: 'warning',
+      code: 'worktree-git-unavailable',
+      message: 'Git not found; worktree scan skipped.',
+    })
+    return { records, diagnostics, sizeCache }
+  }
+
+  const retentionMs = options.retentionDays * oneDayMs
+  const excluded = options.excludedFolders
+  const ownerForRoot = (root: string): WorktreeOwner =>
+    rootOwners.get(normalizeForCompare(root)) ?? 'other'
+
+  const discovered: DiscoveredWorktreeFull[] = []
+
+  /** If `dir` is a linked worktree, record it (all worktrees, not just stale). */
+  const tryRecordWorktree = async (dir: string, root: string): Promise<boolean> => {
+    if (excluded.some((e) => isInsidePath(dir, e))) return false
+    let gitEntry: GitEntryInfo
+    try {
+      gitEntry = await fs.statGitEntry(dir)
+    } catch {
+      return false
+    }
+    if (gitEntry.kind !== 'file' || !/^gitdir:/m.test(gitEntry.content)) return false
+    let stats: { mtimeMs: number; sizeBytes: number }
+    try {
+      stats = await fs.statWorktree(dir)
+    } catch {
+      pushDiagnostic(diagnostics, {
+        level: 'warning',
+        code: 'worktree-stat-failed',
+        message: 'Could not inspect worktree directory.',
+        path: dir,
+      })
+      return true
+    }
+    discovered.push({
+      path: dir,
+      mtimeMs: stats.mtimeMs,
+      sizeBytes: stats.sizeBytes,
+      ownerAgent: ownerForRoot(root),
+      defaultRoot: root,
+      parentRepo: parseParentRepoFromGitdir(gitEntry.content),
+    })
+    return true
+  }
+
+  for (const root of roots) {
+    let entries: string[]
+    try {
+      entries = await fs.readDir(root)
+    } catch {
+      if (userRoots.some((r) => normalizeForCompare(r) === normalizeForCompare(root))) {
+        pushDiagnostic(diagnostics, {
+          level: 'warning',
+          code: 'worktree-root-unreadable',
+          message: 'Could not read worktree scan root.',
+          path: root,
+        })
+      }
+      continue
+    }
+    for (const entry of entries) {
+      const dir = path.join(root, entry)
+      if (await tryRecordWorktree(dir, root)) continue
+      let subEntries: string[]
+      try {
+        subEntries = await fs.readDir(dir)
+      } catch {
+        continue
+      }
+      for (const sub of subEntries) {
+        await tryRecordWorktree(path.join(dir, sub), root)
+      }
+    }
+  }
+
+  // Probe each worktree: clean/dirty via git status (refreshed every scan, never cached).
+  const probed = await mapWithConcurrency(discovered, gitConcurrency, async (wt) => {
+    let status: GitRunResult
+    try {
+      status = await runner.run(['status', '--porcelain'], wt.path)
+    } catch {
+      return { wt, clean: false, unverifiable: true }
+    }
+    if (status.code !== 0) return { wt, clean: false, unverifiable: true }
+    return { wt, clean: status.stdout.trim().length === 0, unverifiable: false }
+  })
+
+  for (const { wt, clean, unverifiable } of probed) {
+    if (unverifiable) {
+      pushDiagnostic(diagnostics, {
+        level: 'warning',
+        code: 'worktree-status-failed',
+        message: 'Could not verify worktree state; marked dirty to stay safe.',
+        path: wt.path,
+      })
+    }
+
+    // Size: reuse cache when mtime is unchanged; otherwise record the freshly
+    // computed size into the cache.
+    const cached = sizeCache.get(wt.path)
+    let sizeBytes: number
+    if (cached && cached.mtimeMs === wt.mtimeMs) {
+      sizeBytes = cached.sizeBytes
+    } else {
+      sizeBytes = wt.sizeBytes
+      sizeCache.set(wt.path, { sizeBytes, mtimeMs: wt.mtimeMs })
+    }
+
+    const branch = await safeBranchName(runner, wt.path)
+    const repoName = path.basename(path.dirname(wt.path))
+    records.push({
+      id: hashId(['worktree', wt.path]),
+      path: wt.path,
+      ownerAgent: wt.ownerAgent,
+      repoName,
+      branch,
+      sizeBytes,
+      lastActivity: new Date(wt.mtimeMs).toISOString(),
+      clean,
+      stale: now - wt.mtimeMs > retentionMs,
+      parentRepo: wt.parentRepo,
+      defaultRoot: wt.defaultRoot,
+    })
+  }
+
+  records.sort((a, b) => b.sizeBytes - a.sizeBytes)
+  return { records, diagnostics, sizeCache }
+}
+
 export async function scanWorktrees(options: ScanWorktreesOptions): Promise<WorktreeScanResult> {
   const now = options.now ?? Date.now()
   const fs = options.fs ?? createRealFs()
@@ -222,7 +421,8 @@ export async function scanWorktrees(options: ScanWorktreesOptions): Promise<Work
 
   // Combine the agent-default worktree roots with any the user configured.
   const userRoots = (options.roots ?? []).map((root) => expandHome(root)).filter(Boolean)
-  const defaults = options.includeDefaultRoots === false ? [] : defaultWorktreeRoots()
+  const defaults =
+    options.includeDefaultRoots === false ? [] : defaultWorktreeRoots().map((r) => r.path)
   const roots = Array.from(new Set([...defaults, ...userRoots])).map((root) => expandHome(root))
   if (roots.length === 0) return { candidates, diagnostics }
 

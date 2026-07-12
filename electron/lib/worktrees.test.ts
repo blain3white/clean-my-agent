@@ -5,6 +5,7 @@ import { mkdtemp, writeFile, utimes } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import {
   scanWorktrees,
+  scanAllWorktrees,
   resolveParentRepo,
   pruneWorktrees,
   resolveParentRepoFromWorktree,
@@ -502,13 +503,15 @@ describe('scanWorktrees default roots + two-level layout', () => {
 })
 
 describe('defaultWorktreeRoots', () => {
-  it('returns the agent-default worktree locations', () => {
+  it('returns the agent-default worktree locations with owner attribution', () => {
     const home = os.homedir()
     const roots = defaultWorktreeRoots()
-    expect(roots).toContain(path.join(home, '.codex', 'worktrees'))
-    expect(roots).toContain(path.join(home, '.claude', 'worktrees'))
-    expect(roots).toContain(path.join(home, '.cursor', 'worktrees'))
-    expect(roots).toContain(path.join(home, '.config', 'superpowers', 'worktrees'))
+    const codex = roots.find((r) => r.ownerAgent === 'codex')
+    expect(codex?.path).toBe(path.join(home, '.codex', 'worktrees'))
+    const cursor = roots.find((r) => r.ownerAgent === 'cursor')
+    expect(cursor?.path).toBe(path.join(home, '.cursor', 'worktrees'))
+    const superpowers = roots.find((r) => r.ownerAgent === 'other')
+    expect(superpowers?.path).toBe(path.join(home, '.config', 'superpowers', 'worktrees'))
   })
 })
 
@@ -708,5 +711,195 @@ describe('pruneWorktrees (real runner)', () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'wt-notrepo-'))
     const ok = await pruneWorktrees(dir)
     expect(ok).toBe(false)
+  })
+})
+
+describe('scanAllWorktrees', () => {
+  // Reuse the layoutFs pattern scoped to this describe.
+  function allFs(
+    worktrees: Array<{
+      dir: string
+      gitdir?: string
+      mtimeMs: number
+      sizeBytes: number
+    }>,
+  ): WorktreeFs {
+    const byDir = new Map(worktrees.map((w) => [path.resolve(w.dir), w]))
+    const allDirs = new Set(worktrees.map((w) => path.resolve(w.dir)))
+    const childrenOf = (root: string) => {
+      const resolved = path.resolve(root)
+      const result = new Set<string>()
+      for (const dir of allDirs) {
+        if (path.dirname(dir) === resolved) result.add(path.basename(dir))
+        else if (dir.startsWith(resolved + path.sep)) {
+          const rel = path.relative(resolved, dir).split(path.sep)
+          if (rel.length > 1) result.add(rel[0])
+        }
+      }
+      return Array.from(result)
+    }
+    return {
+      readDir: vi.fn(async (root: string) => childrenOf(root)),
+      statGitEntry: vi.fn(async (dir: string) => {
+        const w = byDir.get(path.resolve(dir))
+        if (!w) return { kind: 'none' as const }
+        return {
+          kind: 'file' as const,
+          content: w.gitdir ?? `gitdir: /fake/.git/worktrees/${path.basename(dir)}`,
+        }
+      }),
+      statWorktree: vi.fn(async (dir: string) => {
+        const w = byDir.get(path.resolve(dir))
+        if (!w) throw new Error(`no fixture for ${dir}`)
+        return { mtimeMs: w.mtimeMs, sizeBytes: w.sizeBytes }
+      }),
+    }
+  }
+
+  const nowAll = Date.parse('2026-07-12T00:00:00Z')
+  const staleMsAll = nowAll - 60 * 24 * 60 * 60 * 1000
+  const freshMsAll = nowAll - 1 * 24 * 60 * 60 * 1000
+
+  it('emits a WorktreeRecord for every worktree (stale AND fresh)', async () => {
+    const codexRoot = path.join(os.homedir(), '.codex', 'worktrees')
+    const fs = allFs([
+      { dir: path.join(codexRoot, 'g1', 'repo-a'), mtimeMs: staleMsAll, sizeBytes: 100 },
+      { dir: path.join(codexRoot, 'g2', 'repo-b'), mtimeMs: freshMsAll, sizeBytes: 50 },
+    ])
+    const runner: GitRunner = {
+      available: async () => true,
+      run: vi.fn(async (args: string[]) => {
+        if (args[0] === 'status') return { command: 'status', stdout: '', stderr: '', code: 0 }
+        if (args[0] === 'rev-parse')
+          return { command: 'rev-parse', stdout: 'main\n', stderr: '', code: 0 }
+        return { command: args[0] ?? '', stdout: '', stderr: '', code: 0 }
+      }),
+    }
+    const result = await scanAllWorktrees({
+      roots: [],
+      retentionDays: 7,
+      excludedFolders: [],
+      now: nowAll,
+      fs,
+      runner,
+    })
+    expect(result.records).toHaveLength(2)
+    const stale = result.records.find((r) => r.path.endsWith('repo-a'))
+    const fresh = result.records.find((r) => r.path.endsWith('repo-b'))
+    expect(stale?.stale).toBe(true)
+    expect(fresh?.stale).toBe(false)
+  })
+
+  it('attributes ownerAgent by the default root the worktree lives under', async () => {
+    const codexRoot = path.join(os.homedir(), '.codex', 'worktrees')
+    const cursorRoot = path.join(os.homedir(), '.cursor', 'worktrees')
+    const superRoot = path.join(os.homedir(), '.config', 'superpowers', 'worktrees')
+    const fs = allFs([
+      { dir: path.join(codexRoot, 'g', 'a'), mtimeMs: staleMsAll, sizeBytes: 10 },
+      { dir: path.join(cursorRoot, 'g', 'b'), mtimeMs: staleMsAll, sizeBytes: 10 },
+      { dir: path.join(superRoot, 'c'), mtimeMs: staleMsAll, sizeBytes: 10 },
+    ])
+    const runner: GitRunner = {
+      available: async () => true,
+      run: vi.fn(async () => ({ command: 'status', stdout: '', stderr: '', code: 0 })),
+    }
+    const result = await scanAllWorktrees({
+      roots: [],
+      retentionDays: 7,
+      excludedFolders: [],
+      now: nowAll,
+      fs,
+      runner,
+    })
+    expect(result.records.find((r) => r.path.endsWith('a'))?.ownerAgent).toBe('codex')
+    expect(result.records.find((r) => r.path.endsWith('b'))?.ownerAgent).toBe('cursor')
+    expect(result.records.find((r) => r.path.endsWith('c'))?.ownerAgent).toBe('other')
+  })
+
+  it('reuses cached size when mtime is unchanged; recomputes when mtime changes', async () => {
+    const codexRoot = path.join(os.homedir(), '.codex', 'worktrees')
+    const wtPath = path.join(codexRoot, 'g', 'repo')
+    const fs = allFs([{ dir: wtPath, mtimeMs: staleMsAll, sizeBytes: 999 }])
+    const runner: GitRunner = {
+      available: async () => true,
+      run: vi.fn(async () => ({ command: 'status', stdout: '', stderr: '', code: 0 })),
+    }
+    // Pre-seed cache with matching mtime and a different size — should be reused.
+    const cache = new Map([[wtPath, { sizeBytes: 111, mtimeMs: staleMsAll }]])
+    const result = await scanAllWorktrees({
+      roots: [],
+      retentionDays: 7,
+      excludedFolders: [],
+      sizeCache: cache,
+      now: nowAll,
+      fs,
+      runner,
+    })
+    expect(result.records[0].sizeBytes).toBe(111) // cached value reused
+    expect(result.sizeCache.get(wtPath)?.sizeBytes).toBe(111)
+
+    // Now change mtime — cache should be invalidated and recomputed.
+    const fs2 = allFs([{ dir: wtPath, mtimeMs: staleMsAll + 5000, sizeBytes: 222 }])
+    const result2 = await scanAllWorktrees({
+      roots: [],
+      retentionDays: 7,
+      excludedFolders: [],
+      sizeCache: result.sizeCache,
+      now: nowAll,
+      fs: fs2,
+      runner,
+    })
+    expect(result2.records[0].sizeBytes).toBe(222)
+    expect(result2.sizeCache.get(wtPath)?.sizeBytes).toBe(222)
+  })
+
+  it('marks dirty worktree clean=false and keeps it in records (not skipped)', async () => {
+    const codexRoot = path.join(os.homedir(), '.codex', 'worktrees')
+    const wtPath = path.join(codexRoot, 'g', 'dirty')
+    const fs = allFs([{ dir: wtPath, mtimeMs: staleMsAll, sizeBytes: 10 }])
+    const runner: GitRunner = {
+      available: async () => true,
+      run: vi.fn(async (args: string[]) => {
+        if (args[0] === 'status')
+          return { command: 'status', stdout: ' M file.ts\n', stderr: '', code: 0 }
+        return { command: args[0] ?? '', stdout: '', stderr: '', code: 0 }
+      }),
+    }
+    const result = await scanAllWorktrees({
+      roots: [],
+      retentionDays: 7,
+      excludedFolders: [],
+      now: nowAll,
+      fs,
+      runner,
+    })
+    expect(result.records).toHaveLength(1)
+    expect(result.records[0].clean).toBe(false)
+    expect(result.records[0].stale).toBe(true)
+  })
+
+  it('marks unverifiable worktrees clean=false and diagnoses them', async () => {
+    const codexRoot = path.join(os.homedir(), '.codex', 'worktrees')
+    const wtPath = path.join(codexRoot, 'g', 'broken')
+    const fs = allFs([{ dir: wtPath, mtimeMs: staleMsAll, sizeBytes: 10 }])
+    const runner: GitRunner = {
+      available: async () => true,
+      run: vi.fn(async (args: string[]) => {
+        if (args[0] === 'status')
+          return { command: 'status', stdout: '', stderr: 'fatal', code: 128 }
+        return { command: args[0] ?? '', stdout: '', stderr: '', code: 0 }
+      }),
+    }
+    const result = await scanAllWorktrees({
+      roots: [],
+      retentionDays: 7,
+      excludedFolders: [],
+      now: nowAll,
+      fs,
+      runner,
+    })
+    expect(result.records).toHaveLength(1)
+    expect(result.records[0].clean).toBe(false)
+    expect(result.diagnostics.some((d) => d.code === 'worktree-status-failed')).toBe(true)
   })
 })
