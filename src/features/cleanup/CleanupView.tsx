@@ -1202,6 +1202,7 @@ function CleanupCompleteBody({
       large: [],
       inactive: [],
       test: [],
+      worktree: [],
     }
 
     for (const candidate of candidates) {
@@ -1215,6 +1216,7 @@ function CleanupCompleteBody({
       large: buildCleanupCandidateGroups(candidatesByCategory.large, sessionById),
       inactive: buildCleanupCandidateGroups(candidatesByCategory.inactive, sessionById),
       test: buildCleanupCandidateGroups(candidatesByCategory.test, sessionById),
+      worktree: buildCleanupCandidateGroups(candidatesByCategory.worktree, sessionById),
     }),
     [candidatesByCategory, sessionById],
   )

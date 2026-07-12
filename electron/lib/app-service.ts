@@ -4,6 +4,7 @@ import type {
   AgentSource,
   AppLanguage,
   AgentInstallState,
+  AgentScanDiagnostic,
   ArchiveRecord,
   AppSettings,
   BackupRecord,
@@ -27,6 +28,7 @@ import { agentSources, appLanguages, defaultLanguage, exportFormats } from '../.
 import { adapters, adapterFor, enabledProviderSources } from './adapters'
 import { LocalDatabase } from './database'
 import { scanSkills } from './skills'
+import { scanWorktrees } from './worktrees'
 import {
   compressFileBrotli,
   copyPath,
@@ -375,6 +377,17 @@ function safeScanRoots(value: unknown): AppSettings['scanRoots'] {
   return scanRoots
 }
 
+function safeWorktreeRoots(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return Array.from(
+    new Set(
+      value
+        .filter((root): root is string => typeof root === 'string' && isSafePathString(root))
+        .map((root) => expandHome(root.trim())),
+    ),
+  )
+}
+
 function normalizeSettingsPatch(patch: Partial<AppSettings>): Partial<AppSettings> {
   if (!isRecord(patch)) throw new Error('settings patch must be an object.')
 
@@ -445,6 +458,9 @@ function normalizeSettingsPatch(patch: Partial<AppSettings>): Partial<AppSetting
   }
   if ('exportDirectory' in patch) {
     next.exportDirectory = normalizePath(patch.exportDirectory, 'exportDirectory')
+  }
+  if ('worktreeRoots' in patch) {
+    next.worktreeRoots = safeWorktreeRoots(patch.worktreeRoots)
   }
 
   return next
@@ -578,6 +594,8 @@ export class AppService {
   private diagnosticOperations: DiagnosticOperation[] = []
   private launchScanCompleted = false
   private scanStates = new Map<AgentSource, AgentInstallState>()
+  private worktreeCandidates: CleanupCandidate[] = []
+  private worktreeDiagnostics: AgentScanDiagnostic[] = []
   private settings?: AppSettings
 
   constructor(options: {
@@ -620,7 +638,10 @@ export class AppService {
       const trash = this.db.getTrash()
       const recovery = this.db.getRecoveryRecords()
       const liveSessions = sessions.filter((session) => session.storageState === 'live')
-      const cleanup = this.buildCleanupCandidates(liveSessions, backups)
+      const cleanup = [
+        ...this.buildCleanupCandidates(liveSessions, backups),
+        ...this.worktreeCandidates,
+      ].sort((a, b) => b.sizeBytes - a.sizeBytes)
       const lastScannedAt = this.db.getSetting<string>('lastScannedAt')
       const agents = await Promise.all(
         adapters.map(async (adapter): Promise<AgentInstallState> => {
@@ -675,6 +696,7 @@ export class AppService {
         backups,
         trash,
         recovery,
+        worktreeDiagnostics: this.worktreeDiagnostics,
         usage: this.buildUsage(sessions),
         storage: this.buildStorage(sessions, archives, backups, trash),
       }
@@ -688,6 +710,7 @@ export class AppService {
       const activeAdapters = adapters.filter((adapter) => enabledSources.has(adapter.source))
       const results = await Promise.all(activeAdapters.map((adapter) => adapter.scan(settings)))
       this.scanStates = new Map(results.map((result) => [result.state.source, result.state]))
+      await this.refreshWorktreeScan(settings)
       const sessions = results.flatMap((result) => result.sessions)
       const inactiveCachedSessions = this.db
         .getSessions()
@@ -1115,14 +1138,29 @@ export class AppService {
 
   async scanCleanup(): Promise<CleanupCandidate[]> {
     return this.trackAsync('cleanup.scan', async () => {
-      const enabledSources = new Set(enabledProviderSources(this.requireSettings()))
-      return this.buildCleanupCandidates(
+      const settings = this.requireSettings()
+      const enabledSources = new Set(enabledProviderSources(settings))
+      const sessionCandidates = this.buildCleanupCandidates(
         this.mergeBackupStatus(this.db.getSessions()).filter((session) =>
           enabledSources.has(session.source),
         ),
         this.db.getBackups(),
       )
+      await this.refreshWorktreeScan(settings)
+      return [...sessionCandidates, ...this.worktreeCandidates].sort(
+        (a, b) => b.sizeBytes - a.sizeBytes,
+      )
     })
+  }
+
+  private async refreshWorktreeScan(settings: AppSettings): Promise<void> {
+    const result = await scanWorktrees({
+      roots: settings.worktreeRoots,
+      retentionDays: settings.cleanupRetentionDays,
+      excludedFolders: settings.excludedFolders,
+    })
+    this.worktreeCandidates = result.candidates
+    this.worktreeDiagnostics = result.diagnostics
   }
 
   async moveCleanupToTrash(candidateIds: string[]): Promise<TrashRecord[]> {
@@ -1783,6 +1821,7 @@ export class AppService {
       checkForUpdates: true,
       defaultRelayMode: 'full-context',
       exportDirectory: path.join(this.userDataPath, 'Exports'),
+      worktreeRoots: [],
     }
   }
 
@@ -1841,6 +1880,7 @@ export class AppService {
       defaultRelayMode,
       scanRoots: safeScanRoots(raw.scanRoots),
       exportDirectory: safePath(raw.exportDirectory, defaults.exportDirectory),
+      worktreeRoots: safeWorktreeRoots(raw.worktreeRoots),
     }
   }
 

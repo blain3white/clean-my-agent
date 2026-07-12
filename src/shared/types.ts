@@ -110,6 +110,8 @@ export type CleanupKind =
   | 'temp-file'
   | 'orphan-session'
   | 'invalid-cache'
+  | 'stale-worktree'
+  | 'dirty-worktree'
 
 export type CleanupCandidate = {
   id: string
@@ -258,6 +260,7 @@ export type DashboardSnapshot = {
   recovery: RecoveryRecord[]
   usage: UsagePoint[]
   storage: StorageSlice[]
+  worktreeDiagnostics?: AgentScanDiagnostic[]
 }
 
 export type SkillStatus = 'synced' | 'local' | 'backed-up'
@@ -351,6 +354,7 @@ export type AppSettings = {
   checkForUpdates: boolean
   defaultRelayMode: 'full-context' | 'fit-to-window' | 'manual-select'
   exportDirectory: string
+  worktreeRoots: string[]
 }
 
 export type ThemePreference = 'system' | 'light' | 'dark'

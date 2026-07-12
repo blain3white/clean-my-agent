@@ -104,6 +104,7 @@ const defaultSettings = (): AppSettings => ({
   checkForUpdates: true,
   defaultRelayMode: 'full-context',
   exportDirectory: '',
+  worktreeRoots: [],
 })
 
 const mergeSettings = (settings?: Partial<AppSettings>): AppSettings => ({

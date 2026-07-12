@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppService } from './app-service'
+import * as worktreesModule from './worktrees'
 import {
   agentSources,
   type AgentSource,
@@ -1480,6 +1481,76 @@ describe('scanCleanup', () => {
       expect(usage.find((point) => point.date === '1999-01-01')).toBeUndefined()
     } finally {
       vi.useRealTimers()
+    }
+  })
+
+  it('merges worktree candidates with session candidates and sorts by size', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ cleanupRetentionDays: 0 }) // sessions are old
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await service.rescan()
+
+    const worktreeCandidate: CleanupCandidate = {
+      id: 'wt-big',
+      kind: 'stale-worktree',
+      title: 'feature-big',
+      sessionIds: [],
+      paths: ['/wt/feature-big'],
+      sizeBytes: 10_000_000,
+      risk: 'low',
+      recoverable: true,
+      backedUp: true,
+      reason: 'Untouched for more than 0 days; working tree is clean.',
+    }
+    const dirtyCandidate: CleanupCandidate = {
+      id: 'wt-dirty',
+      kind: 'dirty-worktree',
+      title: 'feature-dirty',
+      sessionIds: [],
+      paths: ['/wt/feature-dirty'],
+      sizeBytes: 500,
+      risk: 'high',
+      recoverable: true,
+      backedUp: false,
+      reason: 'Untouched for more than 0 days but has uncommitted changes.',
+    }
+    const spy = vi
+      .spyOn(worktreesModule, 'scanWorktrees')
+      .mockResolvedValue({ candidates: [worktreeCandidate, dirtyCandidate], diagnostics: [] })
+
+    try {
+      const candidates = await service.scanCleanup()
+      expect(spy).toHaveBeenCalled()
+      // Both worktree candidates are present alongside the session candidate.
+      const kinds = candidates.map((c) => c.kind)
+      expect(kinds).toContain('old-session')
+      expect(kinds).toContain('stale-worktree')
+      expect(kinds).toContain('dirty-worktree')
+      // Combined list is sorted by sizeBytes descending.
+      for (let i = 1; i < candidates.length; i += 1) {
+        expect(candidates[i - 1].sizeBytes).toBeGreaterThanOrEqual(candidates[i].sizeBytes)
+      }
+      // The largest worktree (10 MB) should sort ahead of the small session file.
+      expect(candidates[0].kind).toBe('stale-worktree')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('skips worktree scan silently when no worktree roots are configured', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ cleanupRetentionDays: 0, worktreeRoots: [] })
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await service.rescan()
+    const spy = vi.spyOn(worktreesModule, 'scanWorktrees')
+    try {
+      const candidates = await service.scanCleanup()
+      // scanWorktrees is still called (it short-circuits on empty roots), but
+      // no worktree candidates appear.
+      expect(candidates.every((c) => c.kind !== 'stale-worktree')).toBe(true)
+      expect(candidates.some((c) => c.kind === 'old-session')).toBe(true)
+    } finally {
+      spy.mockRestore()
     }
   })
 })
