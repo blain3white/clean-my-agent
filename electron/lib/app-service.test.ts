@@ -32,6 +32,7 @@ import {
   type SessionRecord,
   type TrashRecord,
 } from '../../src/shared/types'
+import { defaultCleanupSelection } from '../../src/features/cleanup/cleanup-model'
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -2893,5 +2894,67 @@ describe('AppService archive vault', () => {
       await rm(localFixture, { recursive: true, force: true })
       await rm(localUserData, { recursive: true, force: true })
     }
+  })
+})
+
+describe('worktree cleanup listing', () => {
+  it('lists all worktrees and default-selects only abandoned (stale+clean) ones', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ cleanupRetentionDays: 0, worktreeRetentionDays: 7 })
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await service.rescan()
+    const codexRoot = path.join(os.homedir(), '.codex', 'worktrees')
+    vi.spyOn(worktreesModule, 'scanAllWorktrees').mockResolvedValue({
+      records: [
+        {
+          id: 's',
+          path: path.join(codexRoot, 'g', 'stale-clean'),
+          ownerAgent: 'codex',
+          repoName: 'stale-clean',
+          sizeBytes: 10,
+          lastActivity: new Date(Date.now() - 60 * 86400000).toISOString(),
+          clean: true,
+          stale: true,
+          defaultRoot: codexRoot,
+        },
+        {
+          id: 'd',
+          path: path.join(codexRoot, 'g', 'stale-dirty'),
+          ownerAgent: 'codex',
+          repoName: 'stale-dirty',
+          sizeBytes: 10,
+          lastActivity: new Date(Date.now() - 60 * 86400000).toISOString(),
+          clean: false,
+          stale: true,
+          defaultRoot: codexRoot,
+        },
+        {
+          id: 'a',
+          path: path.join(codexRoot, 'g', 'active'),
+          ownerAgent: 'codex',
+          repoName: 'active',
+          sizeBytes: 10,
+          lastActivity: new Date().toISOString(),
+          clean: true,
+          stale: false,
+          defaultRoot: codexRoot,
+        },
+      ],
+      diagnostics: [],
+      sizeCache: new Map(),
+    })
+    const candidates = await service.scanCleanup()
+    const wt = candidates.filter((c) =>
+      ['stale-worktree', 'dirty-worktree', 'active-worktree'].includes(c.kind),
+    )
+    expect(wt.map((c) => c.kind).sort()).toEqual([
+      'active-worktree',
+      'dirty-worktree',
+      'stale-worktree',
+    ])
+    const selected = defaultCleanupSelection(candidates)
+    expect(selected).toContain(wt.find((c) => c.kind === 'stale-worktree')!.id)
+    expect(selected).not.toContain(wt.find((c) => c.kind === 'dirty-worktree')!.id)
+    expect(selected).not.toContain(wt.find((c) => c.kind === 'active-worktree')!.id)
   })
 })

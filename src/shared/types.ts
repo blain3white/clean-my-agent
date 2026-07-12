@@ -120,6 +120,7 @@ export type CleanupKind =
   | 'invalid-cache'
   | 'stale-worktree'
   | 'dirty-worktree'
+  | 'active-worktree'
 
 export type CleanupCandidate = {
   id: string

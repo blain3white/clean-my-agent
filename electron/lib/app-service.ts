@@ -258,10 +258,18 @@ function worktreeRecordsToCleanupCandidates(
   retentionDays: number,
 ): CleanupCandidate[] {
   return records
-    .filter((record) => record.stale)
     .map((record) => {
       const dirty = !record.clean
-      const kind = dirty ? 'dirty-worktree' : 'stale-worktree'
+      const kind: CleanupKind = !record.stale
+        ? 'active-worktree'
+        : dirty
+          ? 'dirty-worktree'
+          : 'stale-worktree'
+      const reason = !record.stale
+        ? `Recently active (within ${retentionDays} days); listed for review, not auto-selected.`
+        : dirty
+          ? `Untouched for more than ${retentionDays} days but has uncommitted/untracked changes. Review before removing.`
+          : `Untouched for more than ${retentionDays} days; working tree is clean. Regenerable from git.`
       return {
         id: hashId([kind, record.path]),
         kind,
@@ -271,12 +279,11 @@ function worktreeRecordsToCleanupCandidates(
         paths: [record.path],
         sizeBytes: record.sizeBytes,
         lastUpdated: record.lastActivity,
-        reason: dirty
-          ? `Untouched for more than ${retentionDays} days but has uncommitted/untracked changes. Review before removing.`
-          : `Untouched for more than ${retentionDays} days; working tree is clean. Regenerable from git.`,
-        risk: dirty ? 'high' : ('low' as RiskLevel),
+        reason,
+        // Only stale+clean is low-risk (auto-selected); dirty and active need review.
+        risk: (kind === 'stale-worktree' ? 'low' : 'high') as RiskLevel,
         recoverable: true,
-        backedUp: !dirty,
+        backedUp: kind === 'stale-worktree',
       } as CleanupCandidate
     })
     .sort((a, b) => b.sizeBytes - a.sizeBytes)

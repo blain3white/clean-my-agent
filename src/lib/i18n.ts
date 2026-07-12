@@ -437,6 +437,9 @@ const en = {
   'settings.worktreeScanDefaultRootsDescription':
     'Also scan each agent’s default worktree location (~/.codex/worktrees, superpowers, etc.) automatically',
   'settings.worktreeGitUnavailable': 'Git not found; worktree cleanup skipped.',
+  'settings.worktreeRetention': 'Worktree retention',
+  'settings.worktreeRetentionDescription':
+    'Worktrees untouched longer than this are considered abandoned and auto-selected for cleanup',
   'settings.worktreeStatusFailed': 'Could not verify some worktrees; they were skipped.',
   'settings.manage': 'Manage',
   'settings.clear': 'Clear',
@@ -839,6 +842,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   'settings.worktreeScanDefaultRootsDescription':
     '自动扫描各 agent 的默认 worktree 位置（~/.codex/worktrees、superpowers 等）',
   'settings.worktreeGitUnavailable': '未找到 Git；已跳过 worktree 清理。',
+  'settings.worktreeRetention': 'Worktree 保留期',
+  'settings.worktreeRetentionDescription': '超过此天数未动的 worktree 视为废弃，会默认勾选清理',
   'settings.worktreeStatusFailed': '部分 worktree 状态无法验证，已跳过。',
   'settings.manage': '管理',
   'settings.clear': '清空',
