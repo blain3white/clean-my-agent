@@ -264,7 +264,24 @@ export type DashboardSnapshot = {
   recovery: RecoveryRecord[]
   usage: UsagePoint[]
   storage: StorageSlice[]
+  worktrees: WorktreeRecord[]
   worktreeDiagnostics?: AgentScanDiagnostic[]
+}
+
+export type WorktreeOwner = AgentSource | 'other'
+
+export type WorktreeRecord = {
+  id: string
+  path: string
+  ownerAgent: WorktreeOwner
+  repoName: string
+  branch?: string
+  sizeBytes: number
+  lastActivity: string
+  clean: boolean
+  stale: boolean
+  parentRepo?: string
+  defaultRoot: string
 }
 
 export type SkillStatus = 'synced' | 'local' | 'backed-up'
@@ -360,6 +377,7 @@ export type AppSettings = {
   exportDirectory: string
   worktreeRoots: string[]
   worktreeScanDefaultRoots: boolean
+  worktreeRetentionDays: number
 }
 
 export type ThemePreference = 'system' | 'light' | 'dark'

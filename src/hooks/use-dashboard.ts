@@ -107,6 +107,7 @@ const defaultSettings = (): AppSettings => ({
   exportDirectory: '',
   worktreeRoots: [],
   worktreeScanDefaultRoots: true,
+  worktreeRetentionDays: 30,
 })
 
 const mergeSettings = (settings?: Partial<AppSettings>): AppSettings => ({
@@ -156,6 +157,7 @@ const emptySnapshot = (): DashboardSnapshot => ({
   recovery: [],
   usage: [],
   storage: [],
+  worktrees: [],
 })
 
 const errorMessage = (error: unknown): string => {

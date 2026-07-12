@@ -20,6 +20,8 @@ import type {
   StorageSlice,
   TrashRecord,
   UsagePoint,
+  WorktreeRecord,
+  RiskLevel,
   UniversalRelayDocument,
   SkillsSnapshot,
   RecoveryRecord,
@@ -29,7 +31,12 @@ import { agentSources, appLanguages, defaultLanguage, exportFormats } from '../.
 import { adapters, adapterFor, enabledProviderSources } from './adapters'
 import { LocalDatabase } from './database'
 import { scanSkills } from './skills'
-import { scanWorktrees, pruneWorktrees, resolveParentRepoFromWorktree } from './worktrees'
+import {
+  scanAllWorktrees,
+  pruneWorktrees,
+  resolveParentRepoFromWorktree,
+  type WorktreeSizeCache,
+} from './worktrees'
 import {
   compressFileBrotli,
   copyPath,
@@ -238,6 +245,40 @@ function dateKeyForTimezone(date: Date, timezone: string): string {
 
 function bytesFromRecords(records: Array<{ sizeBytes: number }>): number {
   return records.reduce((total, record) => total + record.sizeBytes, 0)
+}
+
+/**
+ * Derive cleanup candidates from WorktreeRecords. Currently emits only stale
+ * worktrees (preserving existing cleanup behaviour); #56 will broaden this to
+ * list all worktrees with abandoned ones default-selected.
+ */
+function worktreeRecordsToCleanupCandidates(
+  records: WorktreeRecord[],
+  retentionDays: number,
+): CleanupCandidate[] {
+  return records
+    .filter((record) => record.stale)
+    .map((record) => {
+      const dirty = !record.clean
+      const kind = dirty ? 'dirty-worktree' : 'stale-worktree'
+      return {
+        id: hashId([kind, record.path]),
+        kind,
+        title: record.branch || record.repoName,
+        source: undefined,
+        sessionIds: [],
+        paths: [record.path],
+        sizeBytes: record.sizeBytes,
+        lastUpdated: record.lastActivity,
+        reason: dirty
+          ? `Untouched for more than ${retentionDays} days but has uncommitted/untracked changes. Review before removing.`
+          : `Untouched for more than ${retentionDays} days; working tree is clean. Regenerable from git.`,
+        risk: dirty ? 'high' : ('low' as RiskLevel),
+        recoverable: true,
+        backedUp: !dirty,
+      } as CleanupCandidate
+    })
+    .sort((a, b) => b.sizeBytes - a.sizeBytes)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -467,6 +508,9 @@ function normalizeSettingsPatch(patch: Partial<AppSettings>): Partial<AppSetting
   if ('worktreeScanDefaultRoots' in patch) {
     next.worktreeScanDefaultRoots = safeBoolean(patch.worktreeScanDefaultRoots, true)
   }
+  if ('worktreeRetentionDays' in patch) {
+    next.worktreeRetentionDays = normalizeDays(patch.worktreeRetentionDays, 'worktreeRetentionDays')
+  }
 
   return next
 }
@@ -595,7 +639,9 @@ export class AppService {
   private launchScanCompleted = false
   private scanStates = new Map<AgentSource, AgentInstallState>()
   private worktreeCandidates: CleanupCandidate[] = []
+  private worktreeRecords: WorktreeRecord[] = []
   private worktreeDiagnostics: AgentScanDiagnostic[] = []
+  private worktreeSizeCache: WorktreeSizeCache = new Map()
   private settings?: AppSettings
 
   constructor(options: {
@@ -615,6 +661,13 @@ export class AppService {
       await this.db.open()
       this.settings = this.mergeSettings(this.db.getSetting<Partial<AppSettings>>('settings'))
       this.db.setSetting('settings', this.settings)
+      const cached =
+        this.db.getSetting<Record<string, { sizeBytes: number; mtimeMs: number }>>(
+          'worktreeSizeCache',
+        )
+      if (cached && typeof cached === 'object') {
+        this.worktreeSizeCache = new Map(Object.entries(cached))
+      }
     })
   }
 
@@ -697,6 +750,7 @@ export class AppService {
         trash,
         recovery,
         worktreeDiagnostics: this.worktreeDiagnostics,
+        worktrees: this.worktreeRecords,
         usage: this.buildUsage(sessions),
         storage: this.buildStorage(sessions, archives, backups, trash),
       }
@@ -1154,14 +1208,21 @@ export class AppService {
   }
 
   private async refreshWorktreeScan(settings: AppSettings): Promise<void> {
-    const result = await scanWorktrees({
+    const result = await scanAllWorktrees({
       roots: settings.worktreeRoots,
-      retentionDays: settings.cleanupRetentionDays,
+      retentionDays: settings.worktreeRetentionDays,
       excludedFolders: settings.excludedFolders,
       includeDefaultRoots: settings.worktreeScanDefaultRoots,
+      sizeCache: this.worktreeSizeCache,
     })
-    this.worktreeCandidates = result.candidates
+    this.worktreeRecords = result.records
     this.worktreeDiagnostics = result.diagnostics
+    this.worktreeSizeCache = result.sizeCache
+    this.db.setSetting('worktreeSizeCache', Object.fromEntries(result.sizeCache))
+    this.worktreeCandidates = worktreeRecordsToCleanupCandidates(
+      result.records,
+      settings.worktreeRetentionDays,
+    )
   }
 
   async moveCleanupToTrash(candidateIds: string[]): Promise<TrashRecord[]> {
@@ -1842,6 +1903,7 @@ export class AppService {
       exportDirectory: path.join(this.userDataPath, 'Exports'),
       worktreeRoots: [],
       worktreeScanDefaultRoots: true,
+      worktreeRetentionDays: 30,
     }
   }
 
@@ -1902,6 +1964,7 @@ export class AppService {
       exportDirectory: safePath(raw.exportDirectory, defaults.exportDirectory),
       worktreeRoots: safeWorktreeRoots(raw.worktreeRoots),
       worktreeScanDefaultRoots: safeBoolean(raw.worktreeScanDefaultRoots, true),
+      worktreeRetentionDays: safeDays(raw.worktreeRetentionDays, 30),
     }
   }
 
