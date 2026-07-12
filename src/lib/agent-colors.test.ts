@@ -15,4 +15,10 @@ describe('agent color maps', () => {
     expect(sourceIconColors.opencode).toBe('#f8fafc')
     expect(sourceIconColors.codex).toBe(sourceColors.codex)
   })
+
+  it('uses the Pi brand teal for the Pi source', () => {
+    // #00f0d8 is Pi's official dark-mode brand color (pi-web favicon.svg).
+    expect(sourceColors.pi).toBe('#00f0d8')
+    expect(sourceIconColors.pi).toBe('#00f0d8')
+  })
 })
