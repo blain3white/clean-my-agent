@@ -613,6 +613,7 @@ describe('adapterFor', () => {
       'cursor',
       'gemini',
       'opencode',
+      'pi',
       'custom',
     ])
     expect(scannerProviderFor('codex')?.name).toBe('Codex')
@@ -956,6 +957,40 @@ describe('token extraction variants', () => {
 
     expect(sessions[0].tokens.input).toBe(150)
     expect(sessions[0].tokens.output).toBe(60)
+  })
+
+  it('extracts Pi bare usage aliases (input / output / cacheRead / cacheWrite)', async () => {
+    const root = await makeTmpDir('tokens-pi-bare')
+    const filePath = path.join(root, 's.jsonl')
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        type: 'message',
+        id: 'pi-assistant-1',
+        timestamp: '2026-06-08T10:15:30.000Z',
+        message: {
+          role: 'assistant',
+          model: 'glm-5.2',
+          content: [{ type: 'text', text: 'Pi bare usage response' }],
+          usage: {
+            input: 100,
+            output: 50,
+            cacheRead: 10,
+            cacheWrite: 1000,
+            totalTokens: 1160,
+          },
+        },
+      }) + '\n',
+    )
+
+    const adapter = makeAdapter('pi', [root])
+    const { sessions } = await adapter.scan(makeSettings(root))
+
+    expect(sessions[0].tokens.input).toBe(100)
+    expect(sessions[0].tokens.output).toBe(50)
+    expect(sessions[0].tokens.cacheCreation).toBe(1000)
+    expect(sessions[0].tokens.cacheRead).toBe(10)
+    expect(sessions[0].tokens.total).toBe(1160)
   })
 
   it('extracts cache creation and cache read tokens', async () => {

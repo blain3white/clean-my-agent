@@ -6,7 +6,8 @@ import assert from 'node:assert/strict'
 import { AppService } from '../electron/lib/app-service'
 import type { AgentSource } from '../src/shared/types'
 
-const sources: AgentSource[] = ['codex', 'claude', 'cursor', 'gemini', 'opencode', 'custom']
+const sources: AgentSource[] = ['codex', 'claude', 'cursor', 'gemini', 'opencode', 'pi', 'custom']
+const piUsageTotal = 1160
 
 function slashPath(filePath: string): string {
   return filePath.replace(/\\/g, '/')
@@ -19,6 +20,9 @@ async function writeSession(root: string, source: AgentSource, daysOld: number, 
   const workspace = path.join(os.tmpdir(), 'clean-my-agent-fixture', source)
   const date = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000)
   const timestamp = date.toISOString()
+  if (source === 'pi') {
+    return writePiSession(filePath, workspace, timestamp, date)
+  }
   const referencedFile = path.join(workspace, 'src', 'auth.ts')
   const sensitiveFile = path.join(workspace, '.env.local')
   const attachmentPath = path.join(workspace, 'artifacts', 'auth-flow.png')
@@ -70,6 +74,49 @@ async function writeSession(root: string, source: AgentSource, daysOld: number, 
           cached_input_tokens: 20,
           output_tokens: 30,
           total_tokens: 70,
+        },
+      },
+    },
+  ]
+  await writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`)
+  await utimes(filePath, date, date)
+  return filePath
+}
+
+// Writes a Pi-agent shaped JSONL session: a `session` header carrying the
+// project cwd, a user message, and an assistant message whose nested
+// `message.usage` uses Pi's bare field names (input/output/cacheRead/cacheWrite/
+// totalTokens). This exercises both Pi format parsing and the generic usage
+// extractor's bare-name aliases.
+async function writePiSession(filePath: string, workspace: string, timestamp: string, date: Date) {
+  const lines = [
+    { type: 'session', version: 3, id: 'pi-session-1', timestamp, cwd: workspace },
+    {
+      type: 'message',
+      id: 'pi-user-1',
+      parentId: null,
+      timestamp,
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'Refactor pi auth flow' }],
+        timestamp,
+      },
+    },
+    {
+      type: 'message',
+      id: 'pi-assistant-1',
+      parentId: 'pi-user-1',
+      timestamp,
+      message: {
+        role: 'assistant',
+        model: 'glm-5.2',
+        content: [{ type: 'text', text: 'Finished pi refactor' }],
+        usage: {
+          input: 100,
+          output: 50,
+          cacheRead: 10,
+          cacheWrite: 1000,
+          totalTokens: piUsageTotal,
         },
       },
     },
@@ -193,7 +240,7 @@ async function main() {
     .slice(0, 10)
   assert.equal(
     snapshot.usage.find((point) => point.date === fixtureUsageDate)?.total,
-    sources.length * 3340,
+    (sources.length - 1) * 3340 + piUsageTotal,
     'usage chart should bucket tokens by message timestamp beyond the last 30 days',
   )
   assert.equal(snapshot.usage.length, 365, 'usage chart should keep one year of daily buckets')

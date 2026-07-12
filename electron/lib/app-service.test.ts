@@ -721,6 +721,7 @@ describe('getSnapshot and rescan', () => {
         cursor: false,
         gemini: false,
         opencode: false,
+        pi: false,
         custom: true,
       },
       exportDirectory: path.join(userDataPath, 'Exports'),
