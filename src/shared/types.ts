@@ -1,4 +1,12 @@
-export const agentSources = ['codex', 'claude', 'cursor', 'gemini', 'opencode', 'custom'] as const
+export const agentSources = [
+  'codex',
+  'claude',
+  'cursor',
+  'gemini',
+  'opencode',
+  'pi',
+  'custom',
+] as const
 
 export type AgentSource = (typeof agentSources)[number]
 
@@ -222,12 +230,7 @@ export type RecoveryRecord = {
 
 export type UsagePoint = {
   date: string
-  codex: number
-  claude: number
-  cursor: number
-  gemini: number
-  opencode: number
-  custom: number
+} & { [K in AgentSource]: number } & {
   total: number
 }
 

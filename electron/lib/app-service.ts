@@ -73,6 +73,7 @@ const agentLabels: Record<AgentSource, string> = {
   cursor: 'Cursor',
   gemini: 'Gemini',
   opencode: 'OpenCode',
+  pi: 'Pi',
   custom: 'Custom',
 }
 
@@ -468,16 +469,11 @@ function normalizeSettingsPatch(patch: Partial<AppSettings>): Partial<AppSetting
 }
 
 function usageSeed(date: string): UsagePoint {
-  return {
-    date,
-    codex: 0,
-    claude: 0,
-    cursor: 0,
-    gemini: 0,
-    opencode: 0,
-    custom: 0,
-    total: 0,
+  const seed = { date, total: 0 } as UsagePoint
+  for (const source of agentSources) {
+    seed[source] = 0
   }
+  return seed
 }
 
 function archiveBytes(records: ArchiveRecord[]): number {
