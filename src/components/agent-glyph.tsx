@@ -10,6 +10,24 @@ import type { AgentSource } from '@/shared/types'
 
 type AgentLogoStyle = CSSProperties & { '--agent-color': string }
 
+// Pi's official brand mark: a P-shaped glyph plus an i dot (the "Pi" monogram).
+// It is not in @lobehub/icons, so render the mark inline; it inherits
+// currentColor (the pi brand teal) from sourceIconColors.
+function PiMark({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 800 800" role="img" aria-label="Pi">
+      {/* P shape: outer boundary clockwise, inner hole counter-clockwise */}
+      <path
+        fill="currentColor"
+        fillRule="evenodd"
+        d="M165.29 165.29 H517.36 V400 H400 V517.36 H282.65 V634.72 H165.29 Z M282.65 282.65 V400 H400 V282.65 Z"
+      />
+      {/* i dot */}
+      <path fill="currentColor" d="M517.36 400 H634.72 V634.72 H517.36 Z" />
+    </svg>
+  )
+}
+
 export function AgentGlyph({ source }: { source: AgentSource }) {
   const iconProps = { size: 16 }
   const icon = {
@@ -18,7 +36,7 @@ export function AgentGlyph({ source }: { source: AgentSource }) {
     cursor: <CursorIcon {...iconProps} />,
     gemini: <GeminiIcon {...iconProps} />,
     opencode: <OpenCodeIcon {...iconProps} />,
-    pi: <Bot className="size-4" />,
+    pi: <PiMark {...iconProps} />,
     custom: <Bot className="size-4" />,
   }[source]
 
