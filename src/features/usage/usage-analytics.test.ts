@@ -404,6 +404,76 @@ describe('buildUsageAnalytics', () => {
     expect(analytics.agentRows.every((row) => row.hasTokenMetadata === false)).toBe(true)
   })
 
+  it('clusters model usage rows by normalised model, merging variants and bucketing unknowns', () => {
+    const snapshot = makeSnapshot(
+      [],
+      [
+        makeSession({
+          id: 'model-gpt',
+          tokens: {
+            input: 400,
+            output: 300,
+            cached: 0,
+            total: 1000,
+            costUsd: 10,
+            estimated: false,
+            model: 'gpt-5-codex',
+          },
+        }),
+        makeSession({
+          id: 'model-gpt-variant',
+          tokens: {
+            input: 200,
+            output: 100,
+            cached: 0,
+            total: 500,
+            costUsd: 4,
+            estimated: false,
+            model: 'GPT-5-Codex',
+          },
+        }),
+        makeSession({
+          id: 'model-claude',
+          tokens: {
+            input: 100,
+            output: 50,
+            cached: 0,
+            total: 250,
+            costUsd: 2,
+            estimated: false,
+            model: 'claude-sonnet-4-5',
+          },
+        }),
+        makeSession({
+          id: 'model-unknown',
+          tokens: { input: 40, output: 10, cached: 0, total: 50, costUsd: 0, estimated: false },
+        }),
+      ],
+    )
+    const analytics = buildUsageAnalytics(snapshot, 'all')
+
+    const rows = analytics.modelRows
+    expect(rows).toHaveLength(3)
+
+    const gpt = rows.find((row) => row.key === 'gpt-5-codex')
+    expect(gpt).toMatchObject({ model: 'gpt-5-codex', tokens: 1500, cost: 14 })
+    expect(gpt?.share).toBeCloseTo((1500 / 1800) * 100)
+
+    const claude = rows.find((row) => row.key === 'claude-sonnet-4-5')
+    expect(claude).toMatchObject({ model: 'claude-sonnet-4-5', tokens: 250, cost: 2 })
+
+    const unknown = rows.find((row) => row.key === '')
+    expect(unknown).toMatchObject({ model: 'Unknown model', tokens: 50 })
+    // sorted by tokens descending
+    expect(rows.map((row) => row.tokens)).toEqual([1500, 250, 50])
+  })
+
+  it('returns no model rows when sessions carry no token metadata', () => {
+    const analytics = buildUsageAnalytics(makeSnapshot([], []), 'all')
+
+    expect(analytics.modelRows).toEqual([])
+  })
+
   it('falls back to session totals for all-time analytics without usage points', () => {
     const analytics = buildUsageAnalytics(makeSnapshot([], [makeSession()]), 'all')
 

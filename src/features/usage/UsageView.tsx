@@ -32,6 +32,7 @@ import {
   usageTokenColors,
   usageTokenLabels,
   type AgentUsage,
+  type ModelUsage,
   type DailyUsageTooltipPayload,
   type DailyUsageTrendPoint,
   type ProjectUsage,
@@ -454,40 +455,142 @@ function DailyUsageTrendCard({ trend }: { trend: DailyUsageTrendPoint[] }) {
   )
 }
 
-function ByAgentCard({ rows }: { rows: AgentUsage[] }) {
-  const total = rows.reduce((sum, row) => sum + row.tokens, 0)
+const usageBreakdownDimensions = [
+  { value: 'agent', label: 'Agent' },
+  { value: 'model', label: 'Model' },
+] as const
+type UsageBreakdownDimension = (typeof usageBreakdownDimensions)[number]['value']
+
+const modelColorPalette = [
+  '#a78bfa',
+  '#fb923c',
+  '#38bdf8',
+  '#34d399',
+  '#f472b6',
+  '#facc15',
+  '#22d3ee',
+  '#c084fc',
+  '#4ade80',
+  '#fb7185',
+]
+
+function modelColor(key: string): string {
+  if (!key) return '#94a3b8'
+  let hash = 0
+  for (let index = 0; index < key.length; index += 1) {
+    hash = (hash * 31 + key.charCodeAt(index)) | 0
+  }
+  return modelColorPalette[Math.abs(hash) % modelColorPalette.length]
+}
+
+function UsageBreakdownCard({
+  agentRows,
+  modelRows,
+}: {
+  agentRows: AgentUsage[]
+  modelRows: ModelUsage[]
+}) {
+  const [dimension, setDimension] = useState<UsageBreakdownDimension>('agent')
+  const total =
+    dimension === 'agent'
+      ? agentRows.reduce((sum, row) => sum + row.tokens, 0)
+      : modelRows.reduce((sum, row) => sum + row.tokens, 0)
+  const title = dimension === 'agent' ? 'By Agent' : 'By Model'
+  const description =
+    dimension === 'agent' ? 'Token usage share by local agent.' : 'Token usage share by model.'
 
   return (
     <Card className="glass-panel rounded-lg py-4">
-      <UsageSectionTitle title="By Agent" description="Token usage share by local agent." />
-      <CardContent className="space-y-3">
-        {rows.map((row) => (
-          <div key={row.source} className="text-xs">
-            <div className="grid grid-cols-[96px_1fr_72px_48px] items-center gap-3">
-              <span className="truncate text-white/78">{row.agent}</span>
-              {row.hasTokenMetadata ? (
-                <>
-                  <div className="usage-agent-meter">
-                    <span
-                      style={{
-                        width: `${row.share}%`,
-                        background: `linear-gradient(90deg, ${sourceColors[row.source]}, color-mix(in srgb, ${sourceColors[row.source]} 70%, white 20%))`,
-                      }}
-                    />
-                  </div>
-                  <span className="text-right text-white/64 tabular-nums">
-                    {formatUsageTokens(row.tokens)}
-                  </span>
-                  <span className="text-right text-white/54 tabular-nums">
-                    {formatUsageShare(row.share)}
-                  </span>
-                </>
-              ) : (
-                <span className="col-span-3 text-white/38">No token metadata available</span>
-              )}
-            </div>
+      <UsageSectionTitle
+        title={title}
+        description={description}
+        action={
+          <div className="range-control flex items-center rounded-lg border border-white/10 bg-white/[0.035] p-0.5">
+            {usageBreakdownDimensions.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => setDimension(item.value)}
+                className={`h-6 rounded-md px-2 text-[11px] font-medium transition ${
+                  dimension === item.value
+                    ? 'bg-white/14 text-white shadow-sm'
+                    : 'text-white/45 hover:text-white/75'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
           </div>
-        ))}
+        }
+      />
+      <CardContent className="space-y-3">
+        {dimension === 'agent'
+          ? agentRows.map((row) => (
+              <div key={row.source} className="text-xs">
+                <div className="grid grid-cols-[96px_1fr_72px_48px] items-center gap-3">
+                  <span className="truncate text-white/78">{row.agent}</span>
+                  {row.hasTokenMetadata ? (
+                    <>
+                      <div className="usage-agent-meter">
+                        <span
+                          style={{
+                            width: `${row.share}%`,
+                            background: `linear-gradient(90deg, ${sourceColors[row.source]}, color-mix(in srgb, ${sourceColors[row.source]} 70%, white 20%))`,
+                          }}
+                        />
+                      </div>
+                      <span className="text-right text-white/64 tabular-nums">
+                        {formatUsageTokens(row.tokens)}
+                      </span>
+                      <span className="text-right text-white/54 tabular-nums">
+                        {formatUsageShare(row.share)}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="col-span-3 text-white/38">No token metadata available</span>
+                  )}
+                </div>
+              </div>
+            ))
+          : modelRows.map((row) => (
+              <div key={row.key || 'unknown'} className="text-xs">
+                <div className="grid grid-cols-[96px_1fr_72px_48px] items-center gap-3">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="truncate text-white/78">{row.model}</span>
+                    </TooltipTrigger>
+                    <TooltipContent className="chart-tooltip rounded-lg px-3 py-2 shadow-xl">
+                      {row.model}: {formatUsageTokens(row.tokens)} tokens · {formatCost(row.cost)}
+                    </TooltipContent>
+                  </Tooltip>
+                  {row.hasTokenMetadata ? (
+                    <>
+                      <div className="usage-agent-meter">
+                        <span
+                          style={{
+                            width: `${row.share}%`,
+                            background: `linear-gradient(90deg, ${modelColor(row.key)}, color-mix(in srgb, ${modelColor(row.key)} 70%, white 20%))`,
+                          }}
+                        />
+                      </div>
+                      <span className="text-right text-white/64 tabular-nums">
+                        {formatUsageTokens(row.tokens)}
+                      </span>
+                      <span className="text-right text-white/54 tabular-nums">
+                        {formatUsageShare(row.share)}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="col-span-3 text-white/38">No token metadata available</span>
+                  )}
+                </div>
+              </div>
+            ))}
+        {dimension === 'model' && modelRows.length === 0 && (
+          <div className="rounded-md border border-white/8 bg-white/[0.03] p-3 text-xs text-white/42">
+            No model metadata available
+          </div>
+        )}
         <div className="grid grid-cols-[96px_1fr_72px_48px] items-center gap-3 border-t border-white/8 pt-3 text-xs">
           <span className="text-white/58">Total</span>
           <span />
@@ -846,7 +949,7 @@ export function UsageView({
           <DailyUsageTrendCard trend={analytics.dailyTrend} />
         </div>
         <div className="space-y-4">
-          <ByAgentCard rows={analytics.agentRows} />
+          <UsageBreakdownCard agentRows={analytics.agentRows} modelRows={analytics.modelRows} />
           <PriceRankingCard projects={analytics.projectRows} onSelectProject={onSelectProject} />
         </div>
       </section>
