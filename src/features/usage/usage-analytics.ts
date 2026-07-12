@@ -901,10 +901,7 @@ function buildModelUsageRows(sessions: SessionRecord[]): ModelUsage[] {
         ? session.tokens.costUsd
         : 0
     const hasTokenMetadata =
-      sessionTokens > 0 ||
-      session.tokens.input > 0 ||
-      session.tokens.output > 0 ||
-      session.tokens.cached > 0
+      sessionTokens + session.tokens.input + session.tokens.output + session.tokens.cached > 0
     if (existing) {
       existing.tokens += sessionTokens
       existing.cost += sessionCost

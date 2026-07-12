@@ -474,6 +474,92 @@ describe('buildUsageAnalytics', () => {
     expect(analytics.modelRows).toEqual([])
   })
 
+  it('merges sessions into a model group and reports zero share when all tokens are zero', () => {
+    const snapshot = makeSnapshot(
+      [],
+      [
+        makeSession({
+          id: 'model-empty-first',
+          tokens: {
+            input: 0,
+            output: 0,
+            cached: 0,
+            total: 0,
+            costUsd: 0,
+            estimated: false,
+            model: 'gpt-5-codex',
+          },
+        }),
+        makeSession({
+          id: 'model-has-tokens',
+          tokens: {
+            input: 10,
+            output: 5,
+            cached: 0,
+            total: 15,
+            costUsd: 1,
+            estimated: false,
+            model: 'gpt-5-codex',
+          },
+        }),
+        makeSession({
+          id: 'model-all-zero',
+          tokens: {
+            input: 0,
+            output: 0,
+            cached: 0,
+            total: 0,
+            costUsd: 0,
+            estimated: false,
+            model: 'claude-sonnet-4-5',
+          },
+        }),
+      ],
+    )
+    const analytics = buildUsageAnalytics(snapshot, 'all')
+
+    const gpt = analytics.modelRows.find((row) => row.key === 'gpt-5-codex')
+    expect(gpt).toMatchObject({ tokens: 15, cost: 1, hasTokenMetadata: true })
+    const claude = analytics.modelRows.find((row) => row.key === 'claude-sonnet-4-5')
+    expect(claude).toMatchObject({ tokens: 0, share: 0, hasTokenMetadata: false })
+  })
+
+  it('reports zero share for every model row when no session carries tokens', () => {
+    const snapshot = makeSnapshot(
+      [],
+      [
+        makeSession({
+          id: 'zero-gpt',
+          tokens: {
+            input: 0,
+            output: 0,
+            cached: 0,
+            total: 0,
+            costUsd: 0,
+            estimated: false,
+            model: 'gpt-5-codex',
+          },
+        }),
+        makeSession({
+          id: 'zero-claude',
+          tokens: {
+            input: 0,
+            output: 0,
+            cached: 0,
+            total: 0,
+            costUsd: 0,
+            estimated: false,
+            model: 'claude-sonnet-4-5',
+          },
+        }),
+      ],
+    )
+    const analytics = buildUsageAnalytics(snapshot, 'all')
+
+    expect(analytics.modelRows.length).toBe(2)
+    expect(analytics.modelRows.every((row) => row.tokens === 0 && row.share === 0)).toBe(true)
+  })
+
   it('falls back to session totals for all-time analytics without usage points', () => {
     const analytics = buildUsageAnalytics(makeSnapshot([], [makeSession()]), 'all')
 
