@@ -433,6 +433,9 @@ const en = {
   'settings.worktreeFoldersDescription':
     'Folders where you keep git worktrees; abandoned ones become cleanup candidates',
   'settings.worktreeFolderCount': '{count} worktree folder(s)',
+  'settings.worktreeScanDefaultRoots': 'Scan agent worktree folders',
+  'settings.worktreeScanDefaultRootsDescription':
+    'Also scan each agent’s default worktree location (~/.codex/worktrees, superpowers, etc.) automatically',
   'settings.worktreeGitUnavailable': 'Git not found; worktree cleanup skipped.',
   'settings.worktreeStatusFailed': 'Could not verify some worktrees; they were skipped.',
   'settings.manage': 'Manage',
@@ -832,6 +835,9 @@ const zh: Partial<Record<TranslationKey, string>> = {
   'settings.worktreeFoldersDescription':
     '存放 git worktree 的文件夹；其中废弃的 worktree 会成为清理候选',
   'settings.worktreeFolderCount': '{count} 个 worktree 文件夹',
+  'settings.worktreeScanDefaultRoots': '扫描 agent 的 worktree 文件夹',
+  'settings.worktreeScanDefaultRootsDescription':
+    '自动扫描各 agent 的默认 worktree 位置（~/.codex/worktrees、superpowers 等）',
   'settings.worktreeGitUnavailable': '未找到 Git；已跳过 worktree 清理。',
   'settings.worktreeStatusFailed': '部分 worktree 状态无法验证，已跳过。',
   'settings.manage': '管理',
