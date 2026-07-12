@@ -694,8 +694,12 @@ export function useDashboard(): DashboardState {
         }
 
         try {
-          await window.cleanMyAgent.restoreTrash(trashId)
-          toast.success(t('toast.trashRestored'))
+          const restoredKind = await window.cleanMyAgent.restoreTrash(trashId)
+          if (restoredKind === 'stale-worktree' || restoredKind === 'dirty-worktree') {
+            toast.success(t('toast.worktreeRestored'))
+          } else {
+            toast.success(t('toast.trashRestored'))
+          }
           await load(true)
         } catch (error) {
           console.error(error)

@@ -9,6 +9,7 @@ import type {
   AppSettings,
   BackupRecord,
   CleanupCandidate,
+  CleanupKind,
   DashboardSnapshot,
   DiagnosticOperation,
   DiagnosticPerformanceMetric,
@@ -28,7 +29,7 @@ import { agentSources, appLanguages, defaultLanguage, exportFormats } from '../.
 import { adapters, adapterFor, enabledProviderSources } from './adapters'
 import { LocalDatabase } from './database'
 import { scanSkills } from './skills'
-import { scanWorktrees } from './worktrees'
+import { scanWorktrees, pruneWorktrees, resolveParentRepoFromWorktree } from './worktrees'
 import {
   compressFileBrotli,
   copyPath,
@@ -1218,6 +1219,14 @@ export class AppService {
           })
 
           const originalPaths: string[] = []
+          // For worktree candidates, resolve the parent repo before the .git pointer
+          // is moved into Trash. We prune the parent repo after the move so its
+          // worktree registry stays tidy (ADR-0001; best-effort, never blocks).
+          const isWorktree =
+            candidate.kind === 'stale-worktree' || candidate.kind === 'dirty-worktree'
+          const worktreeParent = isWorktree
+            ? await resolveParentRepoFromWorktree(candidate.paths[0] ?? '')
+            : null
           for (const originalPath of candidate.paths) {
             if (!(await exists(originalPath))) continue
             const target = path.join(trashPath, sanitizeName(path.basename(originalPath)))
@@ -1230,12 +1239,21 @@ export class AppService {
               role: 'trash',
             })
           }
+          if (worktreeParent) {
+            // Best-effort prune: failures must not roll back the Trash move.
+            try {
+              await pruneWorktrees(worktreeParent.parentRepo)
+            } catch {
+              // Non-fatal — the Trash entry remains intact and restorable.
+            }
+          }
 
           const record: TrashRecord = {
             id: hashId([candidate.id, deletedAt]),
             candidateId: candidate.id,
             title: candidate.title,
             source: candidate.source,
+            kind: candidate.kind,
             originalPaths,
             trashPath,
             sizeBytes: await pathSize(trashPath),
@@ -1298,7 +1316,7 @@ export class AppService {
     })
   }
 
-  async restoreTrash(trashId: string): Promise<void> {
+  async restoreTrash(trashId: string): Promise<CleanupKind | undefined> {
     return this.trackAsync('trash.restore', async () => {
       const record = this.db.getTrashRecord(validateIdentifier(trashId, 'trashId'))
       if (!record) throw new Error(`Trash item not found: ${trashId}`)
@@ -1336,6 +1354,7 @@ export class AppService {
         this.failRecovery(recovery, error)
         throw error
       }
+      return record.kind
     })
   }
 

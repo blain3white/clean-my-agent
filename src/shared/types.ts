@@ -133,6 +133,7 @@ export type TrashRecord = {
   candidateId: string
   title: string
   source?: AgentSource
+  kind?: CleanupKind
   originalPaths: string[]
   trashPath: string
   sizeBytes: number
@@ -485,7 +486,7 @@ export type CleanMyAgentApi = {
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<TrashRecord[]>
   purgeExpiredTrash: () => Promise<TrashRecord[]>
-  restoreTrash: (trashId: string) => Promise<void>
+  restoreTrash: (trashId: string) => Promise<CleanupKind | undefined>
   getRecoveryRecords: () => Promise<RecoveryRecord[]>
   diagnoseRecovery: (recoveryId: string) => Promise<RecoveryRecord>
   undoRecovery: (recoveryId: string) => Promise<RecoveryRecord>

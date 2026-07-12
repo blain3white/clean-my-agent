@@ -521,6 +521,8 @@ const en = {
   'toast.trashPurgeError': 'Could not purge expired Trash.',
   'toast.trashRestoreLiveOnly': 'Trash restore is only available with live local data.',
   'toast.trashRestored': 'Session restored from Trash',
+  'toast.worktreeRestored':
+    'Worktree restored as a plain folder; re-link with “git worktree add” if needed.',
   'toast.trashRestoreError': 'Could not restore Trash item.',
   'toast.recoveryDesktopOnly': 'Recovery tools are available in the desktop app',
   'toast.recoveryDiagnosed': 'Recovery diagnostics refreshed',
@@ -1015,6 +1017,8 @@ const zhExtra: Partial<Record<TranslationKey, string>> = {
   'toast.trashPurgeError': '无法清理过期回收站。',
   'toast.trashRestoreLiveOnly': '回收站恢复仅适用于实时本地数据。',
   'toast.trashRestored': '会话已从回收站恢复',
+  'toast.worktreeRestored':
+    'Worktree 已作为普通文件夹恢复；如需使用，请用 “git worktree add” 重新关联。',
   'toast.trashRestoreError': '无法恢复回收站项目。',
   'toast.recoveryDesktopOnly': '恢复工具仅在桌面应用中可用',
   'toast.recoveryDiagnosed': '恢复诊断已刷新',

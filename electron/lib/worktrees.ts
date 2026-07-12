@@ -169,6 +169,25 @@ export function resolveParentRepo(gitFileContent: string): string | undefined {
   return parseParentRepoFromGitdir(gitFileContent)
 }
 
+/**
+ * Read a worktree's `.git` gitdir pointer and resolve the parent repository path.
+ * Returns undefined if the worktree is not a linked worktree or the pointer is malformed.
+ */
+export async function resolveParentRepoFromWorktree(worktreePath: string): Promise<{
+  parentRepo: string
+  gitFileContent: string
+} | null> {
+  const { readFile } = await import('node:fs/promises')
+  try {
+    const content = await readFile(path.join(worktreePath, '.git'), 'utf8')
+    const parentRepo = parseParentRepoFromGitdir(content)
+    if (!parentRepo) return null
+    return { parentRepo, gitFileContent: content }
+  } catch {
+    return null
+  }
+}
+
 export async function scanWorktrees(options: ScanWorktreesOptions): Promise<WorktreeScanResult> {
   const now = options.now ?? Date.now()
   const fs = options.fs ?? createRealFs()
@@ -307,9 +326,11 @@ async function safeBranchName(runner: GitRunner, cwd: string): Promise<string | 
  * Run `git worktree prune` on the parent repo after a worktree directory has been
  * moved to Trash. Best-effort: never throws. Returns true if it ran successfully.
  */
-export async function pruneWorktrees(parentRepoPath: string): Promise<boolean> {
+export async function pruneWorktrees(
+  parentRepoPath: string,
+  runner: GitRunner = createRealGitRunner(),
+): Promise<boolean> {
   try {
-    const runner = createRealGitRunner()
     const result = await runner.run(['worktree', 'prune'], parentRepoPath)
     return result.code === 0
   } catch {

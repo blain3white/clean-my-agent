@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import path from 'node:path'
-import { scanWorktrees } from './worktrees'
+import { scanWorktrees, resolveParentRepo, pruneWorktrees } from './worktrees'
 import type { GitRunner } from './worktrees'
 
 type Stub = {
@@ -238,5 +238,43 @@ describe('scanWorktrees', () => {
       runner,
     })
     expect(result.candidates[0].title).toBe('feature-x')
+  })
+})
+
+describe('resolveParentRepo', () => {
+  it('extracts the parent repo from a gitdir pointer', () => {
+    const content = 'gitdir: /home/me/proj/.git/worktrees/feature-a'
+    expect(resolveParentRepo(content)).toBe('/home/me/proj')
+  })
+
+  it('returns undefined for malformed content', () => {
+    expect(resolveParentRepo('not a gitdir file')).toBeUndefined()
+    expect(resolveParentRepo('')).toBeUndefined()
+  })
+})
+
+describe('pruneWorktrees', () => {
+  it('runs git worktree prune and returns true on success', async () => {
+    const run = vi.fn(async () => ({ command: 'worktree', stdout: '', stderr: '', code: 0 }))
+    const runner: GitRunner = { available: async () => true, run }
+    const ok = await pruneWorktrees('/parent/repo', runner)
+    expect(ok).toBe(true)
+    expect(run).toHaveBeenCalledWith(['worktree', 'prune'], '/parent/repo')
+  })
+
+  it('returns false when prune fails but never throws', async () => {
+    const run = vi.fn(async () => ({ command: 'worktree', stdout: '', stderr: 'err', code: 128 }))
+    const runner: GitRunner = { available: async () => true, run }
+    const ok = await pruneWorktrees('/parent/repo', runner)
+    expect(ok).toBe(false)
+  })
+
+  it('returns false when the runner throws', async () => {
+    const run = vi.fn(async () => {
+      throw new Error('spawn failed')
+    })
+    const runner: GitRunner = { available: async () => true, run }
+    const ok = await pruneWorktrees('/parent/repo', runner)
+    expect(ok).toBe(false)
   })
 })
