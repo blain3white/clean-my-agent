@@ -464,6 +464,9 @@ function normalizeSettingsPatch(patch: Partial<AppSettings>): Partial<AppSetting
   if ('worktreeRoots' in patch) {
     next.worktreeRoots = safeWorktreeRoots(patch.worktreeRoots)
   }
+  if ('worktreeScanDefaultRoots' in patch) {
+    next.worktreeScanDefaultRoots = safeBoolean(patch.worktreeScanDefaultRoots, true)
+  }
 
   return next
 }
@@ -1155,6 +1158,7 @@ export class AppService {
       roots: settings.worktreeRoots,
       retentionDays: settings.cleanupRetentionDays,
       excludedFolders: settings.excludedFolders,
+      includeDefaultRoots: settings.worktreeScanDefaultRoots,
     })
     this.worktreeCandidates = result.candidates
     this.worktreeDiagnostics = result.diagnostics
@@ -1837,6 +1841,7 @@ export class AppService {
       defaultRelayMode: 'full-context',
       exportDirectory: path.join(this.userDataPath, 'Exports'),
       worktreeRoots: [],
+      worktreeScanDefaultRoots: true,
     }
   }
 
@@ -1896,6 +1901,7 @@ export class AppService {
       scanRoots: safeScanRoots(raw.scanRoots),
       exportDirectory: safePath(raw.exportDirectory, defaults.exportDirectory),
       worktreeRoots: safeWorktreeRoots(raw.worktreeRoots),
+      worktreeScanDefaultRoots: safeBoolean(raw.worktreeScanDefaultRoots, true),
     }
   }
 
