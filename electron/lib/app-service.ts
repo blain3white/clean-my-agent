@@ -1237,6 +1237,16 @@ export class AppService {
     )
   }
 
+  async trashWorktree(worktreePath: string): Promise<TrashRecord | undefined> {
+    return this.trackAsync('worktree.trash', async () => {
+      const candidates = await this.scanCleanup()
+      const candidate = candidates.find((c) => c.paths[0] === worktreePath)
+      if (!candidate) return undefined
+      const records = await this.moveCleanupToTrash([candidate.id])
+      return records[0]
+    })
+  }
+
   async moveCleanupToTrash(candidateIds: string[]): Promise<TrashRecord[]> {
     return this.trackAsync('cleanup.moveToTrash', async () => {
       const ids = validateIdentifierArray(candidateIds, 'candidateIds')

@@ -73,6 +73,7 @@ const en = {
   'worktrees.active': 'active',
   'worktrees.clean': 'clean',
   'worktrees.dirty': 'dirty',
+  'worktrees.trashAction': 'Move to Trash',
   'topbar.usageSubtitle': 'Detailed token, cost, and session analytics across local AI agents.',
   'topbar.cleanupSubtitle': 'Review and remove safe, backed up, or redundant session data.',
   'topbar.skillsSubtitle': 'Manage reusable skills across local AI agents.',
@@ -546,6 +547,8 @@ const en = {
   'toast.trashRestored': 'Session restored from Trash',
   'toast.worktreeRestored':
     'Worktree restored as a plain folder; re-link with “git worktree add” if needed.',
+  'toast.worktreeTrashed': 'Worktree moved to Trash and parent repo pruned.',
+  'toast.worktreeTrashError': 'Could not move worktree to Trash.',
   'toast.trashRestoreError': 'Could not restore Trash item.',
   'toast.recoveryDesktopOnly': 'Recovery tools are available in the desktop app',
   'toast.recoveryDiagnosed': 'Recovery diagnostics refreshed',
@@ -599,6 +602,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   'worktrees.active': '活跃',
   'worktrees.clean': '干净',
   'worktrees.dirty': '有改动',
+  'worktrees.trashAction': '移至回收站',
   'topbar.usageSubtitle': '查看本地 AI Agent 的 token、成本和会话分析。',
   'topbar.cleanupSubtitle': '检查并移除安全、已备份或冗余的会话数据。',
   'topbar.skillsSubtitle': '管理本地 AI Agent 之间可复用的技能。',
@@ -1064,6 +1068,8 @@ const zhExtra: Partial<Record<TranslationKey, string>> = {
   'toast.trashRestored': '会话已从回收站恢复',
   'toast.worktreeRestored':
     'Worktree 已作为普通文件夹恢复；如需使用，请用 “git worktree add” 重新关联。',
+  'toast.worktreeTrashed': 'Worktree 已移至回收站，父仓库已 prune。',
+  'toast.worktreeTrashError': '无法将 worktree 移至回收站。',
   'toast.trashRestoreError': '无法恢复回收站项目。',
   'toast.recoveryDesktopOnly': '恢复工具仅在桌面应用中可用',
   'toast.recoveryDiagnosed': '恢复诊断已刷新',

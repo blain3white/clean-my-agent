@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
-import { GitBranch, FolderTree, HardDrive, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { GitBranch, FolderTree, HardDrive, AlertTriangle, CheckCircle2, Trash2 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { agentLabel, formatBytes, formatRelative } from '@/lib/format'
 import { useI18n } from '@/lib/i18n-context'
 import type { WorktreeOwner, WorktreeRecord } from '@/shared/types'
@@ -53,7 +54,13 @@ function StatCard({
   )
 }
 
-export function WorktreesView({ worktrees }: { worktrees: WorktreeRecord[] }) {
+export function WorktreesView({
+  worktrees,
+  onTrash,
+}: {
+  worktrees: WorktreeRecord[]
+  onTrash: (worktreePath: string) => void
+}) {
   const { t } = useI18n()
   const [sort, setSort] = useState<SortKey>('size')
 
@@ -194,6 +201,16 @@ export function WorktreesView({ worktrees }: { worktrees: WorktreeRecord[] }) {
                 <div className="text-[15px] font-semibold text-white">
                   {formatBytes(wt.sizeBytes)}
                 </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-1 h-7 px-2 text-xs text-white/55 hover:text-rose-300"
+                  onClick={() => onTrash(wt.path)}
+                  title={t('worktrees.trashAction')}
+                >
+                  <Trash2 className="mr-1 size-3.5" />
+                  {t('worktrees.trashAction')}
+                </Button>
               </div>
             </div>
           </Card>

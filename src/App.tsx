@@ -120,7 +120,12 @@ function App() {
       case 'health':
         return <HealthView snapshot={dashboard.snapshot} />
       case 'worktrees':
-        return <WorktreesView worktrees={dashboard.snapshot.worktrees} />
+        return (
+          <WorktreesView
+            worktrees={dashboard.snapshot.worktrees}
+            onTrash={dashboard.trashWorktree}
+          />
+        )
       case 'settings':
         return (
           <SettingsView

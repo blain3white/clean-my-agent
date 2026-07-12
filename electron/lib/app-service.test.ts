@@ -2958,3 +2958,42 @@ describe('worktree cleanup listing', () => {
     expect(selected).not.toContain(wt.find((c) => c.kind === 'active-worktree')!.id)
   })
 })
+
+describe('trashWorktree', () => {
+  it('trashes a worktree by path via the panel flow (Trash + prune)', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const worktreeDir = await mkdtemp(path.join(userDataPath, 'wt-'))
+    vi.spyOn(worktreesModule, 'scanAllWorktrees').mockResolvedValue({
+      records: [
+        {
+          id: 'w',
+          path: worktreeDir,
+          ownerAgent: 'other' as const,
+          repoName: 'feature',
+          branch: 'feature',
+          sizeBytes: 100,
+          lastActivity: new Date(Date.now() - 60 * 86400000).toISOString(),
+          clean: true,
+          stale: true,
+          defaultRoot: userDataPath,
+        },
+      ],
+      diagnostics: [],
+      sizeCache: new Map(),
+    })
+    vi.spyOn(worktreesModule, 'resolveParentRepoFromWorktree').mockResolvedValue({
+      parentRepo: '/fake/parent',
+      gitFileContent: 'gitdir: /fake/parent/.git/worktrees/x',
+    })
+    const pruneSpy = vi.spyOn(worktreesModule, 'pruneWorktrees').mockResolvedValue(true)
+    try {
+      const record = await service.trashWorktree(worktreeDir)
+      expect(record?.kind).toBe('stale-worktree')
+      await expect(stat(worktreeDir)).rejects.toThrow()
+      expect(pruneSpy).toHaveBeenCalledWith('/fake/parent')
+    } finally {
+      worktreesModule.resolveParentRepoFromWorktree.mockRestore()
+      pruneSpy.mockRestore()
+    }
+  }, 20_000)
+})

@@ -508,6 +508,7 @@ export type CleanMyAgentApi = {
   exportSession: (sessionId: string, format: ExportFormat) => Promise<string>
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<TrashRecord[]>
+  trashWorktree: (worktreePath: string) => Promise<TrashRecord | undefined>
   purgeExpiredTrash: () => Promise<TrashRecord[]>
   restoreTrash: (trashId: string) => Promise<CleanupKind | undefined>
   getRecoveryRecords: () => Promise<RecoveryRecord[]>
