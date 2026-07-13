@@ -661,7 +661,7 @@ export class AppService {
   private readonly appVersion: string
   private readonly openPathHandler: (targetPath: string) => Promise<unknown>
   private diagnosticOperations: DiagnosticOperation[] = []
-  private launchScanCompleted = false
+  private rescanPromise?: Promise<DashboardSnapshot>
   private scanStates = new Map<AgentSource, AgentInstallState>()
   private worktreeCandidates: CleanupCandidate[] = []
   private worktreeRecords: WorktreeRecord[] = []
@@ -699,11 +699,7 @@ export class AppService {
   async getSnapshot(forceRescan = false): Promise<DashboardSnapshot> {
     return this.trackAsync('app.getSnapshot', async () => {
       const settings = this.requireSettings()
-      const shouldRunLaunchScan = settings.scanOnLaunch && !this.launchScanCompleted
-      if (forceRescan || shouldRunLaunchScan || this.shouldRescanCachedSessions()) {
-        this.launchScanCompleted = true
-        await this.rescan()
-      }
+      if (forceRescan) await this.rescan()
 
       const archives = this.db.getArchives()
       const allSessions = this.mergeBackupStatus([
@@ -787,7 +783,9 @@ export class AppService {
   }
 
   async rescan(): Promise<DashboardSnapshot> {
-    return this.trackAsync('app.rescan', async () => {
+    if (this.rescanPromise) return this.rescanPromise
+
+    const scan = this.trackAsync('app.rescan', async () => {
       const settings = this.requireSettings()
       const enabledSources = new Set(enabledProviderSources(settings))
       const activeAdapters = adapters.filter((adapter) => enabledSources.has(adapter.source))
@@ -806,6 +804,12 @@ export class AppService {
       )
       return this.getSnapshot(false)
     })
+    this.rescanPromise = scan
+    const clearRescan = () => {
+      if (this.rescanPromise === scan) this.rescanPromise = undefined
+    }
+    void scan.then(clearRescan, clearRescan)
+    return scan
   }
 
   async refreshRecentSessions(limit = 10): Promise<DashboardSnapshot> {
@@ -2178,11 +2182,6 @@ export class AppService {
       })
       throw error
     }
-  }
-
-  private shouldRescanCachedSessions(): boolean {
-    if (this.db.getArchives().length > 0) return false
-    return (this.db.getSetting<number>('scanSchemaVersion') ?? 0) !== scanSchemaVersion
   }
 
   private requireSession(sessionId: string): SessionRecord {

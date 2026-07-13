@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppService } from './app-service'
+import { adapterFor } from './adapters'
 import * as worktreesModule from './worktrees'
 import { hashId } from './files'
 
@@ -458,6 +459,18 @@ describe('init and settings', () => {
 // ---------------------------------------------------------------------------
 
 describe('getSnapshot and rescan', () => {
+  it('returns cached data without implicitly running the launch scan', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await writeJsonlSession(fixtureRoot, 'codex')
+
+    const cached = await service.getSnapshot(false)
+
+    expect(cached.sessions).toHaveLength(0)
+    expect((await service.rescan()).sessions.some((session) => session.source === 'codex')).toBe(
+      true,
+    )
+  })
+
   it('getSnapshot(false) returns cached snapshot without re-scanning when data is current', async () => {
     // rescan() with 0 sessions triggers a recursive loop in production code, so we always
     // seed a session file first to ensure the initial rescan completes successfully.
@@ -481,6 +494,55 @@ describe('getSnapshot and rescan', () => {
     assert.ok(session)
     expect(session.storageState).toBe('live')
     expect(session.tokens.total).toBeGreaterThan(0)
+  })
+
+  it('coalesces overlapping rescans and allows a later scan', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({
+      enabledProviders: Object.fromEntries(
+        agentSources.map((source) => [source, source === 'codex']),
+      ),
+    })
+    await writeJsonlSession(fixtureRoot, 'codex')
+    const adapter = adapterFor('codex')
+    const originalScan = adapter.scan.bind(adapter)
+    let releaseFirstScan: (() => void) | undefined
+    const firstScanBlocked = new Promise<void>((resolve) => {
+      releaseFirstScan = resolve
+    })
+    const scanSpy = vi.spyOn(adapter, 'scan').mockImplementationOnce(async (settings) => {
+      await firstScanBlocked
+      return originalScan(settings)
+    })
+
+    const first = service.rescan()
+    const second = service.rescan()
+    await Promise.resolve()
+    expect(scanSpy).toHaveBeenCalledTimes(1)
+    releaseFirstScan?.()
+
+    const [firstResult, secondResult] = await Promise.all([first, second])
+    expect(firstResult.sessions).toEqual(secondResult.sessions)
+    await service.rescan()
+    expect(scanSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('clears the single-flight scan after failure', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({
+      enabledProviders: Object.fromEntries(
+        agentSources.map((source) => [source, source === 'codex']),
+      ),
+    })
+    await writeJsonlSession(fixtureRoot, 'codex')
+    const adapter = adapterFor('codex')
+    const scanSpy = vi.spyOn(adapter, 'scan').mockRejectedValueOnce(new Error('scan failed'))
+
+    await expect(service.rescan()).rejects.toThrow('scan failed')
+    await expect(service.rescan()).resolves.toMatchObject({
+      sessions: expect.arrayContaining([expect.objectContaining({ source: 'codex' })]),
+    })
+    expect(scanSpy).toHaveBeenCalled()
   })
 
   it('getSnapshot(true) forces a rescan', async () => {

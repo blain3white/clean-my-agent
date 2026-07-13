@@ -378,11 +378,17 @@ async function main() {
   ;(
     staleService as unknown as { db: { setSetting: (key: string, value: unknown) => void } }
   ).db.setSetting('scanSchemaVersion', 1)
-  const refreshedSnapshot = await staleService.getSnapshot(false)
+  const cachedStaleSnapshot = await staleService.getSnapshot(false)
+  assert.notEqual(
+    cachedStaleSnapshot.overview.totalTokens,
+    expectedStaleTokenTotal,
+    'cached snapshot should return immediately without an implicit scan',
+  )
+  const refreshedSnapshot = await staleService.rescan()
   assert.equal(
     refreshedSnapshot.overview.totalTokens,
     expectedStaleTokenTotal,
-    'stale scan cache should be invalidated automatically',
+    'explicit background rescan should replace stale cached parser output',
   )
 
   // ---------------------------------------------------------------------
