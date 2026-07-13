@@ -79,6 +79,8 @@ export type ScanAllWorktreesResult = {
 
 export type ScanAllWorktreesOptions = {
   roots?: string[]
+  /** Project paths (e.g. session projectPaths) whose worktree subfolders to scan. */
+  projectPaths?: string[]
   retentionDays: number
   excludedFolders: string[]
   includeDefaultRoots?: boolean
@@ -123,9 +125,24 @@ export function defaultWorktreeRoots(): WorktreeRootEntry[] {
     { path: path.join(home, '.gemini', 'worktrees'), ownerAgent: 'gemini' },
     { path: path.join(home, '.opencode', 'worktrees'), ownerAgent: 'opencode' },
     { path: path.join(home, '.pi', 'worktrees'), ownerAgent: 'pi' },
+    { path: path.join(home, '.paseo', 'worktrees'), ownerAgent: 'other' },
     { path: path.join(home, '.config', 'superpowers', 'worktrees'), ownerAgent: 'other' },
   ]
 }
+
+/**
+ * Subfolder names agents/tools create inside a project to hold its worktrees.
+ * When scanning project paths, each of these (if present) is treated as a
+ * worktree root and descended one or two levels to find linked worktrees.
+ */
+export const projectWorktreeSubfolders = [
+  '.worktrees',
+  '.claude/worktrees',
+  '.codex/worktrees',
+  '.paseo/worktrees',
+  '.cursor/worktrees',
+  'worktrees',
+]
 
 /** Production filesystem adapter backed by node:fs. */
 function createRealFs(): WorktreeFs {
@@ -274,9 +291,20 @@ export async function scanAllWorktrees(
   for (const entry of defaultEntries)
     rootOwners.set(normalizeForCompare(entry.path), entry.ownerAgent)
   for (const root of userRoots) rootOwners.set(normalizeForCompare(root), 'other')
-  const roots = Array.from(new Set([...defaultEntries.map((e) => e.path), ...userRoots])).map(
-    (root) => expandHome(root),
-  )
+  // Project-level worktree subfolders: for each project path, each known
+  // subfolder (if it exists) becomes a scan root owned by 'other'.
+  const projectRoots: string[] = []
+  for (const projectPath of options.projectPaths ?? []) {
+    const project = expandHome(projectPath)
+    if (!project) continue
+    for (const sub of projectWorktreeSubfolders) {
+      projectRoots.push(path.join(project, sub))
+    }
+  }
+  for (const root of projectRoots) rootOwners.set(normalizeForCompare(root), 'other')
+  const roots = Array.from(
+    new Set([...defaultEntries.map((e) => e.path), ...userRoots, ...projectRoots]),
+  ).map((root) => expandHome(root))
   if (roots.length === 0) return { records, diagnostics, sizeCache }
 
   if (!(await runner.available())) {
@@ -294,10 +322,20 @@ export async function scanAllWorktrees(
     rootOwners.get(normalizeForCompare(root)) ?? 'other'
 
   const discovered: DiscoveredWorktreeFull[] = []
+  const ownerRank: Record<string, number> = {
+    codex: 1,
+    claude: 1,
+    cursor: 1,
+    gemini: 1,
+    opencode: 1,
+    pi: 1,
+    other: 0,
+  }
 
   /** If `dir` is a linked worktree, record it (all worktrees, not just stale). */
   const tryRecordWorktree = async (dir: string, root: string): Promise<boolean> => {
     if (excluded.some((e) => isInsidePath(dir, e))) return false
+    const dirKey = normalizeForCompare(dir)
     let gitEntry: GitEntryInfo
     try {
       gitEntry = await fs.statGitEntry(dir)
@@ -317,11 +355,21 @@ export async function scanAllWorktrees(
       })
       return true
     }
+    const owner = ownerForRoot(root)
+    // Deduplicate across roots; prefer a real agent attribution over 'other'.
+    const existingIndex = discovered.findIndex((d) => normalizeForCompare(d.path) === dirKey)
+    if (existingIndex >= 0) {
+      if (ownerRank[owner] > ownerRank[discovered[existingIndex].ownerAgent]) {
+        discovered[existingIndex].ownerAgent = owner
+        discovered[existingIndex].defaultRoot = root
+      }
+      return true
+    }
     discovered.push({
       path: dir,
       mtimeMs: stats.mtimeMs,
       sizeBytes: stats.sizeBytes,
-      ownerAgent: ownerForRoot(root),
+      ownerAgent: owner,
       defaultRoot: root,
       parentRepo: parseParentRepoFromGitdir(gitEntry.content),
     })

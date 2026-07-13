@@ -510,8 +510,9 @@ describe('defaultWorktreeRoots', () => {
     expect(codex?.path).toBe(path.join(home, '.codex', 'worktrees'))
     const cursor = roots.find((r) => r.ownerAgent === 'cursor')
     expect(cursor?.path).toBe(path.join(home, '.cursor', 'worktrees'))
-    const superpowers = roots.find((r) => r.ownerAgent === 'other')
-    expect(superpowers?.path).toBe(path.join(home, '.config', 'superpowers', 'worktrees'))
+    const paths = roots.filter((r) => r.ownerAgent === 'other').map((r) => r.path)
+    expect(paths).toContain(path.join(home, '.config', 'superpowers', 'worktrees'))
+    expect(paths).toContain(path.join(home, '.paseo', 'worktrees'))
   })
 })
 
@@ -901,5 +902,60 @@ describe('scanAllWorktrees', () => {
     expect(result.records).toHaveLength(1)
     expect(result.records[0].clean).toBe(false)
     expect(result.diagnostics.some((d) => d.code === 'worktree-status-failed')).toBe(true)
+  })
+
+  it('scans project-level worktree subfolders via projectPaths', async () => {
+    const project = '/proj/myrepo'
+    const fs = allFs([
+      { dir: path.join(project, '.worktrees', 'feat-a'), mtimeMs: staleMsAll, sizeBytes: 100 },
+      {
+        dir: path.join(project, '.claude', 'worktrees', 'feat-b'),
+        mtimeMs: staleMsAll,
+        sizeBytes: 50,
+      },
+    ])
+    const runner: GitRunner = {
+      available: async () => true,
+      run: vi.fn(async () => ({ command: 'status', stdout: '', stderr: '', code: 0 })),
+    }
+    const result = await scanAllWorktrees({
+      roots: [],
+      projectPaths: [project],
+      retentionDays: 7,
+      excludedFolders: [],
+      includeDefaultRoots: false,
+      now: nowAll,
+      fs,
+      runner,
+    })
+    expect(result.records.map((r) => r.path).sort()).toEqual([
+      path.resolve(path.join(project, '.claude', 'worktrees', 'feat-b')),
+      path.resolve(path.join(project, '.worktrees', 'feat-a')),
+    ])
+    expect(result.records.every((r) => r.ownerAgent === 'other')).toBe(true)
+  })
+
+  it('deduplicates a worktree found under both an agent root and a project path, preferring the agent attribution', async () => {
+    const codexRoot = path.join(os.homedir(), '.codex', 'worktrees')
+    const wtPath = path.join(codexRoot, 'g', 'shared')
+    const project = '/proj/shared-repo'
+    // The same worktree path is reachable via the codex default root AND via a
+    // project subfolder listing that resolves to the same dir.
+    const fs = allFs([{ dir: wtPath, mtimeMs: staleMsAll, sizeBytes: 100 }])
+    const runner: GitRunner = {
+      available: async () => true,
+      run: vi.fn(async () => ({ command: 'status', stdout: '', stderr: '', code: 0 })),
+    }
+    const result = await scanAllWorktrees({
+      roots: [],
+      projectPaths: [project],
+      retentionDays: 7,
+      excludedFolders: [],
+      now: nowAll,
+      fs,
+      runner,
+    })
+    expect(result.records).toHaveLength(1)
+    expect(result.records[0].ownerAgent).toBe('codex')
   })
 })
