@@ -248,6 +248,23 @@ function bytesFromRecords(records: Array<{ sizeBytes: number }>): number {
   return records.reduce((total, record) => total + record.sizeBytes, 0)
 }
 
+/** Distinct, non-empty project paths from sessions, for project-level worktree scanning. */
+function uniqueProjectPaths(sessions: Array<{ projectPath?: string }>): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const session of sessions) {
+    const p = session.projectPath
+    if (!p || typeof p !== 'string') continue
+    const trimmed = p.trim()
+    if (!trimmed) continue
+    const key = path.resolve(expandHome(trimmed)).replace(/[/\\]+$/, '')
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(trimmed)
+  }
+  return result
+}
+
 /**
  * Derive cleanup candidates from WorktreeRecords. Currently emits only stale
  * worktrees (preserving existing cleanup behaviour); #56 will broaden this to
@@ -776,7 +793,6 @@ export class AppService {
       const activeAdapters = adapters.filter((adapter) => enabledSources.has(adapter.source))
       const results = await Promise.all(activeAdapters.map((adapter) => adapter.scan(settings)))
       this.scanStates = new Map(results.map((result) => [result.state.source, result.state]))
-      await this.refreshWorktreeScan(settings)
       const sessions = results.flatMap((result) => result.sessions)
       const inactiveCachedSessions = this.db
         .getSessions()
@@ -784,6 +800,10 @@ export class AppService {
       this.db.replaceSessions(this.mergeBackupStatus([...inactiveCachedSessions, ...sessions]))
       this.db.setSetting('scanSchemaVersion', scanSchemaVersion)
       this.db.setSetting('lastScannedAt', new Date().toISOString())
+      await this.refreshWorktreeScan(
+        settings,
+        uniqueProjectPaths([...sessions, ...inactiveCachedSessions]),
+      )
       return this.getSnapshot(false)
     })
   }
@@ -1206,22 +1226,25 @@ export class AppService {
     return this.trackAsync('cleanup.scan', async () => {
       const settings = this.requireSettings()
       const enabledSources = new Set(enabledProviderSources(settings))
+      const allSessions = this.mergeBackupStatus(this.db.getSessions())
       const sessionCandidates = this.buildCleanupCandidates(
-        this.mergeBackupStatus(this.db.getSessions()).filter((session) =>
-          enabledSources.has(session.source),
-        ),
+        allSessions.filter((session) => enabledSources.has(session.source)),
         this.db.getBackups(),
       )
-      await this.refreshWorktreeScan(settings)
+      await this.refreshWorktreeScan(settings, uniqueProjectPaths(allSessions))
       return [...sessionCandidates, ...this.worktreeCandidates].sort(
         (a, b) => b.sizeBytes - a.sizeBytes,
       )
     })
   }
 
-  private async refreshWorktreeScan(settings: AppSettings): Promise<void> {
+  private async refreshWorktreeScan(
+    settings: AppSettings,
+    projectPaths: string[] = [],
+  ): Promise<void> {
     const result = await scanAllWorktrees({
       roots: settings.worktreeRoots,
+      projectPaths,
       retentionDays: settings.worktreeRetentionDays,
       excludedFolders: settings.excludedFolders,
       includeDefaultRoots: settings.worktreeScanDefaultRoots,

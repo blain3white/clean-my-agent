@@ -510,8 +510,9 @@ describe('defaultWorktreeRoots', () => {
     expect(codex?.path).toBe(path.join(home, '.codex', 'worktrees'))
     const cursor = roots.find((r) => r.ownerAgent === 'cursor')
     expect(cursor?.path).toBe(path.join(home, '.cursor', 'worktrees'))
-    const superpowers = roots.find((r) => r.ownerAgent === 'other')
-    expect(superpowers?.path).toBe(path.join(home, '.config', 'superpowers', 'worktrees'))
+    const paths = roots.filter((r) => r.ownerAgent === 'other').map((r) => r.path)
+    expect(paths).toContain(path.join(home, '.config', 'superpowers', 'worktrees'))
+    expect(paths).toContain(path.join(home, '.paseo', 'worktrees'))
   })
 })
 
@@ -885,8 +886,7 @@ describe('scanAllWorktrees', () => {
     const runner: GitRunner = {
       available: async () => true,
       run: vi.fn(async (args: string[]) => {
-        if (args[0] === 'status')
-          return { command: 'status', stdout: '', stderr: 'fatal', code: 128 }
+        if (args[0] === 'status') throw new Error('spawn failed')
         return { command: args[0] ?? '', stdout: '', stderr: '', code: 0 }
       }),
     }
@@ -901,5 +901,118 @@ describe('scanAllWorktrees', () => {
     expect(result.records).toHaveLength(1)
     expect(result.records[0].clean).toBe(false)
     expect(result.diagnostics.some((d) => d.code === 'worktree-status-failed')).toBe(true)
+  })
+
+  it('scans project-level worktree subfolders via projectPaths', async () => {
+    const project = '/proj/myrepo'
+    const fs = allFs([
+      { dir: path.join(project, '.worktrees', 'feat-a'), mtimeMs: staleMsAll, sizeBytes: 100 },
+      {
+        dir: path.join(project, '.claude', 'worktrees', 'feat-b'),
+        mtimeMs: staleMsAll,
+        sizeBytes: 50,
+      },
+    ])
+    const runner: GitRunner = {
+      available: async () => true,
+      run: vi.fn(async () => ({ command: 'status', stdout: '', stderr: '', code: 0 })),
+    }
+    const result = await scanAllWorktrees({
+      roots: [],
+      projectPaths: [project],
+      retentionDays: 7,
+      excludedFolders: [],
+      includeDefaultRoots: false,
+      now: nowAll,
+      fs,
+      runner,
+    })
+    expect(result.records.map((r) => r.path).sort()).toEqual([
+      path.resolve(path.join(project, '.claude', 'worktrees', 'feat-b')),
+      path.resolve(path.join(project, '.worktrees', 'feat-a')),
+    ])
+    expect(result.records.every((r) => r.ownerAgent === 'other')).toBe(true)
+  })
+
+  it('deduplicates a worktree encountered more than once across roots', async () => {
+    const codexRoot = path.join(os.homedir(), '.codex', 'worktrees')
+    const wtPath = path.join(codexRoot, 'g', 'shared')
+    const base = allFs([{ dir: wtPath, mtimeMs: staleMsAll, sizeBytes: 100 }])
+    // A user root whose readDir returns the absolute worktree path, so
+    // path.join resolves back to the same worktree the codex root already found.
+    const userRoot = '/user/root'
+    const fs: WorktreeFs = {
+      ...base,
+      readDir: vi.fn(async (root: string) => {
+        if (path.resolve(root) === path.resolve(userRoot)) return [wtPath]
+        return base.readDir!(root)
+      }),
+    }
+    const runner: GitRunner = {
+      available: async () => true,
+      run: vi.fn(async () => ({ command: 'status', stdout: '', stderr: '', code: 0 })),
+    }
+    const result = await scanAllWorktrees({
+      roots: [userRoot],
+      retentionDays: 7,
+      excludedFolders: [],
+      includeDefaultRoots: true,
+      now: nowAll,
+      fs,
+      runner,
+    })
+    expect(result.records.filter((r) => r.path === wtPath)).toHaveLength(1)
+    expect(result.records[0].ownerAgent).toBe('codex')
+  })
+
+  it('diagnoses an unreadable user-configured root', async () => {
+    const fs: WorktreeFs = {
+      ...allFs([]),
+      readDir: vi.fn(async (root: string) => {
+        if (root === '/unreadable') throw new Error('EACCES')
+        return []
+      }),
+    }
+    const runner: GitRunner = {
+      available: async () => true,
+      run: vi.fn(async () => ({ command: 'status', stdout: '', stderr: '', code: 0 })),
+    }
+    const result = await scanAllWorktrees({
+      roots: ['/unreadable'],
+      retentionDays: 7,
+      excludedFolders: [],
+      includeDefaultRoots: false,
+      now: nowAll,
+      fs,
+      runner,
+    })
+    expect(result.diagnostics.some((d) => d.code === 'worktree-root-unreadable')).toBe(true)
+  })
+
+  it('skips a group subdirectory whose readDir throws', async () => {
+    const codexRoot = path.join(os.homedir(), '.codex', 'worktrees')
+    const base = allFs([
+      { dir: path.join(codexRoot, 'g', 'repo'), mtimeMs: staleMsAll, sizeBytes: 10 },
+    ])
+    const fs: WorktreeFs = {
+      ...base,
+      readDir: vi.fn(async (root: string) => {
+        if (root === path.join(codexRoot, 'bad')) throw new Error('EACCES')
+        return base.readDir(root)
+      }),
+    }
+    const runner: GitRunner = {
+      available: async () => true,
+      run: vi.fn(async () => ({ command: 'status', stdout: '', stderr: '', code: 0 })),
+    }
+    const result = await scanAllWorktrees({
+      roots: [],
+      retentionDays: 7,
+      excludedFolders: [],
+      now: nowAll,
+      fs,
+      runner,
+    })
+    expect(result.records).toHaveLength(1)
   })
 })
