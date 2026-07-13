@@ -322,20 +322,13 @@ export async function scanAllWorktrees(
     rootOwners.get(normalizeForCompare(root)) ?? 'other'
 
   const discovered: DiscoveredWorktreeFull[] = []
-  const ownerRank: Record<string, number> = {
-    codex: 1,
-    claude: 1,
-    cursor: 1,
-    gemini: 1,
-    opencode: 1,
-    pi: 1,
-    other: 0,
-  }
+  const seenPaths = new Set<string>()
 
   /** If `dir` is a linked worktree, record it (all worktrees, not just stale). */
   const tryRecordWorktree = async (dir: string, root: string): Promise<boolean> => {
     if (excluded.some((e) => isInsidePath(dir, e))) return false
     const dirKey = normalizeForCompare(dir)
+    if (seenPaths.has(dirKey)) return true // already recorded via an earlier root
     let gitEntry: GitEntryInfo
     try {
       gitEntry = await fs.statGitEntry(dir)
@@ -355,21 +348,15 @@ export async function scanAllWorktrees(
       })
       return true
     }
-    const owner = ownerForRoot(root)
-    // Deduplicate across roots; prefer a real agent attribution over 'other'.
-    const existingIndex = discovered.findIndex((d) => normalizeForCompare(d.path) === dirKey)
-    if (existingIndex >= 0) {
-      if (ownerRank[owner] > ownerRank[discovered[existingIndex].ownerAgent]) {
-        discovered[existingIndex].ownerAgent = owner
-        discovered[existingIndex].defaultRoot = root
-      }
-      return true
-    }
+    seenPaths.add(dirKey)
+    // Agent-default roots are scanned before project roots, so a worktree found
+    // under an agent root keeps its real agent attribution; project-root hits
+    // of the same worktree are skipped via seenPaths.
     discovered.push({
       path: dir,
       mtimeMs: stats.mtimeMs,
       sizeBytes: stats.sizeBytes,
-      ownerAgent: owner,
+      ownerAgent: ownerForRoot(root),
       defaultRoot: root,
       parentRepo: parseParentRepoFromGitdir(gitEntry.content),
     })
