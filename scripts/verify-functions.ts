@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, stat, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
@@ -8,6 +8,7 @@ import type { AgentSource } from '../src/shared/types'
 
 const sources: AgentSource[] = ['codex', 'claude', 'cursor', 'gemini', 'opencode', 'pi', 'custom']
 const piUsageTotal = 1160
+const fakeTrashItem = (targetPath: string) => rm(targetPath, { recursive: true, force: true })
 
 function slashPath(filePath: string): string {
   return filePath.replace(/\\/g, '/')
@@ -138,6 +139,7 @@ async function main() {
   const service = new AppService({
     userDataPath,
     openPath: async () => undefined,
+    trashItem: fakeTrashItem,
   })
   await service.init()
   service.updateSettings({
@@ -306,47 +308,35 @@ async function main() {
   const target = cleanup.find((item) => item.sessionIds.includes(session.id))
   assert.ok(target, 'cleanup candidate should reference the session')
 
+  const tokensBeforeTrash = (await service.getSnapshot(false)).overview.totalTokens
   const trash = await service.moveCleanupToTrash([target.id])
-  assert.equal(trash.length, 1, 'cleanup should move one item to trash')
+  assert.equal(trash.length, 1, 'cleanup should move one item to the system Trash')
+  await assert.rejects(
+    stat(session.storagePath),
+    undefined,
+    'trashed session path should be removed',
+  )
+  const snapshotWithDeletedStats = await service.getSnapshot(false)
+  assert.ok(
+    !snapshotWithDeletedStats.sessions.some((item) => item.id === session.id),
+    'trashed session should disappear from active sessions',
+  )
   assert.equal(
-    (await service.getSnapshot(false)).sessions.some((item) => item.id === session.id),
-    false,
+    snapshotWithDeletedStats.overview.totalTokens,
+    tokensBeforeTrash,
+    'token totals should include deleted sessions by default',
   )
-
-  await service.restoreTrash(trash[0].id)
+  service.updateSettings({ includeDeletedSessionsInStats: false })
   assert.equal(
-    (await service.getSnapshot(true)).sessions.some((item) => item.id === session.id),
-    true,
+    (await service.getSnapshot(false)).overview.totalTokens,
+    tokensBeforeTrash - session.tokens.total,
+    'token totals should exclude deleted sessions when the setting is disabled',
   )
-
-  const purgeFile = await writeSession(fixtureRoot, 'codex', 60, 'purge')
-  const purgeSnapshot = await service.rescan()
-  const purgeSession = purgeSnapshot.sessions.find((item) => item.storagePath === purgeFile)
-  assert.ok(purgeSession, 'purge smoke session should be scanned')
-  const purgeTarget = (await service.scanCleanup()).find((item) =>
-    item.sessionIds.includes(purgeSession.id),
-  )
-  assert.ok(purgeTarget, 'purge smoke session should become a cleanup candidate')
-  const [purgeTrash] = await service.moveCleanupToTrash([purgeTarget.id])
-  assert.ok(purgeTrash, 'purge smoke cleanup should move to trash')
-  ;(
-    service as unknown as {
-      db: {
-        insertTrash: (record: typeof purgeTrash) => void
-      }
-    }
-  ).db.insertTrash({
-    ...purgeTrash,
-    deletedAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(),
-  })
-  const purgedTrash = await service.purgeExpiredTrash()
-  assert.equal(purgedTrash.length, 1, 'expired trash purge should remove one item')
-  assert.equal(purgedTrash[0].id, purgeTrash.id, 'expired trash purge should return the record')
-  await assert.rejects(stat(purgeTrash.trashPath), undefined, 'purged trash path should be removed')
 
   const staleService = new AppService({
     userDataPath: await mkdtemp(path.join(os.tmpdir(), 'clean-my-agent-stale-user-data-')),
     openPath: async () => undefined,
+    trashItem: fakeTrashItem,
   })
   await staleService.init()
   staleService.updateSettings({
@@ -392,7 +382,7 @@ async function main() {
   )
 
   // ---------------------------------------------------------------------
-  // Worktree cleanup: scan → suggest → Trash → prune → restore
+  // Worktree cleanup: scan → suggest → system Trash → prune
   // ---------------------------------------------------------------------
   const gitAvailable = spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0
   assert.ok(gitAvailable, 'git must be available for the worktree smoke test')
@@ -433,6 +423,7 @@ async function main() {
   const worktreeService = new AppService({
     userDataPath: await mkdtemp(path.join(os.tmpdir(), 'cma-worktree-userdata-')),
     openPath: async () => undefined,
+    trashItem: fakeTrashItem,
   })
   await worktreeService.init()
   worktreeService.updateSettings({
@@ -476,9 +467,9 @@ async function main() {
   assert.ok(storageTotal >= worktreeBytes, 'storage should reflect worktree sizes')
 
   const [wtTrash] = await worktreeService.moveCleanupToTrash([wtCandidate.id])
-  assert.ok(wtTrash, 'worktree candidate should move to Trash')
-  assert.equal(wtTrash.kind, 'stale-worktree', 'trash record should carry the worktree kind')
-  await assert.rejects(stat(worktreeDir), undefined, 'worktree directory should be moved out')
+  assert.ok(wtTrash, 'worktree candidate should move to the system Trash')
+  assert.equal(wtTrash.kind, 'stale-worktree', 'trash result should carry the worktree kind')
+  await assert.rejects(stat(worktreeDir), undefined, 'worktree directory should be removed')
 
   // Prune should have cleared the parent repo's stale worktree registration.
   const worktreeList = runGit(['worktree', 'list'], parentRepo).stdout
@@ -486,11 +477,6 @@ async function main() {
     !worktreeList.includes('feature-smoke'),
     'parent repo should no longer list the trashed worktree after prune',
   )
-
-  // Restore brings the directory back (as a plain folder, not re-linked).
-  const restoredKind = await worktreeService.restoreTrash(wtTrash.id)
-  assert.equal(restoredKind, 'stale-worktree', 'restore should return the worktree kind')
-  assert.ok((await stat(worktreeDir)).isDirectory(), 'worktree directory should be restored')
 
   console.log('Function verification passed')
 }

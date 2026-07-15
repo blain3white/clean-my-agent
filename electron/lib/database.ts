@@ -42,6 +42,8 @@ function compactSessionForStorage(session: SessionRecord): SessionRecord {
       relayFiles: session.metadata.relayFiles,
       relayCommands: session.metadata.relayCommands,
       gitChangedFiles: session.metadata.gitChangedFiles,
+      deletedAt: session.metadata.deletedAt,
+      deletedFromState: session.metadata.deletedFromState,
     },
   }
 }
@@ -138,6 +140,14 @@ export class LocalDatabase {
       db.exec('ROLLBACK')
       throw error
     }
+  }
+
+  reconcileScannedSessions(sessions: SessionRecord[]): void {
+    const scannedIds = new Set(sessions.map((session) => session.id))
+    const deletedSessions = this.getSessions().filter(
+      (session) => session.storageState === 'deleted' && !scannedIds.has(session.id),
+    )
+    this.replaceSessions([...deletedSessions, ...sessions])
   }
 
   upsertSessions(sessions: SessionRecord[]): void {

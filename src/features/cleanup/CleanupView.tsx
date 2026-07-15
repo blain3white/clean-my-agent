@@ -1,5 +1,6 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
+import { toast } from 'sonner'
 import {
   AlertTriangle,
   Check,
@@ -418,6 +419,7 @@ export function CleanupView({
       }, 520)
     } catch (error) {
       console.error(error)
+      toast.error('Could not move the selected items to the system Trash.')
       if (settings.soundEffects && settings.errorSound) {
         void playCleanupSystemSound(settings.soundVolume / 100)
       }
@@ -435,7 +437,7 @@ export function CleanupView({
               Cleanup candidates
             </CardTitle>
             <p className="mt-2 text-sm text-white/52">
-              Review local sessions before moving anything to app Trash.
+              Review local sessions before moving anything to the system Trash.
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -532,7 +534,7 @@ export function CleanupView({
                   {selected.length} candidate{selected.length === 1 ? '' : 's'} selected
                 </div>
                 <div className="mt-1 text-xs text-white/45">
-                  {formatBytes(selectedBytes)} recoverable after backup and Trash move.
+                  {formatBytes(selectedBytes)} selected for the system Trash.
                 </div>
               </div>
             </div>
@@ -638,12 +640,12 @@ function CleanupConfirmationDialog({
             </div>
             <div className="min-w-0">
               <DialogTitle className="text-[18px] font-semibold leading-6 text-white">
-                Confirm move to app Trash
+                Confirm move to system Trash
               </DialogTitle>
               <DialogDescription className="mt-2 text-sm leading-5 text-white/58">
                 This will move {summary.count} selected cleanup item
-                {summary.count === 1 ? '' : 's'} totaling {formatBytes(summary.bytes)} after
-                preserving backups when needed.
+                {summary.count === 1 ? '' : 's'} totaling {formatBytes(summary.bytes)} to the
+                operating system Trash.
               </DialogDescription>
             </div>
           </div>
@@ -654,7 +656,7 @@ function CleanupConfirmationDialog({
             <CleanupConfirmationStat label="Selected" value={String(summary.count)} />
             <CleanupConfirmationStat label="Size" value={formatBytes(summary.bytes)} />
             <CleanupConfirmationStat
-              label="Needs backup"
+              label="Not backed up"
               value={String(summary.needsBackupCount)}
             />
           </div>
@@ -670,8 +672,8 @@ function CleanupConfirmationDialog({
               {summary.unrecoverableCount > 0 && (
                 <div>
                   {summary.unrecoverableCount} item
-                  {summary.unrecoverableCount === 1 ? '' : 's'} may require backup recovery rather
-                  than direct Trash restore.
+                  {summary.unrecoverableCount === 1 ? '' : 's'} may not be recoverable outside the
+                  operating system Trash.
                 </div>
               )}
             </div>
@@ -680,15 +682,15 @@ function CleanupConfirmationDialog({
           <div className="space-y-3 rounded-lg border border-emerald-300/14 bg-emerald-400/[0.055] px-4 py-4 text-[13px] text-white/66">
             <div className="flex items-center gap-3">
               <ShieldCheck className="size-4 text-emerald-300" />
-              Backups are retained before risky session files are moved.
+              Session usage metadata stays available for statistics.
             </div>
             <div className="flex items-center gap-3">
               <Trash2 className="size-4 text-blue-300" />
-              Files move to Clean My Agent Trash, not permanent deletion.
+              Files move to the operating system Trash, not permanent deletion.
             </div>
             <div className="flex items-center gap-3">
               <RefreshCcw className="size-4 text-violet-300" />
-              Trash items remain recoverable while retained by your settings.
+              Restore deleted files directly from the operating system Trash.
             </div>
           </div>
 
@@ -714,8 +716,8 @@ function CleanupConfirmationDialog({
 
           {summary.settingPolicy === 'trash-safety-override' && (
             <p className="text-xs leading-5 text-white/42">
-              Cleanup confirmation is off in Settings, but moving files to app Trash still requires
-              this in-app review.
+              Cleanup confirmation is off in Settings, but moving files to the system Trash still
+              requires this in-app review.
             </p>
           )}
         </div>
@@ -1272,7 +1274,7 @@ function CleanupCompleteBody({
               {cleaned ? (
                 <>
                   <CheckCircle2 className="size-4 text-emerald-300" />
-                  <span>Moved to Trash. Backup retained.</span>
+                  <span>Moved to the system Trash.</span>
                 </>
               ) : (
                 <>
@@ -1899,7 +1901,7 @@ function CleanupCandidateRow({
         <div className="text-xs font-semibold text-white">{candidate.title}</div>
         <div className="mt-1 text-[11px] leading-4 text-white/58">
           {candidate.reason}{' '}
-          {candidate.recoverable ? 'This item remains recoverable from app Trash.' : ''}
+          {candidate.recoverable ? 'This item can be restored from the system Trash.' : ''}
         </div>
         <div className="mt-2 truncate text-[11px] text-white/38">{candidate.paths[0]}</div>
       </TooltipContent>
@@ -1963,15 +1965,15 @@ function CleanupQueuePanel({
         <div className="space-y-4 text-[13px] text-white/60">
           <div className="flex items-center gap-3">
             <ShieldCheck className="size-4 text-emerald-300" />
-            Backed up before removal
+            Usage metadata retained
           </div>
           <div className="flex items-center gap-3">
             <Trash2 className="size-4 text-blue-300" />
-            Moved to app Trash
+            Moved to system Trash
           </div>
           <div className="flex items-center gap-3">
             <RefreshCcw className="size-4 text-violet-300" />
-            Recoverable while retained
+            Restorable from system Trash
           </div>
         </div>
         <Separator className="my-6 bg-white/10" />
@@ -1996,7 +1998,7 @@ function CleanupQueuePanel({
           }`}
         >
           {cleaning ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
-          {cleaning ? 'Backing up...' : 'Move to Trash'}
+          {cleaning ? 'Moving...' : 'Move to Trash'}
         </Button>
         <Button
           variant="ghost"

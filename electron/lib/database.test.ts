@@ -268,6 +268,35 @@ describe('upsertSessions', () => {
   })
 })
 
+describe('reconcileScannedSessions', () => {
+  it('keeps deleted history while replacing stale active sessions', () => {
+    db.replaceSessions([
+      makeSession({ id: 'deleted', storageState: 'deleted' }),
+      makeSession({ id: 'stale-live' }),
+    ])
+
+    db.reconcileScannedSessions([makeSession({ id: 'fresh-live' })])
+
+    expect(
+      db
+        .getSessions()
+        .map((session) => session.id)
+        .sort(),
+    ).toEqual(['deleted', 'fresh-live'])
+  })
+
+  it('restores a deleted record to live when the scanner finds the same id again', () => {
+    db.replaceSessions([makeSession({ storageState: 'deleted' })])
+
+    db.reconcileScannedSessions([makeSession({ storageState: 'live', title: 'Restored' })])
+
+    expect(db.getSession('session-1')).toMatchObject({
+      storageState: 'live',
+      title: 'Restored',
+    })
+  })
+})
+
 describe('getSession', () => {
   it('returns undefined for unknown id', () => {
     expect(db.getSession('missing')).toBeUndefined()

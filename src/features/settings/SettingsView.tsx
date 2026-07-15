@@ -24,7 +24,7 @@ import { AgentGlyph } from '@/components/agent-glyph'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { playCleanupSystemSound } from '@/features/cleanup/cleanup-system-sound'
-import { trashPrimaryPath, usageTimezoneSelectOptions } from '@/features/settings/settings-model'
+import { usageTimezoneSelectOptions } from '@/features/settings/settings-model'
 import { agentLabel, formatBytes } from '@/lib/format'
 import { languageOptions } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n-context'
@@ -59,8 +59,6 @@ type SettingsViewProps = {
   onDownloadLatestUpdate: () => Promise<void>
   onExportDiagnostics: () => Promise<void>
   onRescan: () => Promise<void>
-  onRestoreTrash: (trashId: string) => Promise<void>
-  onPurgeExpiredTrash: () => Promise<void>
   onDiagnoseRecovery: (recoveryId: string) => Promise<RecoveryRecord | undefined>
   onUndoRecovery: (recoveryId: string) => Promise<void>
 }
@@ -331,8 +329,6 @@ export function SettingsView({
   onDownloadLatestUpdate,
   onExportDiagnostics,
   onRescan,
-  onRestoreTrash,
-  onPurgeExpiredTrash,
   onDiagnoseRecovery,
   onUndoRecovery,
 }: SettingsViewProps) {
@@ -710,22 +706,17 @@ export function SettingsView({
             }
           />
           <SettingsRow
-            icon={Clock3}
-            title={t('settings.purgeExpiredTrash')}
-            description={t('settings.purgeExpiredTrashDescription', {
-              count: snapshot.trash.length,
-              plural: snapshot.trash.length === 1 ? '' : 's',
-            })}
+            icon={ShieldCheck}
+            title={t('settings.includeDeletedSessionsInStats')}
+            description={t('settings.includeDeletedSessionsInStatsDescription')}
             trailing={
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void onPurgeExpiredTrash()}
-                className="settings-outline-button"
-              >
-                <Trash2 className="mr-2 size-4" />
-                {t('settings.purgeExpiredTrashAction')}
-              </Button>
+              <SwitchControl
+                checked={settings.includeDeletedSessionsInStats}
+                onCheckedChange={(checked) =>
+                  void onSettingsChange({ includeDeletedSessionsInStats: checked })
+                }
+                label={t('settings.includeDeletedSessionsInStats')}
+              />
             }
           />
           <SettingsRow
@@ -830,55 +821,6 @@ export function SettingsView({
               />
             }
           />
-        </SettingsPanel>
-      </SettingsSection>
-
-      <SettingsSection title={t('settings.trash')}>
-        <SettingsPanel>
-          {snapshot.trash.length === 0 ? (
-            <SettingsRow
-              icon={Trash2}
-              title={t('settings.trashEmpty')}
-              description={t('settings.trashEmptyDescription')}
-            />
-          ) : (
-            snapshot.trash.map((record) => (
-              <div
-                key={record.id}
-                className="settings-row flex min-h-[92px] items-center gap-4 border-b px-5 py-4 last:border-b-0"
-              >
-                <div className="settings-row-icon grid size-6 shrink-0 place-items-center">
-                  <Trash2 className="size-[19px]" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="settings-row-title truncate text-[15px] font-semibold">
-                    {record.title}
-                  </div>
-                  <div className="settings-row-description mt-1 flex flex-wrap items-center gap-2 text-sm">
-                    <span>
-                      {record.source ? agentLabel[record.source] : t('settings.unknownSource')}
-                    </span>
-                    <span className="settings-row-separator">•</span>
-                    <span>{formatBytes(record.sizeBytes)}</span>
-                    <span className="settings-row-separator">•</span>
-                    <span>{formatRelative(record.deletedAt)}</span>
-                  </div>
-                  <div className="settings-row-description mt-1 truncate text-xs">
-                    {trashPrimaryPath(record)}
-                  </div>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void onRestoreTrash(record.id)}
-                  className="settings-outline-button"
-                >
-                  <RefreshCcw className="mr-2 size-4" />
-                  {t('settings.restoreTrashAction')}
-                </Button>
-              </div>
-            ))
-          )}
         </SettingsPanel>
       </SettingsSection>
 

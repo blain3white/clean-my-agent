@@ -18,7 +18,7 @@ export const defaultLanguage: AppLanguage = 'en'
 
 export type BackupStatus = 'backed-up' | 'pending' | 'unknown'
 
-export type SessionStorageState = 'live' | 'archived'
+export type SessionStorageState = 'live' | 'archived' | 'deleted'
 
 export type RiskLevel = 'low' | 'medium' | 'high'
 
@@ -149,6 +149,17 @@ export type TrashRecord = {
   deletedAt: string
   risk: RiskLevel
   recoverable: boolean
+}
+
+export type SystemTrashResult = {
+  candidateId: string
+  title: string
+  source?: AgentSource
+  kind?: CleanupKind
+  originalPaths: string[]
+  sizeBytes: number
+  deletedAt: string
+  risk: RiskLevel
 }
 
 export type RecoveryOperation =
@@ -367,6 +378,7 @@ export type AppSettings = {
   scanOnLaunch: boolean
   backgroundScan: boolean
   confirmBeforeCleanup: boolean
+  includeDeletedSessionsInStats: boolean
   excludedFolders: string[]
   soundEffects: boolean
   cleanupSound: boolean
@@ -507,10 +519,8 @@ export type CleanMyAgentApi = {
   restoreArchive: (archiveId: string) => Promise<void>
   exportSession: (sessionId: string, format: ExportFormat) => Promise<string>
   scanCleanup: () => Promise<CleanupCandidate[]>
-  moveCleanupToTrash: (candidateIds: string[]) => Promise<TrashRecord[]>
-  trashWorktree: (worktreePath: string) => Promise<TrashRecord | undefined>
-  purgeExpiredTrash: () => Promise<TrashRecord[]>
-  restoreTrash: (trashId: string) => Promise<CleanupKind | undefined>
+  moveCleanupToTrash: (candidateIds: string[]) => Promise<SystemTrashResult[]>
+  trashWorktree: (worktreePath: string) => Promise<SystemTrashResult | undefined>
   getRecoveryRecords: () => Promise<RecoveryRecord[]>
   diagnoseRecovery: (recoveryId: string) => Promise<RecoveryRecord>
   undoRecovery: (recoveryId: string) => Promise<RecoveryRecord>

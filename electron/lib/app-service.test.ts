@@ -78,10 +78,16 @@ async function writeJsonlSession(
   return filePath
 }
 
-function makeService(userDataPath: string, openPath?: (p: string) => Promise<void>) {
+function makeService(
+  userDataPath: string,
+  openPath?: (p: string) => Promise<void>,
+  trashItem: (p: string) => Promise<void> = (targetPath) =>
+    rm(targetPath, { recursive: true, force: true }),
+) {
   const service = new AppService({
     userDataPath,
     openPath: openPath ?? (async () => undefined),
+    trashItem,
   })
   services.push(service)
   return service
@@ -91,8 +97,9 @@ async function initServiceWithScan(
   fixtureRoot: string,
   userDataPath: string,
   openPath?: (p: string) => Promise<void>,
+  trashItem?: (p: string) => Promise<void>,
 ) {
-  const service = makeService(userDataPath, openPath)
+  const service = makeService(userDataPath, openPath, trashItem)
   await service.init()
   service.updateSettings({
     scanRoots: Object.fromEntries(agentSources.map((src) => [src, [path.join(fixtureRoot, src)]])),
@@ -1696,7 +1703,7 @@ describe('scanCleanup', () => {
 // ---------------------------------------------------------------------------
 
 describe('moveCleanupToTrash', () => {
-  it('moves session file to trash and creates a backup when not backed up', async () => {
+  it('moves a session to system Trash and retains its token statistics', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
     service.updateSettings({ cleanupRetentionDays: 0 })
     const filePath = await writeJsonlSession(fixtureRoot, 'codex')
@@ -1716,12 +1723,45 @@ describe('moveCleanupToTrash', () => {
     // Original path should be gone
     await expect(stat(filePath)).rejects.toThrow()
 
-    // Trash folder exists
-    const trashStat = await stat(trash.trashPath)
-    expect(trashStat.isDirectory()).toBe(true)
+    const after = await service.getSnapshot(false)
+    expect(after.sessions.some((session) => session.id === candidate.sessionIds[0])).toBe(false)
+    expect(after.overview.totalTokens).toBeGreaterThan(0)
+    expect(after.usage.reduce((total, point) => total + point.total, 0)).toBeGreaterThan(0)
+    expect(
+      (await service.scanCleanup()).some((item) =>
+        item.sessionIds.includes(candidate.sessionIds[0]),
+      ),
+    ).toBe(false)
   }, 20_000)
 
-  it('creates auto-backup before moving to trash', async () => {
+  it('restores a deleted session to active when the same file reappears during a forced rescan', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ cleanupRetentionDays: 0 })
+    const filePath = await writeJsonlSession(fixtureRoot, 'codex')
+    const before = await service.rescan()
+    const original = before.sessions.find((session) => session.source === 'codex')
+    assert.ok(original)
+    const candidate = (await service.scanCleanup()).find((item) =>
+      item.sessionIds.includes(original.id),
+    )
+    assert.ok(candidate)
+
+    await service.moveCleanupToTrash([candidate.id])
+    expect(
+      (await service.getSnapshot(false)).sessions.some((session) => session.id === original.id),
+    ).toBe(false)
+
+    await writeJsonlSession(fixtureRoot, 'codex', { filename: path.basename(filePath) })
+    const restored = await service.getSnapshot(true)
+    const active = restored.sessions.find((session) => session.id === original.id)
+
+    expect(active?.storageState).toBe('live')
+    expect(active?.metadata.deletedAt).toBeUndefined()
+    expect(active?.metadata.deletedFromState).toBeUndefined()
+    expect(restored.overview.totalSessions).toBe(1)
+  }, 20_000)
+
+  it('does not create an automatic backup before moving to system Trash', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
     service.updateSettings({ cleanupRetentionDays: 0 })
     await writeJsonlSession(fixtureRoot, 'codex')
@@ -1736,10 +1776,10 @@ describe('moveCleanupToTrash', () => {
     // which is safe because a 'claude' session still exists)
     expect(trashRecords).toHaveLength(1)
     const after = await service.getSnapshot(true)
-    expect(after.backups.length).toBeGreaterThan(0)
+    expect(after.backups).toHaveLength(0)
   }, 20_000)
 
-  it('returns trash record in snapshot after move', async () => {
+  it('does not add a system Trash item to the legacy app Trash snapshot', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
     service.updateSettings({ cleanupRetentionDays: 0 })
     await writeJsonlSession(fixtureRoot, 'codex')
@@ -1751,8 +1791,108 @@ describe('moveCleanupToTrash', () => {
 
     await service.moveCleanupToTrash([candidate.id])
     const after = await service.getSnapshot(true)
-    expect(after.trash.length).toBeGreaterThan(0)
+    expect(after.trash).toHaveLength(0)
   }, 20_000)
+
+  it('leaves session metadata unchanged when the system Trash operation fails', async () => {
+    const trashItem = vi.fn(async () => {
+      throw new Error('system Trash unavailable')
+    })
+    const service = await initServiceWithScan(fixtureRoot, userDataPath, undefined, trashItem)
+    service.updateSettings({ cleanupRetentionDays: 0 })
+    const filePath = await writeJsonlSession(fixtureRoot, 'codex')
+    await service.rescan()
+    const candidate = (await service.scanCleanup()).find((item) => item.source === 'codex')
+    assert.ok(candidate)
+
+    await expect(service.moveCleanupToTrash([candidate.id])).rejects.toThrow(
+      /system Trash unavailable/,
+    )
+    await expect(stat(filePath)).resolves.toBeDefined()
+    expect((await service.getSnapshot(false)).sessions).toHaveLength(1)
+  })
+
+  it('keeps metadata consistent when system Trash succeeds for one candidate then fails', async () => {
+    const removedPaths: string[] = []
+    const trashItem = vi.fn(async (targetPath: string) => {
+      if (removedPaths.length === 1) throw new Error('second system Trash move failed')
+      await rm(targetPath, { recursive: true, force: true })
+      removedPaths.push(targetPath)
+    })
+    const service = await initServiceWithScan(fixtureRoot, userDataPath, undefined, trashItem)
+    const codexPath = await writeJsonlSession(fixtureRoot, 'codex')
+    const claudePath = await writeJsonlSession(fixtureRoot, 'claude')
+    const before = await service.rescan()
+    const codex = before.sessions.find((session) => session.source === 'codex')
+    const claude = before.sessions.find((session) => session.source === 'claude')
+    assert.ok(codex)
+    assert.ok(claude)
+    const candidates: CleanupCandidate[] = [
+      {
+        id: 'partial-trash-codex',
+        kind: 'old-session',
+        title: 'Codex session',
+        source: 'codex',
+        sessionIds: [codex.id],
+        paths: [codexPath],
+        sizeBytes: codex.sizeBytes,
+        lastUpdated: codex.lastUpdated,
+        reason: 'Partial success fixture.',
+        risk: 'low',
+        recoverable: true,
+        backedUp: false,
+      },
+      {
+        id: 'partial-trash-claude',
+        kind: 'old-session',
+        title: 'Claude session',
+        source: 'claude',
+        sessionIds: [claude.id],
+        paths: [claudePath],
+        sizeBytes: claude.sizeBytes,
+        lastUpdated: claude.lastUpdated,
+        reason: 'Partial failure fixture.',
+        risk: 'low',
+        recoverable: true,
+        backedUp: false,
+      },
+    ]
+    vi.spyOn(service, 'scanCleanup').mockResolvedValue(candidates)
+
+    await expect(
+      service.moveCleanupToTrash(candidates.map((candidate) => candidate.id)),
+    ).rejects.toThrow(/second system Trash move failed/)
+
+    await expect(stat(codexPath)).rejects.toThrow()
+    await expect(stat(claudePath)).resolves.toBeDefined()
+    const persisted = service['db'].getSessions()
+    expect(persisted.find((session) => session.id === codex.id)).toMatchObject({
+      storageState: 'deleted',
+      tokens: codex.tokens,
+    })
+    expect(persisted.find((session) => session.id === claude.id)?.storageState).toBe('live')
+    const snapshot = await service.getSnapshot(false)
+    expect(snapshot.sessions.map((session) => session.id)).toContain(claude.id)
+    expect(snapshot.sessions.map((session) => session.id)).not.toContain(codex.id)
+    expect(snapshot.overview.totalTokens).toBe(codex.tokens.total + claude.tokens.total)
+  })
+
+  it('can exclude deleted-session token statistics through settings', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ cleanupRetentionDays: 0 })
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await service.rescan()
+    const candidate = (await service.scanCleanup()).find((item) => item.source === 'codex')
+    assert.ok(candidate)
+    await service.moveCleanupToTrash([candidate.id])
+
+    const included = await service.getSnapshot(false)
+    service.updateSettings({ includeDeletedSessionsInStats: false })
+    const excluded = await service.getSnapshot(false)
+
+    expect(included.overview.totalTokens).toBeGreaterThan(0)
+    expect(excluded.overview.totalTokens).toBe(0)
+  })
 
   it('ignores unknown candidate ids gracefully', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
@@ -1842,7 +1982,7 @@ describe('moveCleanupToTrash', () => {
     vi.spyOn(service, 'scanCleanup').mockResolvedValue([candidate])
     vi.spyOn(service, 'rescan').mockRejectedValue(new Error('rescan failed after trash'))
 
-    await expect(service.moveCleanupToTrash([candidate.id])).rejects.toThrow(/rescan failed/)
+    await expect(service.moveCleanupToTrash([candidate.id])).resolves.toHaveLength(1)
     const recovery = service.getRecoveryRecords().find((item) => item.operation === 'trash')
 
     expect(recovery?.risk).toBe('low')
@@ -1851,6 +1991,37 @@ describe('moveCleanupToTrash', () => {
         expect.objectContaining({ code: 'rescan.failed', message: 'rescan failed after trash' }),
       ]),
     )
+  })
+
+  it('keeps the original session live when deleting only a duplicate backup', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const sessionPath = await writeJsonlSession(fixtureRoot, 'codex')
+    const snapshot = await service.rescan()
+    const session = snapshot.sessions.find((item) => item.source === 'codex')
+    assert.ok(session)
+    const duplicatePath = path.join(userDataPath, 'duplicate-backup.zip')
+    await writeFile(duplicatePath, 'duplicate backup')
+    const candidate: CleanupCandidate = {
+      id: 'duplicate-backup-session-state',
+      kind: 'duplicate-backup',
+      title: 'Duplicate backup',
+      source: 'codex',
+      sessionIds: [session.id],
+      paths: [duplicatePath],
+      sizeBytes: 16,
+      lastUpdated: session.lastUpdated,
+      reason: 'Fixture duplicate backup.',
+      risk: 'low',
+      recoverable: true,
+      backedUp: true,
+    }
+    vi.spyOn(service, 'scanCleanup').mockResolvedValue([candidate])
+    vi.spyOn(service, 'rescan').mockRejectedValue(new Error('rescan unavailable'))
+
+    await expect(service.moveCleanupToTrash([candidate.id])).resolves.toHaveLength(1)
+    await expect(stat(duplicatePath)).rejects.toThrow()
+    await expect(stat(sessionPath)).resolves.toBeDefined()
+    expect(service['db'].getSession(session.id)?.storageState).toBe('live')
   })
 
   it('moves a worktree candidate to Trash, prunes the parent repo, and records its kind', async () => {
@@ -1942,82 +2113,12 @@ describe('moveCleanupToTrash', () => {
   }, 20_000)
 })
 
-// ---------------------------------------------------------------------------
-// restoreTrash
-// ---------------------------------------------------------------------------
-
 describe('restoreTrash', () => {
-  it('moves session file back from trash to original path', async () => {
-    const service = await initServiceWithScan(fixtureRoot, userDataPath)
-    service.updateSettings({ cleanupRetentionDays: 0 })
-    const filePath = await writeJsonlSession(fixtureRoot, 'codex')
-    // Second session keeps rescan non-empty after codex is moved to trash
-    await writeJsonlSession(fixtureRoot, 'claude', { filename: 'claude-session.jsonl' })
-    await service.rescan()
-    const candidates = await service.scanCleanup()
-    const candidate = candidates.find((c) => c.source === 'codex')
-    assert.ok(candidate)
-
-    const [trashRecord] = await service.moveCleanupToTrash([candidate.id])
-    assert.ok(trashRecord)
-
-    // Recreate parent dir so restore target is reachable, then restore
-    await mkdir(path.dirname(filePath), { recursive: true })
-    await service.restoreTrash(trashRecord.id)
-
-    const info = await stat(filePath)
-    expect(info.size).toBeGreaterThan(0)
-  }, 20_000)
-
-  it('removes trash record from snapshot after restore', async () => {
-    const service = await initServiceWithScan(fixtureRoot, userDataPath)
-    service.updateSettings({ cleanupRetentionDays: 0 })
-    await writeJsonlSession(fixtureRoot, 'codex')
-    await writeJsonlSession(fixtureRoot, 'claude', { filename: 'claude-session.jsonl' })
-    await service.rescan()
-    const candidates = await service.scanCleanup()
-    const candidate = candidates.find((c) => c.source === 'codex')
-    assert.ok(candidate)
-
-    const [trashRecord] = await service.moveCleanupToTrash([candidate.id])
-    assert.ok(trashRecord)
-    await mkdir(path.dirname(trashRecord.originalPaths[0]), { recursive: true })
-    await service.restoreTrash(trashRecord.id)
-
-    // After restore, both sessions are back; getSnapshot(true) is safe
-    const after = await service.getSnapshot(true)
-    expect(after.trash.find((t) => t.id === trashRecord.id)).toBeUndefined()
-  }, 20_000)
-
   it('restoreTrash throws when trash record not found', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
     await writeJsonlSession(fixtureRoot, 'codex')
     await service.rescan()
     await expect(service.restoreTrash('no-such-trash')).rejects.toThrow(/Trash item not found/)
-  })
-
-  it('restoreTrash ignores trash records whose moved file is already gone', async () => {
-    const service = await initServiceWithScan(fixtureRoot, userDataPath)
-    service.updateSettings({ cleanupRetentionDays: 0 })
-    await writeJsonlSession(fixtureRoot, 'codex')
-    await service.rescan()
-    let trashRecord
-    vi.useFakeTimers({ toFake: ['Date'] })
-    try {
-      vi.setSystemTime(new Date(Date.now() + 60_000))
-      const candidates = await service.scanCleanup()
-      const candidate = candidates.find((c) => c.source === 'codex')
-      assert.ok(candidate)
-      const records = await service.moveCleanupToTrash([candidate.id])
-      trashRecord = records[0]
-      assert.ok(trashRecord)
-    } finally {
-      vi.useRealTimers()
-    }
-    await rm(trashRecord.trashPath, { recursive: true, force: true })
-
-    // restoreTrash resolves to the restored candidate's kind (a session kind here).
-    await expect(service.restoreTrash(trashRecord.id)).resolves.toBe(trashRecord.kind)
   })
 })
 
@@ -2055,42 +2156,6 @@ describe('purgeExpiredTrash', () => {
       service.getRecoveryRecords().find((item) => item.operation === 'purge-trash')?.status,
     ).toBe('failed')
   })
-
-  it('removes only expired trash records and keeps fresh records recoverable', async () => {
-    const service = await initServiceWithScan(fixtureRoot, userDataPath)
-    service.updateSettings({ cleanupRetentionDays: 0, trashRetentionDays: 1 })
-    await writeJsonlSession(fixtureRoot, 'codex')
-    await writeJsonlSession(fixtureRoot, 'claude', { filename: 'claude-session.jsonl' })
-    await writeJsonlSession(fixtureRoot, 'gemini', { filename: 'gemini-session.jsonl' })
-    await service.rescan()
-    const candidates = await service.scanCleanup()
-    const selected = candidates
-      .filter((candidate) => candidate.source === 'codex' || candidate.source === 'claude')
-      .map((candidate) => candidate.id)
-
-    const trashRecords = await service.moveCleanupToTrash(selected)
-    expect(trashRecords).toHaveLength(2)
-    const [expired, fresh] = trashRecords
-    const expiredRecord = {
-      ...expired,
-      deletedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-    }
-    const freshRecord = {
-      ...fresh,
-      deletedAt: new Date().toISOString(),
-    }
-    service['db'].insertTrash(expiredRecord)
-    service['db'].insertTrash(freshRecord)
-
-    const purged = await service.purgeExpiredTrash()
-
-    expect(purged.map((record) => record.id)).toEqual([expired.id])
-    await expect(stat(expired.trashPath)).rejects.toThrow()
-    await expect(stat(fresh.trashPath)).resolves.toBeDefined()
-    const snapshot = await service.getSnapshot(false)
-    expect(snapshot.trash.find((record) => record.id === expired.id)).toBeUndefined()
-    expect(snapshot.trash.find((record) => record.id === fresh.id)).toBeDefined()
-  }, 20_000)
 })
 
 // ---------------------------------------------------------------------------
@@ -2141,7 +2206,7 @@ describe('recovery system', () => {
     await expect(stat(exportPath)).rejects.toThrow()
   }, 20_000)
 
-  it('undoes a Trash move by restoring all moved files', async () => {
+  it('directs system Trash recovery to the operating system instead of app undo', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
     service.updateSettings({ cleanupRetentionDays: 0 })
     const filePath = await writeJsonlSession(fixtureRoot, 'codex')
@@ -2150,52 +2215,18 @@ describe('recovery system', () => {
     const candidate = (await service.scanCleanup()).find((item) => item.source === 'codex')
     assert.ok(candidate)
 
-    const [trashRecord] = await service.moveCleanupToTrash([candidate.id])
-    assert.ok(trashRecord)
+    await service.moveCleanupToTrash([candidate.id])
     await expect(stat(filePath)).rejects.toThrow()
-    const recovery = service
-      .getRecoveryRecords()
-      .find((record) => record.operation === 'trash' && record.metadata.trashIds)
+    const recovery = service.getRecoveryRecords().find((record) => record.operation === 'trash')
     assert.ok(recovery)
 
-    await service.undoRecovery(recovery.id)
-    expect(await readFile(filePath, 'utf8')).toContain('rare migration needle')
-    expect(
-      (await service.getSnapshot(true)).trash.find((record) => record.id === trashRecord.id),
-    ).toBe(undefined)
-  }, 20_000)
-
-  it('keeps purge checkpoints recoverable through undo', async () => {
-    const service = await initServiceWithScan(fixtureRoot, userDataPath)
-    service.updateSettings({ cleanupRetentionDays: 0, trashRetentionDays: 1 })
-    await writeJsonlSession(fixtureRoot, 'codex')
-    await writeJsonlSession(fixtureRoot, 'claude', { filename: 'claude-session.jsonl' })
-    await service.rescan()
-    const candidate = (await service.scanCleanup()).find((item) => item.source === 'codex')
-    assert.ok(candidate)
-
-    const [trashRecord] = await service.moveCleanupToTrash([candidate.id])
-    assert.ok(trashRecord)
-    const expiredRecord = {
-      ...trashRecord,
-      deletedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-    }
-    service['db'].insertTrash(expiredRecord)
-
-    const purged = await service.purgeExpiredTrash()
-    expect(purged.map((record) => record.id)).toEqual([trashRecord.id])
-    await expect(stat(trashRecord.trashPath)).rejects.toThrow()
-    const recovery = service
-      .getRecoveryRecords()
-      .find((record) => record.operation === 'purge-trash')
-    assert.ok(recovery)
-    expect(recovery.undo.available).toBe(true)
-
-    await service.undoRecovery(recovery.id)
-    await expect(stat(trashRecord.trashPath)).resolves.toBeDefined()
-    expect(
-      (await service.getSnapshot(false)).trash.find((record) => record.id === trashRecord.id),
-    ).toBeDefined()
+    expect(recovery.undo).toMatchObject({
+      kind: 'none',
+      available: false,
+      label: 'Restore from the system Trash',
+    })
+    await expect(service.undoRecovery(recovery.id)).rejects.toThrow(/operating system Trash/)
+    await expect(stat(filePath)).rejects.toThrow()
   }, 20_000)
 
   it('records unavailable purge undo when expired Trash paths are already gone', async () => {
