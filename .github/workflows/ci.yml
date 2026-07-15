@@ -196,8 +196,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run checks
-        run: pnpm check
+      - name: Run cross-platform checks
+        run: pnpm lint && pnpm test && pnpm verify:functions && pnpm build
 
       - name: Build Windows installer
         run: pnpm dist:win
