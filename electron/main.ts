@@ -100,8 +100,6 @@ function registerIpc(): void {
   ipcMain.handle('worktree:trash', (_event, worktreePath: string) =>
     service.trashWorktree(worktreePath),
   )
-  ipcMain.handle('trash:purgeExpired', () => service.purgeExpiredTrash())
-  ipcMain.handle('trash:restore', (_event, trashId: string) => service.restoreTrash(trashId))
   ipcMain.handle('recovery:list', () => service.getRecoveryRecords())
   ipcMain.handle('recovery:diagnose', (_event, recoveryId: string) =>
     service.diagnoseRecovery(recoveryId),
@@ -141,6 +139,7 @@ app.whenReady().then(async () => {
     userDataPath: app.getPath('userData'),
     appVersion: app.getVersion(),
     openPath: openTarget,
+    trashItem: (targetPath) => shell.trashItem(targetPath),
   })
   updateService = new UpdateService({
     userDataPath: app.getPath('userData'),

@@ -268,6 +268,69 @@ describe('upsertSessions', () => {
   })
 })
 
+describe('reconcileScannedSessions', () => {
+  it('keeps deleted history while replacing stale active sessions', () => {
+    db.replaceSessions([
+      makeSession({
+        id: 'deleted',
+        storageState: 'deleted',
+        metadata: {
+          ...makeSession().metadata,
+          deletedAt: '2026-01-02T00:00:00.000Z',
+          deletedFromState: 'live',
+        },
+      }),
+      makeSession({ id: 'stale-live' }),
+    ])
+
+    db.reconcileScannedSessions([makeSession({ id: 'fresh-live' })])
+
+    expect(db.getSession('deleted')?.metadata).toMatchObject({
+      deletedAt: '2026-01-02T00:00:00.000Z',
+      deletedFromState: 'live',
+    })
+    expect(
+      db
+        .getSessions()
+        .map((session) => session.id)
+        .sort(),
+    ).toEqual(['deleted', 'fresh-live'])
+  })
+
+  it('restores a deleted record to live when the scanner finds the same id again', () => {
+    db.replaceSessions([
+      makeSession({
+        storageState: 'deleted',
+        metadata: {
+          ...makeSession().metadata,
+          deletedAt: '2026-01-02T00:00:00.000Z',
+          deletedFromState: 'live',
+        },
+      }),
+    ])
+
+    db.reconcileScannedSessions([
+      makeSession({
+        storageState: 'live',
+        title: 'Restored',
+        metadata: {
+          ...makeSession().metadata,
+          deletedAt: undefined,
+          deletedFromState: undefined,
+        },
+      }),
+    ])
+
+    const restored = db.getSession('session-1')
+    expect(restored).toMatchObject({
+      storageState: 'live',
+      title: 'Restored',
+    })
+    expect(restored?.metadata.deletedAt).toBeUndefined()
+    expect(restored?.metadata.deletedFromState).toBeUndefined()
+  })
+})
+
 describe('getSession', () => {
   it('returns undefined for unknown id', () => {
     expect(db.getSession('missing')).toBeUndefined()

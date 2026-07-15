@@ -59,8 +59,6 @@ type DashboardState = {
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<void>
   trashWorktree: (worktreePath: string) => Promise<void>
-  restoreTrash: (trashId: string) => Promise<void>
-  purgeExpiredTrash: () => Promise<void>
   diagnoseRecovery: (recoveryId: string) => Promise<RecoveryRecord | undefined>
   undoRecovery: (recoveryId: string) => Promise<void>
 }
@@ -98,6 +96,7 @@ const defaultSettings = (): AppSettings => ({
   scanOnLaunch: true,
   backgroundScan: true,
   confirmBeforeCleanup: true,
+  includeDeletedSessionsInStats: true,
   excludedFolders: [],
   soundEffects: true,
   cleanupSound: true,
@@ -468,7 +467,11 @@ export function useDashboard(): DashboardState {
             : optimistic
           const nextSettings = mergeSettings(persisted)
           setSettings(nextSettings)
-          if (options.rescan && !nextSettings.mockDataEnabled) await load(true)
+          if (options.rescan && !nextSettings.mockDataEnabled) {
+            await load(true)
+          } else if ('includeDeletedSessionsInStats' in patch && !nextSettings.mockDataEnabled) {
+            await load(false)
+          }
           return nextSettings
         } catch (error) {
           console.error(error)
@@ -652,7 +655,7 @@ export function useDashboard(): DashboardState {
         }
         await window.cleanMyAgent.restoreArchive(archiveId)
         toast.success(t('toast.restored'))
-        await load(true)
+        await load(false)
       },
       exportSession: async (sessionId: string, format: ExportFormat) => {
         if (!window.cleanMyAgent) {
@@ -713,7 +716,7 @@ export function useDashboard(): DashboardState {
             plural: records.length === 1 ? '' : 's',
           }),
         )
-        await load(true)
+        await load(false)
       },
       trashWorktree: async (worktreePath: string) => {
         if (!window.cleanMyAgent) {
@@ -727,55 +730,6 @@ export function useDashboard(): DashboardState {
           toast.error(t('toast.worktreeTrashError'))
         }
         await load(true)
-      },
-      restoreTrash: async (trashId: string) => {
-        if (settings.mockDataEnabled) {
-          toast.info(t('toast.trashRestoreLiveOnly'))
-          return
-        }
-
-        if (!window.cleanMyAgent) {
-          toast.info(t('toast.trashDesktopOnly'))
-          return
-        }
-
-        try {
-          const restoredKind = await window.cleanMyAgent.restoreTrash(trashId)
-          if (restoredKind === 'stale-worktree' || restoredKind === 'dirty-worktree') {
-            toast.success(t('toast.worktreeRestored'))
-          } else {
-            toast.success(t('toast.trashRestored'))
-          }
-          await load(true)
-        } catch (error) {
-          console.error(error)
-          toast.error(t('toast.trashRestoreError'))
-        }
-      },
-      purgeExpiredTrash: async () => {
-        if (settings.mockDataEnabled) {
-          toast.info(t('toast.trashPurgeLiveOnly'))
-          return
-        }
-
-        if (!window.cleanMyAgent) {
-          toast.info(t('toast.trashDesktopOnly'))
-          return
-        }
-
-        try {
-          const records = await window.cleanMyAgent.purgeExpiredTrash()
-          toast.success(
-            t('toast.trashPurged', {
-              count: records.length,
-              plural: records.length === 1 ? '' : 's',
-            }),
-          )
-          await load(false)
-        } catch (error) {
-          console.error(error)
-          toast.error(t('toast.trashPurgeError'))
-        }
       },
       diagnoseRecovery: async (recoveryId: string) => {
         if (!window.cleanMyAgent) {

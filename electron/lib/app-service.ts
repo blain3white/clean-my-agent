@@ -18,6 +18,7 @@ import type {
   RecoveryDiagnostic,
   SessionRecord,
   StorageSlice,
+  SystemTrashResult,
   TrashRecord,
   UsagePoint,
   WorktreeRecord,
@@ -497,6 +498,12 @@ function normalizeSettingsPatch(patch: Partial<AppSettings>): Partial<AppSetting
   if ('confirmBeforeCleanup' in patch) {
     next.confirmBeforeCleanup = normalizeBoolean(patch.confirmBeforeCleanup, 'confirmBeforeCleanup')
   }
+  if ('includeDeletedSessionsInStats' in patch) {
+    next.includeDeletedSessionsInStats = normalizeBoolean(
+      patch.includeDeletedSessionsInStats,
+      'includeDeletedSessionsInStats',
+    )
+  }
   if ('excludedFolders' in patch) {
     next.excludedFolders = normalizeExcludedFolders(patch.excludedFolders)
   }
@@ -660,6 +667,7 @@ export class AppService {
   private readonly userDataPath: string
   private readonly appVersion: string
   private readonly openPathHandler: (targetPath: string) => Promise<unknown>
+  private readonly trashItemHandler: (targetPath: string) => Promise<void>
   private diagnosticOperations: DiagnosticOperation[] = []
   private rescanPromise?: Promise<DashboardSnapshot>
   private scanStates = new Map<AgentSource, AgentInstallState>()
@@ -673,11 +681,20 @@ export class AppService {
     userDataPath: string
     appVersion?: string
     openPath?: (targetPath: string) => Promise<unknown>
+    trashItem?: (targetPath: string) => Promise<void>
   }) {
-    const { userDataPath, appVersion = '0.0.0', openPath = async () => undefined } = options
+    const {
+      userDataPath,
+      appVersion = '0.0.0',
+      openPath = async () => undefined,
+      trashItem = async () => {
+        throw new Error('System Trash is unavailable in this runtime.')
+      },
+    } = options
     this.userDataPath = userDataPath
     this.appVersion = appVersion
     this.openPathHandler = openPath
+    this.trashItemHandler = trashItem
     this.db = new LocalDatabase(path.join(userDataPath, 'clean-my-agent.sqlite'))
   }
 
@@ -711,7 +728,11 @@ export class AppService {
         ...this.sessionsFromArchives(archives),
       ])
       const enabledSources = new Set(enabledProviderSources(settings))
-      const sessions = allSessions.filter((session) => enabledSources.has(session.source))
+      const persistedSessions = allSessions.filter((session) => enabledSources.has(session.source))
+      const sessions = persistedSessions.filter((session) => session.storageState !== 'deleted')
+      const analyticsSessions = settings.includeDeletedSessionsInStats
+        ? persistedSessions
+        : sessions
       const backups = this.db.getBackups()
       const trash = this.db.getTrash()
       const recovery = this.db.getRecoveryRecords()
@@ -760,8 +781,11 @@ export class AppService {
             .length,
           reclaimableBytes: cleanup.reduce((total, item) => total + item.sizeBytes, 0),
           lastBackupAt: backups[0]?.createdAt,
-          totalTokens: sessions.reduce((total, session) => total + session.tokens.total, 0),
-          totalCostUsd: sessions.reduce(
+          totalTokens: analyticsSessions.reduce(
+            (total, session) => total + session.tokens.total,
+            0,
+          ),
+          totalCostUsd: analyticsSessions.reduce(
             (total, session) => total + (session.tokens.costUsd ?? 0),
             0,
           ),
@@ -780,7 +804,7 @@ export class AppService {
         recovery,
         worktreeDiagnostics: this.worktreeDiagnostics,
         worktrees: this.worktreeRecords,
-        usage: this.buildUsage(sessions),
+        usage: this.buildUsage(analyticsSessions),
         storage: this.buildStorage(sessions, archives, backups, trash),
       }
     })
@@ -799,7 +823,9 @@ export class AppService {
       const inactiveCachedSessions = this.db
         .getSessions()
         .filter((session) => !enabledSources.has(session.source))
-      this.db.replaceSessions(this.mergeBackupStatus([...inactiveCachedSessions, ...sessions]))
+      this.db.reconcileScannedSessions(
+        this.mergeBackupStatus([...inactiveCachedSessions, ...sessions]),
+      )
       this.db.setSetting('scanSchemaVersion', scanSchemaVersion)
       this.db.setSetting('lastScannedAt', new Date().toISOString())
       await this.refreshWorktreeScan(
@@ -1236,7 +1262,9 @@ export class AppService {
       const enabledSources = new Set(enabledProviderSources(settings))
       const allSessions = this.mergeBackupStatus(this.db.getSessions())
       const sessionCandidates = this.buildCleanupCandidates(
-        allSessions.filter((session) => enabledSources.has(session.source)),
+        allSessions.filter(
+          (session) => enabledSources.has(session.source) && session.storageState !== 'deleted',
+        ),
         this.db.getBackups(),
       )
       await this.refreshWorktreeScan(settings, uniqueProjectPaths(allSessions))
@@ -1268,7 +1296,7 @@ export class AppService {
     )
   }
 
-  async trashWorktree(worktreePath: string): Promise<TrashRecord | undefined> {
+  async trashWorktree(worktreePath: string): Promise<SystemTrashResult | undefined> {
     return this.trackAsync('worktree.trash', async () => {
       const candidates = await this.scanCleanup()
       const candidate = candidates.find((c) => c.paths[0] === worktreePath)
@@ -1278,12 +1306,12 @@ export class AppService {
     })
   }
 
-  async moveCleanupToTrash(candidateIds: string[]): Promise<TrashRecord[]> {
+  async moveCleanupToTrash(candidateIds: string[]): Promise<SystemTrashResult[]> {
     return this.trackAsync('cleanup.moveToTrash', async () => {
       const ids = validateIdentifierArray(candidateIds, 'candidateIds')
       const candidates = await this.scanCleanup()
       const selected = candidates.filter((candidate) => ids.includes(candidate.id))
-      const records: TrashRecord[] = []
+      const records: SystemTrashResult[] = []
       if (selected.length === 0) return records
 
       const recoveryPaths: RecoveryRecord['paths'] = selected.flatMap((candidate) =>
@@ -1296,8 +1324,7 @@ export class AppService {
       const recovery = this.startRecovery({
         operation: 'trash',
         title: `Move ${selected.length} cleanup item${selected.length === 1 ? '' : 's'} to Trash`,
-        explanation:
-          'Backs up any unprotected sessions first, then moves cleanup candidate files into the app Trash instead of permanently deleting them.',
+        explanation: 'Moves cleanup candidate files into the operating system Trash.',
         risk: selected.some((candidate) => candidate.risk === 'high')
           ? 'high'
           : selected.some((candidate) => candidate.risk === 'medium')
@@ -1306,33 +1333,20 @@ export class AppService {
         paths: recoveryPaths,
         metadata: { candidateIds: ids },
       })
-      const movedPaths: Array<{ from: string; to: string }> = []
-      const createdTrashIds: string[] = []
-      const createdTrashPaths: string[] = []
+      const movedPaths: string[] = []
+      const selectedPaths = new Set<string>()
 
       for (const candidate of selected) {
+        const deletedAt = new Date().toISOString()
+        const sessionsByStoragePath = new Map(
+          candidate.sessionIds
+            .map((sessionId) => this.db.getSession(sessionId))
+            .filter((session): session is SessionRecord => Boolean(session))
+            .map((session) => [path.resolve(session.storagePath), session] as const),
+        )
         try {
-          if (!candidate.backedUp && candidate.sessionIds.length > 0) {
-            for (const sessionId of candidate.sessionIds) {
-              await this.backupSession(sessionId)
-            }
-          }
-
-          const deletedAt = new Date().toISOString()
-          const trashPath = path.join(
-            this.userDataPath,
-            'Trash',
-            `${sanitizeName(candidate.title)}-${candidate.id}`,
-          )
-          await ensureDir(trashPath)
-          createdTrashPaths.push(trashPath)
-          recoveryPaths.push({
-            label: `App Trash: ${candidate.title}`,
-            path: trashPath,
-            role: 'trash',
-          })
-
           const originalPaths: string[] = []
+          let movedSizeBytes = 0
           // For worktree candidates, resolve the parent repo before the .git pointer
           // is moved into Trash. We prune the parent repo after the move so its
           // worktree registry stays tidy (ADR-0001; best-effort, never blocks).
@@ -1342,16 +1356,32 @@ export class AppService {
             ? await resolveParentRepoFromWorktree(candidate.paths[0] ?? '')
             : null
           for (const originalPath of candidate.paths) {
-            if (!(await exists(originalPath))) continue
-            const target = path.join(trashPath, sanitizeName(path.basename(originalPath)))
-            await movePath(originalPath, target)
-            movedPaths.push({ from: originalPath, to: target })
+            const resolvedPath = path.resolve(originalPath)
+            if (selectedPaths.has(resolvedPath) || !(await exists(originalPath))) continue
+            const sizeBytes = await pathSize(originalPath)
+            await this.trashItemHandler(originalPath)
+            selectedPaths.add(resolvedPath)
+            movedPaths.push(originalPath)
             originalPaths.push(originalPath)
-            recoveryPaths.push({
-              label: `Moved copy: ${candidate.title}`,
-              path: target,
-              role: 'trash',
-            })
+            movedSizeBytes += sizeBytes
+            const deletedSession = sessionsByStoragePath.get(resolvedPath)
+            if (deletedSession) {
+              // System Trash cannot be rolled back atomically. Persist the
+              // historical session immediately so a later path/candidate
+              // failure cannot lose its usage metadata.
+              this.db.upsertSessions([
+                {
+                  ...deletedSession,
+                  storageState: 'deleted',
+                  sizeBytes: 0,
+                  metadata: {
+                    ...deletedSession.metadata,
+                    deletedAt,
+                    deletedFromState: deletedSession.storageState,
+                  },
+                },
+              ])
+            }
           }
           if (worktreeParent) {
             // Best-effort prune: failures must not roll back the Trash move.
@@ -1362,36 +1392,34 @@ export class AppService {
             }
           }
 
-          const record: TrashRecord = {
-            id: hashId([candidate.id, deletedAt]),
+          if (originalPaths.length === 0) continue
+
+          const record: SystemTrashResult = {
             candidateId: candidate.id,
             title: candidate.title,
             source: candidate.source,
             kind: candidate.kind,
             originalPaths,
-            trashPath,
-            sizeBytes: await pathSize(trashPath),
+            sizeBytes: movedSizeBytes,
             deletedAt,
             risk: candidate.risk,
-            recoverable: true,
           }
-          this.db.insertTrash(record)
-          createdTrashIds.push(record.id)
           records.push(record)
         } catch (error) {
-          for (const movedPath of movedPaths.slice().reverse()) {
-            if ((await exists(movedPath.to)) && !(await exists(movedPath.from))) {
-              await movePath(movedPath.to, movedPath.from)
-            }
-          }
-          createdTrashIds.forEach((trashId) => this.db.deleteTrashRecord(trashId))
-          for (const trashPath of createdTrashPaths) {
-            await removePath(trashPath)
-          }
           this.failRecovery(recovery, error, {
             paths: recoveryPaths,
             metadata: { candidateIds: ids, movedPaths },
           })
+          if (movedPaths.length > 0) {
+            // Reconcile any paths that survived a partial native Trash
+            // failure. A rediscovered session becomes live again, while a
+            // fully moved session remains in deleted history.
+            try {
+              await this.rescan()
+            } catch {
+              // Preserve the original native Trash failure for the caller.
+            }
+          }
           throw error
         }
       }
@@ -1399,14 +1427,13 @@ export class AppService {
       const completedRecovery = this.completeRecovery(recovery, {
         paths: recoveryPaths,
         undo: {
-          kind: 'restore-trash',
-          available: records.length > 0,
-          label: 'Restore moved cleanup items',
-          ...(records.length === 0 ? { reason: 'No files were moved to Trash.' } : {}),
+          kind: 'none',
+          available: false,
+          label: 'Restore from the system Trash',
+          reason: 'Use the operating system Trash to restore deleted files.',
         },
         metadata: {
           candidateIds: ids,
-          trashIds: records.map((record) => record.id),
           movedPaths,
         },
       })
@@ -1424,7 +1451,6 @@ export class AppService {
             },
           ],
         })
-        throw error
       }
       return records
     })
@@ -1945,6 +1971,7 @@ export class AppService {
       scanOnLaunch: true,
       backgroundScan: true,
       confirmBeforeCleanup: true,
+      includeDeletedSessionsInStats: true,
       excludedFolders: [],
       soundEffects: true,
       cleanupSound: true,
@@ -1994,6 +2021,10 @@ export class AppService {
       scanOnLaunch: safeBoolean(raw.scanOnLaunch, defaults.scanOnLaunch),
       backgroundScan: safeBoolean(raw.backgroundScan, defaults.backgroundScan),
       confirmBeforeCleanup: safeBoolean(raw.confirmBeforeCleanup, defaults.confirmBeforeCleanup),
+      includeDeletedSessionsInStats: safeBoolean(
+        raw.includeDeletedSessionsInStats,
+        defaults.includeDeletedSessionsInStats,
+      ),
       excludedFolders: Array.isArray(raw.excludedFolders)
         ? Array.from(
             new Set(
@@ -2273,7 +2304,7 @@ export class AppService {
           lastUpdated: session.lastUpdated,
           reason: backedUp
             ? `Backed up and inactive for more than ${this.requireSettings().cleanupRetentionDays} days.`
-            : `Inactive for more than ${this.requireSettings().cleanupRetentionDays} days; backup will be created first.`,
+            : `Inactive for more than ${this.requireSettings().cleanupRetentionDays} days; no backup exists.`,
           risk: backedUp ? 'low' : 'medium',
           recoverable: true,
           backedUp,

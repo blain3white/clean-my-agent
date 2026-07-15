@@ -146,8 +146,6 @@ function App() {
             onDownloadLatestUpdate={dashboard.downloadLatestUpdate}
             onExportDiagnostics={dashboard.exportDiagnostics}
             onRescan={dashboard.rescan}
-            onRestoreTrash={dashboard.restoreTrash}
-            onPurgeExpiredTrash={dashboard.purgeExpiredTrash}
             onDiagnoseRecovery={dashboard.diagnoseRecovery}
             onUndoRecovery={dashboard.undoRecovery}
           />
