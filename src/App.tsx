@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Sidebar } from '@/app/Sidebar'
@@ -54,13 +54,18 @@ function App() {
   const [sessionProjectQuery, setSessionProjectQuery] = useState('')
   const dashboard = useDashboard()
   const theme = useTheme()
+  const ensureFullSnapshot = dashboard.ensureFullSnapshot
+
+  useEffect(() => {
+    if (activeView !== 'overview') void ensureFullSnapshot()
+  }, [activeView, ensureFullSnapshot])
 
   const content = useMemo(() => {
     switch (activeView) {
       case 'overview':
         return (
           <OverviewView
-            snapshot={dashboard.snapshot}
+            snapshot={dashboard.overviewSnapshot}
             usageRange={overviewRange}
             loading={dashboard.loading}
             lastIssue={dashboard.lastIssue}
@@ -70,6 +75,7 @@ function App() {
           />
         )
       case 'sessions':
+        if (!dashboard.fullSnapshotLoaded) return viewFallback
         return (
           <SessionsView
             key={sessionProjectQuery || 'all-sessions'}
@@ -85,6 +91,7 @@ function App() {
           />
         )
       case 'cleanup':
+        if (!dashboard.fullSnapshotLoaded) return viewFallback
         return (
           <CleanupView
             cleanup={dashboard.snapshot.cleanup}
@@ -98,6 +105,7 @@ function App() {
       case 'skills':
         return <SkillsView mockDataEnabled={dashboard.mockDataEnabled} />
       case 'usage':
+        if (!dashboard.fullSnapshotLoaded) return viewFallback
         return (
           <UsageView
             snapshot={dashboard.snapshot}
@@ -111,6 +119,7 @@ function App() {
           />
         )
       case 'relay':
+        if (!dashboard.fullSnapshotLoaded) return viewFallback
         return (
           <RelayView
             sessions={dashboard.snapshot.sessions}
@@ -118,8 +127,10 @@ function App() {
           />
         )
       case 'health':
+        if (!dashboard.fullSnapshotLoaded) return viewFallback
         return <HealthView snapshot={dashboard.snapshot} />
       case 'worktrees':
+        if (!dashboard.fullSnapshotLoaded) return viewFallback
         return (
           <WorktreesView
             worktrees={dashboard.snapshot.worktrees}
@@ -127,6 +138,7 @@ function App() {
           />
         )
       case 'settings':
+        if (!dashboard.fullSnapshotLoaded) return viewFallback
         return (
           <SettingsView
             snapshot={dashboard.snapshot}

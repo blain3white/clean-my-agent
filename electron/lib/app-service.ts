@@ -15,6 +15,7 @@ import type {
   DiagnosticPerformanceMetric,
   DiagnosticReport,
   ExportFormat,
+  OverviewSnapshot,
   RecoveryDiagnostic,
   SessionRecord,
   StorageSlice,
@@ -671,7 +672,7 @@ export class AppService {
   private readonly openPathHandler: (targetPath: string) => Promise<unknown>
   private readonly trashItemHandler: (targetPath: string) => Promise<void>
   private diagnosticOperations: DiagnosticOperation[] = []
-  private rescanPromise?: Promise<DashboardSnapshot>
+  private rescanPromise?: Promise<void>
   private scanStates = new Map<AgentSource, AgentInstallState>()
   private worktreeCandidates: CleanupCandidate[] = []
   private worktreeRecords: WorktreeRecord[] = []
@@ -812,7 +813,119 @@ export class AppService {
     })
   }
 
+  async getOverviewSnapshot(): Promise<OverviewSnapshot> {
+    return this.trackAsync('app.getOverviewSnapshot', async () => {
+      const startedAt = performance.now()
+      const settings = this.requireSettings()
+      const archives = this.db.getArchives()
+      const allSessions = this.mergeBackupStatus([
+        ...this.db.getSessions(),
+        ...this.sessionsFromArchives(archives),
+      ])
+      const enabledSources = new Set(enabledProviderSources(settings))
+      const persistedSessions = allSessions.filter((session) => enabledSources.has(session.source))
+      const sessions = persistedSessions.filter((session) => session.storageState !== 'deleted')
+      const analyticsSessions = settings.includeDeletedSessionsInStats
+        ? persistedSessions
+        : sessions
+      const backups = this.db.getBackups()
+      const trash = this.db.getTrash()
+      const liveSessions = sessions.filter((session) => session.storageState === 'live')
+      const cleanup = [
+        ...this.buildCleanupCandidates(liveSessions, backups),
+        ...this.worktreeCandidates,
+      ].sort((a, b) => b.sizeBytes - a.sizeBytes)
+      const wtByOwner = this.worktreeSizeByOwner()
+      const lastScannedAt = this.db.getSetting<string>('lastScannedAt')
+      const agents = await Promise.all(
+        adapters.map(async (adapter): Promise<AgentInstallState> => {
+          const providerEnabled = enabledSources.has(adapter.source)
+          const sourceSessions = sessions.filter((session) => session.source === adapter.source)
+          const liveSourceSessions = sourceSessions.filter(
+            (session) => session.storageState === 'live',
+          )
+          const roots = adapter.roots(settings)
+          const state = this.scanStates.get(adapter.source)
+          return {
+            ...state,
+            source: adapter.source,
+            name: adapter.name,
+            installed: providerEnabled
+              ? (state?.installed ?? sourceSessions.length > 0) ||
+                (adapter.source === 'custom' && roots.length > 0)
+              : false,
+            readable: providerEnabled ? (state?.readable ?? sourceSessions.length > 0) : false,
+            rootPaths: state?.rootPaths ?? roots,
+            sessionCount: sourceSessions.length,
+            sizeBytes: bytesFromRecords(liveSourceSessions) + (wtByOwner.get(adapter.source) ?? 0),
+            lastScannedAt: providerEnabled ? (state?.lastScannedAt ?? lastScannedAt) : undefined,
+            note: providerEnabled
+              ? (state?.note ?? adapter.name)
+              : 'Provider disabled in Settings.',
+          }
+        }),
+      )
+      const byDate = <T>(items: T[], dateOf: (item: T) => string | undefined) => {
+        const counts: Record<string, number> = {}
+        for (const item of items) {
+          const value = dateOf(item)
+          if (!value) continue
+          const key = dateKeyForTimezone(new Date(value), settings.usageTimezone)
+          counts[key] = (counts[key] ?? 0) + 1
+        }
+        return counts
+      }
+
+      return {
+        generatedAt: new Date().toISOString(),
+        overview: {
+          totalSessions: sessions.length,
+          backedUpSessions: sessions.filter((session) => session.backupStatus === 'backed-up')
+            .length,
+          reclaimableBytes: cleanup.reduce((total, item) => total + item.sizeBytes, 0),
+          lastBackupAt: backups[0]?.createdAt,
+          totalTokens: analyticsSessions.reduce(
+            (total, session) => total + session.tokens.total,
+            0,
+          ),
+          totalCostUsd: analyticsSessions.reduce(
+            (total, session) => total + (session.tokens.costUsd ?? 0),
+            0,
+          ),
+          totalSizeBytes:
+            bytesFromRecords(liveSessions) +
+            archiveBytes(archives) +
+            this.worktreeRecords.reduce((total, wt) => total + wt.sizeBytes, 0),
+          highRiskCleanupCount: cleanup.filter((item) => item.risk === 'high').length,
+        },
+        agents,
+        recentSessions: sessions.slice(0, 6),
+        recentCleanup: cleanup.slice(0, 4),
+        usage: this.buildUsage(analyticsSessions),
+        storage: this.buildStorage(sessions, archives, backups, trash),
+        trends: {
+          sessionsByDate: byDate(sessions, (session) => session.lastUpdated),
+          backupsByDate: byDate(backups, (backup) => backup.createdAt),
+          cleanupByDate: byDate(cleanup, (candidate) => candidate.lastUpdated),
+        },
+        performance: {
+          serviceDurationMs: roundDuration(performance.now() - startedAt),
+        },
+      }
+    })
+  }
+
   async rescan(): Promise<DashboardSnapshot> {
+    await this.scanPersistedData()
+    return this.getSnapshot(false)
+  }
+
+  async rescanOverview(): Promise<OverviewSnapshot> {
+    await this.scanPersistedData()
+    return this.getOverviewSnapshot()
+  }
+
+  private async scanPersistedData(): Promise<void> {
     if (this.rescanPromise) return this.rescanPromise
 
     const scan = this.trackAsync('app.rescan', async () => {
@@ -834,7 +947,6 @@ export class AppService {
         settings,
         uniqueProjectPaths([...sessions, ...inactiveCachedSessions]),
       )
-      return this.getSnapshot(false)
     })
     this.rescanPromise = scan
     const clearRescan = () => {
@@ -845,6 +957,16 @@ export class AppService {
   }
 
   async refreshRecentSessions(limit = 10): Promise<DashboardSnapshot> {
+    await this.refreshRecentSessionData(limit)
+    return this.getSnapshot(false)
+  }
+
+  async refreshRecentOverview(limit = 10): Promise<OverviewSnapshot> {
+    await this.refreshRecentSessionData(limit)
+    return this.getOverviewSnapshot()
+  }
+
+  private async refreshRecentSessionData(limit: number): Promise<void> {
     return this.trackAsync('app.refreshRecentSessions', async () => {
       const settings = this.requireSettings()
       const enabledSources = new Set(enabledProviderSources(settings))
@@ -869,7 +991,6 @@ export class AppService {
         )
       ).flat()
       this.db.upsertSessions(this.mergeBackupStatus(sessions))
-      return this.getSnapshot(false)
     })
   }
 
