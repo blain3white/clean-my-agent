@@ -51,6 +51,7 @@ export type ModelUsage = {
   key: string
   tokens: number
   cost: number
+  sessionCount: number
   share: number
   hasTokenMetadata: boolean
 }
@@ -886,25 +887,44 @@ function buildAgentUsageRows(
   return rows.map((row) => ({ ...row, share: total > 0 ? (row.tokens / total) * 100 : 0 }))
 }
 
-function buildModelUsageRows(sessions: SessionRecord[]): ModelUsage[] {
+function buildModelUsageRows(
+  sessions: SessionRecord[],
+  dateKeys: Set<string>,
+  timezone: string,
+  includeAllDates: boolean,
+): ModelUsage[] {
   const groups = new Map<
     string,
-    { key: string; model: string; tokens: number; cost: number; hasTokenMetadata: boolean }
+    {
+      key: string
+      model: string
+      tokens: number
+      cost: number
+      sessionCount: number
+      hasTokenMetadata: boolean
+    }
   >()
   for (const session of sessions) {
     const key = canonicalModelKey(session.tokens.model)
     const display = key ? key : 'Unknown model'
     const existing = groups.get(key)
-    const sessionTokens = session.tokens.total
-    const sessionCost =
+    const sessionTokens = includeAllDates
+      ? session.tokens.total
+      : sessionTokenTotalForDates([session], dateKeys, timezone)
+    const fullSessionCost =
       typeof session.tokens.costUsd === 'number' && session.tokens.costUsd > 0
         ? session.tokens.costUsd
         : 0
+    const sessionCost =
+      includeAllDates || session.tokens.total <= 0
+        ? fullSessionCost
+        : fullSessionCost * Math.min(1, sessionTokens / session.tokens.total)
     const hasTokenMetadata =
       sessionTokens + session.tokens.input + session.tokens.output + session.tokens.cached > 0
     if (existing) {
       existing.tokens += sessionTokens
       existing.cost += sessionCost
+      existing.sessionCount += 1
       existing.hasTokenMetadata = existing.hasTokenMetadata || hasTokenMetadata
     } else {
       groups.set(key, {
@@ -912,6 +932,7 @@ function buildModelUsageRows(sessions: SessionRecord[]): ModelUsage[] {
         model: display,
         tokens: sessionTokens,
         cost: sessionCost,
+        sessionCount: 1,
         hasTokenMetadata,
       })
     }
@@ -921,6 +942,31 @@ function buildModelUsageRows(sessions: SessionRecord[]): ModelUsage[] {
   return rows
     .map((row) => ({ ...row, share: total > 0 ? (row.tokens / total) * 100 : 0 }))
     .sort((a, b) => b.tokens - a.tokens)
+}
+
+export function buildTopModelUsagePanels(modelRows: ModelUsage[], limit = 4): ModelUsage[] {
+  const knownRows = modelRows.filter((row) => row.key)
+  const leadingRows = knownRows.slice(0, limit)
+  const remainingRows = knownRows.slice(limit)
+  const unknown = modelRows.find((row) => !row.key)
+  const totalTokens = modelRows.reduce((sum, row) => sum + row.tokens, 0)
+  const panels = [...leadingRows]
+
+  if (remainingRows.length > 0) {
+    const tokens = remainingRows.reduce((sum, row) => sum + row.tokens, 0)
+    panels.push({
+      key: 'others',
+      model: 'Others',
+      tokens,
+      cost: remainingRows.reduce((sum, row) => sum + row.cost, 0),
+      sessionCount: remainingRows.reduce((sum, row) => sum + row.sessionCount, 0),
+      share: totalTokens > 0 ? (tokens / totalTokens) * 100 : 0,
+      hasTokenMetadata: remainingRows.some((row) => row.hasTokenMetadata),
+    })
+  }
+  if (unknown) panels.push(unknown)
+
+  return panels
 }
 
 function buildProjectUsageRows(
@@ -1084,7 +1130,13 @@ export function buildUsageAnalytics(
     },
   }
   const agentRows = buildAgentUsageRows(snapshot, rangeSessions, selectedUsage)
-  const modelRows = buildModelUsageRows(rangeSessions)
+  const modelRows = buildModelUsageRows(
+    rangeSessions,
+    selectedDateKeys,
+    resolvedTimezone,
+    range === 'all',
+  )
+  const topModelPanels = buildTopModelUsagePanels(modelRows)
   const projectRows = buildProjectUsageRows(
     snapshot.sessions,
     selectedUsage,
@@ -1105,6 +1157,7 @@ export function buildUsageAnalytics(
     forecast,
     agentRows,
     modelRows,
+    topModelPanels,
     projectRows,
     trends: {
       totalTokens: usageTrendDetail(totalTokens, priorTokens, 'tokens'),
