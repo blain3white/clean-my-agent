@@ -470,6 +470,53 @@ describe('init and settings', () => {
 // ---------------------------------------------------------------------------
 
 describe('getSnapshot and rescan', () => {
+  it('builds a bounded Overview payload from a large persisted cache within 500 ms', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const template: SessionRecord = {
+      id: 'overview-template',
+      source: 'codex',
+      title: 'Overview template',
+      projectName: 'large-cache',
+      projectPath: '/tmp/large-cache',
+      storagePath: '/tmp/large-cache/session.jsonl',
+      storageKind: 'file',
+      storageState: 'live',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      lastUpdated: '2026-02-01T00:00:00.000Z',
+      messageCount: 2,
+      tokens: { input: 10, output: 10, cached: 0, total: 20, estimated: false },
+      sizeBytes: 1024,
+      backupStatus: 'pending',
+      tags: [],
+      metadata: {},
+    }
+    service['db'].replaceSessions(
+      Array.from({ length: 5_000 }, (_, index) => ({
+        ...template,
+        id: `overview-${index}`,
+        title: `Overview ${index}`,
+        storagePath: `/tmp/large-cache/${index}.jsonl`,
+        lastUpdated: new Date(Date.now() - (index % 500) * 24 * 60 * 60 * 1_000).toISOString(),
+      })),
+    )
+
+    const startedAt = performance.now()
+    const overview = await service.getOverviewSnapshot()
+    const durationMs = performance.now() - startedAt
+
+    expect(durationMs).toBeLessThan(500)
+    expect(overview.overview.totalSessions).toBe(5_000)
+    expect(overview.recentSessions).toHaveLength(6)
+    expect(overview.recentCleanup.length).toBeLessThanOrEqual(4)
+    expect(overview).not.toHaveProperty('sessions')
+    expect(overview).not.toHaveProperty('cleanup')
+    expect(overview).not.toHaveProperty('worktrees')
+    expect(Object.keys(overview.trends.sessionsByDate).length).toBeLessThanOrEqual(365)
+    expect(Object.keys(overview.trends.backupsByDate).length).toBeLessThanOrEqual(365)
+    expect(Object.keys(overview.trends.cleanupByDate).length).toBeLessThanOrEqual(365)
+    expect(overview.performance.serviceDurationMs).toBeGreaterThanOrEqual(0)
+  })
+
   it('returns cached data without implicitly running the launch scan', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
     await writeJsonlSession(fixtureRoot, 'codex')
@@ -569,6 +616,36 @@ describe('getSnapshot and rescan', () => {
     const after = await service.refreshRecentSessions(5)
     // At least the codex session should appear
     expect(after.sessions.some((s) => s.source === 'codex')).toBe(true)
+  })
+
+  it('rescanOverview and refreshRecentOverview keep the response bounded', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const rescannedPath = await writeJsonlSession(fixtureRoot, 'codex', {
+      filename: 'overview-rescan.jsonl',
+      contentExtra: ' rescan overview candidate',
+    })
+
+    const rescanned = await service.rescanOverview()
+    expect(rescanned.recentSessions.map((session) => session.storagePath)).toContain(rescannedPath)
+
+    const refreshedPath = await writeJsonlSession(fixtureRoot, 'codex', {
+      filename: 'overview-refresh.jsonl',
+      contentExtra: ' refresh overview candidate',
+    })
+    const refreshedAt = new Date(Date.now() + 60_000)
+    await utimes(refreshedPath, refreshedAt, refreshedAt)
+    const refreshed = await service.refreshRecentOverview(5)
+    expect(refreshed.overview.totalSessions).toBeGreaterThan(rescanned.overview.totalSessions)
+    expect(refreshed.recentSessions.map((session) => session.storagePath)).toContain(refreshedPath)
+
+    for (const overview of [rescanned, refreshed]) {
+      expect(overview.overview.totalSessions).toBeGreaterThanOrEqual(1)
+      expect(overview.recentSessions.length).toBeLessThanOrEqual(6)
+      expect(overview.recentCleanup.length).toBeLessThanOrEqual(4)
+      expect(overview).not.toHaveProperty('sessions')
+      expect(overview).not.toHaveProperty('cleanup')
+      expect(overview).not.toHaveProperty('worktrees')
+    }
   })
 
   it('refreshRecentSessions includes the newest candidate when a limit is requested', async () => {

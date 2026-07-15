@@ -76,6 +76,9 @@ async function openTarget(targetPath: string): Promise<void> {
 }
 
 function registerIpc(): void {
+  ipcMain.handle('app:getOverviewSnapshot', () => service.getOverviewSnapshot())
+  ipcMain.handle('app:rescanOverview', () => service.rescanOverview())
+  ipcMain.handle('app:refreshRecentOverview', () => service.refreshRecentOverview(10))
   ipcMain.handle('app:getSnapshot', () => service.getSnapshot(false))
   ipcMain.handle('app:rescan', () => service.getSnapshot(true))
   ipcMain.handle('app:refreshRecentSessions', () => service.refreshRecentSessions(10))

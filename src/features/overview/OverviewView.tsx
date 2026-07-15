@@ -41,13 +41,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { sourceColors } from '@/lib/agent-colors'
 import { dateKeyFromTime } from '@/lib/date-key'
 import { agentLabel, formatBytes, formatRelative, formatTokens, riskAccent } from '@/lib/format'
-import { sessionTokenTotalForDates } from '@/lib/usage-sessions'
 import {
   agentSources,
   type AgentSource,
   type CleanupCandidate,
-  type DashboardSnapshot,
-  type SessionRecord,
+  type OverviewSnapshot,
   type UsagePoint,
 } from '@/shared/types'
 import type { UsageRange } from '@/features/usage/ranges'
@@ -133,19 +131,7 @@ function usageDaysForRange(_usage: UsagePoint[], range: UsageRange): number {
   return range === 'all' ? 365 : range
 }
 
-function sessionCountForDates(sessions: SessionRecord[], dates: Set<string>): number {
-  return sessions.filter((session) =>
-    dates.has(dateKeyFromTime(new Date(session.lastUpdated).getTime())),
-  ).length
-}
-
-function cleanupCountForDates(cleanup: CleanupCandidate[], dates: Set<string>): number {
-  return cleanup.filter(
-    (item) => item.lastUpdated && dates.has(dateKeyFromTime(new Date(item.lastUpdated).getTime())),
-  ).length
-}
-
-function usageTotalForDates(snapshot: DashboardSnapshot, dates: Set<string>): number {
+function usageTotalForDates(snapshot: OverviewSnapshot, dates: Set<string>): number {
   return snapshot.usage.reduce(
     (total, point) => total + (dates.has(point.date) ? point.total : 0),
     0,
@@ -1154,7 +1140,7 @@ export function OverviewView({
   onSelectCleanup,
   onOpenSettings,
 }: {
-  snapshot: DashboardSnapshot
+  snapshot: OverviewSnapshot
   usageRange: UsageRange
   loading: boolean
   lastIssue: DashboardIssue | null
@@ -1162,33 +1148,25 @@ export function OverviewView({
   onSelectCleanup: () => void
   onOpenSettings: () => void
 }) {
-  const recentSessions = snapshot.sessions.slice(0, 6)
+  const recentSessions = snapshot.recentSessions
   const rangeDays = usageDaysForRange(snapshot.usage, usageRange)
   const currentRangeDates =
     usageRange === 'all' ? rangeDateKeys(snapshot.usage, usageRange) : recentDateKeys(rangeDays)
   const priorRangeDates =
     usageRange === 'all' ? new Set<string>() : recentDateKeys(rangeDays, rangeDays)
-  const sessionsInRange = sessionCountForDates(snapshot.sessions, currentRangeDates)
-  const sessionsPriorRange = sessionCountForDates(snapshot.sessions, priorRangeDates)
-  const backupsInRange = snapshot.backups.filter((backup) =>
-    currentRangeDates.has(dateKeyFromTime(new Date(backup.createdAt).getTime())),
-  ).length
-  const backupsPriorRange = snapshot.backups.filter((backup) =>
-    priorRangeDates.has(dateKeyFromTime(new Date(backup.createdAt).getTime())),
-  ).length
-  const cleanupInRange = cleanupCountForDates(snapshot.cleanup, currentRangeDates)
-  const cleanupPriorRange = cleanupCountForDates(snapshot.cleanup, priorRangeDates)
-  const tokensInRange =
-    sessionTokenTotalForDates(snapshot.sessions, currentRangeDates) ||
-    usageTotalForDates(snapshot, currentRangeDates)
-  const tokensPriorRange =
-    sessionTokenTotalForDates(snapshot.sessions, priorRangeDates) ||
-    usageTotalForDates(snapshot, priorRangeDates)
+  const countTrend = (values: Record<string, number>, dates: Set<string>) =>
+    Array.from(dates).reduce((total, date) => total + (values[date] ?? 0), 0)
+  const sessionsInRange = countTrend(snapshot.trends.sessionsByDate, currentRangeDates)
+  const sessionsPriorRange = countTrend(snapshot.trends.sessionsByDate, priorRangeDates)
+  const backupsInRange = countTrend(snapshot.trends.backupsByDate, currentRangeDates)
+  const backupsPriorRange = countTrend(snapshot.trends.backupsByDate, priorRangeDates)
+  const cleanupInRange = countTrend(snapshot.trends.cleanupByDate, currentRangeDates)
+  const cleanupPriorRange = countTrend(snapshot.trends.cleanupByDate, priorRangeDates)
+  const tokensInRange = usageTotalForDates(snapshot, currentRangeDates)
+  const tokensPriorRange = usageTotalForDates(snapshot, priorRangeDates)
   const rangeUsage = snapshot.usage.slice(-rangeDays)
   const selectedDateKeys = rangeDateKeys(snapshot.usage, usageRange)
-  const rangeSessions = snapshot.sessions.filter((session) =>
-    selectedDateKeys.has(dateKeyFromTime(new Date(session.lastUpdated).getTime())),
-  )
+  const rangeSessionCount = countTrend(snapshot.trends.sessionsByDate, selectedDateKeys)
   const storageData = snapshot.storage
     .filter((slice) => agentSources.includes(slice.source as AgentSource))
     .map((slice) => ({
@@ -1205,8 +1183,8 @@ export function OverviewView({
     snapshot.overview.backedUpSessions > 0 ||
     snapshot.overview.reclaimableBytes > 0 ||
     snapshot.overview.totalTokens > 0 ||
-    snapshot.sessions.length > 0 ||
-    snapshot.cleanup.length > 0 ||
+    snapshot.recentSessions.length > 0 ||
+    snapshot.recentCleanup.length > 0 ||
     snapshot.usage.some((point) => point.total > 0) ||
     storageTotal > 0
 
@@ -1263,7 +1241,7 @@ export function OverviewView({
         <StorageBreakdownCard
           storageData={storageData}
           storageTotal={storageTotal}
-          sessionCount={rangeSessions.length}
+          sessionCount={rangeSessionCount}
         />
       </section>
 
@@ -1338,7 +1316,7 @@ export function OverviewView({
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {snapshot.cleanup.length === 0 ? (
+              {snapshot.recentCleanup.length === 0 ? (
                 <EmptyState
                   compact
                   icon={CheckCircle2}
@@ -1358,9 +1336,9 @@ export function OverviewView({
                   }
                 />
               ) : (
-                snapshot.cleanup
-                  .slice(0, 4)
-                  .map((candidate) => <CleanupMiniRow key={candidate.id} candidate={candidate} />)
+                snapshot.recentCleanup.map((candidate) => (
+                  <CleanupMiniRow key={candidate.id} candidate={candidate} />
+                ))
               )}
             </div>
           </CardContent>
@@ -1376,7 +1354,7 @@ function OverviewEmptyState({
   onRefresh,
   onOpenSettings,
 }: {
-  snapshot: DashboardSnapshot
+  snapshot: OverviewSnapshot
   lastIssue: DashboardIssue | null
   onRefresh: () => Promise<void>
   onOpenSettings: () => void

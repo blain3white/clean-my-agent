@@ -2,6 +2,19 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { AppSettings, CleanMyAgentApi, ExportFormat } from '../src/shared/types'
 
 const api: CleanMyAgentApi = {
+  getOverviewSnapshot: async () => {
+    const startedAt = performance.now()
+    const snapshot = await ipcRenderer.invoke('app:getOverviewSnapshot')
+    return {
+      ...snapshot,
+      performance: {
+        ...snapshot.performance,
+        ipcDurationMs: Math.round((performance.now() - startedAt) * 100) / 100,
+      },
+    }
+  },
+  rescanOverview: () => ipcRenderer.invoke('app:rescanOverview'),
+  refreshRecentOverview: () => ipcRenderer.invoke('app:refreshRecentOverview'),
   getSnapshot: () => ipcRenderer.invoke('app:getSnapshot'),
   rescan: () => ipcRenderer.invoke('app:rescan'),
   refreshRecentSessions: () => ipcRenderer.invoke('app:refreshRecentSessions'),

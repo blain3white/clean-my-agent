@@ -290,6 +290,26 @@ export type DashboardSnapshot = {
   worktreeDiagnostics?: AgentScanDiagnostic[]
 }
 
+export type OverviewSnapshot = {
+  generatedAt: string
+  overview: DashboardOverview
+  agents: AgentInstallState[]
+  recentSessions: SessionRecord[]
+  recentCleanup: CleanupCandidate[]
+  usage: UsagePoint[]
+  storage: StorageSlice[]
+  trends: {
+    sessionsByDate: Record<string, number>
+    backupsByDate: Record<string, number>
+    cleanupByDate: Record<string, number>
+  }
+  performance: {
+    serviceDurationMs: number
+    ipcDurationMs?: number
+    rendererDurationMs?: number
+  }
+}
+
 export type WorktreeOwner = AgentSource | 'other'
 
 export type WorktreeRecord = {
@@ -519,6 +539,9 @@ export type DiagnosticReport = {
 }
 
 export type CleanMyAgentApi = {
+  getOverviewSnapshot: () => Promise<OverviewSnapshot>
+  rescanOverview: () => Promise<OverviewSnapshot>
+  refreshRecentOverview: () => Promise<OverviewSnapshot>
   getSnapshot: () => Promise<DashboardSnapshot>
   rescan: () => Promise<DashboardSnapshot>
   refreshRecentSessions: () => Promise<DashboardSnapshot>
