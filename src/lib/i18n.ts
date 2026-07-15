@@ -421,7 +421,7 @@ const en = {
   'settings.purgeExpiredTrashAction': 'Purge expired',
   'settings.includeDeletedSessionsInStats': 'Include deleted sessions in statistics',
   'settings.includeDeletedSessionsInStatsDescription':
-    'Keep deleted session metadata and token usage in Overview and Usage statistics.',
+    'Keep deleted session metadata, token usage, and estimated costs in Overview and Usage statistics.',
   'settings.trash': 'Trash',
   'settings.trashEmpty': 'Trash is empty',
   'settings.trashEmptyDescription': 'Cleaned sessions that can be restored will appear here.',
@@ -849,7 +849,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   'settings.purgeExpiredTrashAction': '清理过期项',
   'settings.includeDeletedSessionsInStats': '统计包含已删除会话',
   'settings.includeDeletedSessionsInStatsDescription':
-    '在概览和用量统计中保留已删除会话的元数据与 Token 用量。',
+    '在概览和用量统计中保留已删除会话的元数据、Token 用量与预估成本。',
   'settings.trash': '回收站',
   'settings.trashEmpty': '回收站为空',
   'settings.trashEmptyDescription': '清理后仍可恢复的会话会显示在这里。',

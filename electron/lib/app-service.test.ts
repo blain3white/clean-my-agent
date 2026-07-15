@@ -1699,7 +1699,7 @@ describe('scanCleanup', () => {
 })
 
 // ---------------------------------------------------------------------------
-// moveCleanupToTrash – auto-backup and path moves
+// moveCleanupToTrash – system Trash and path moves
 // ---------------------------------------------------------------------------
 
 describe('moveCleanupToTrash', () => {
@@ -1772,8 +1772,6 @@ describe('moveCleanupToTrash', () => {
     assert.ok(candidate)
 
     const trashRecords = await service.moveCleanupToTrash([candidate.id])
-    // Verify backup was created (returned trash record; check DB via snapshot with forceRescan=true
-    // which is safe because a 'claude' session still exists)
     expect(trashRecords).toHaveLength(1)
     const after = await service.getSnapshot(true)
     expect(after.backups).toHaveLength(0)
@@ -1802,6 +1800,10 @@ describe('moveCleanupToTrash', () => {
     service.updateSettings({ cleanupRetentionDays: 0 })
     const filePath = await writeJsonlSession(fixtureRoot, 'codex')
     await service.rescan()
+    const before = (await service.getSnapshot(false)).sessions.find(
+      (session) => session.source === 'codex',
+    )
+    assert.ok(before)
     const candidate = (await service.scanCleanup()).find((item) => item.source === 'codex')
     assert.ok(candidate)
 
@@ -1809,7 +1811,10 @@ describe('moveCleanupToTrash', () => {
       /system Trash unavailable/,
     )
     await expect(stat(filePath)).resolves.toBeDefined()
-    expect((await service.getSnapshot(false)).sessions).toHaveLength(1)
+    const after = (await service.getSnapshot(false)).sessions.find(
+      (session) => session.id === before.id,
+    )
+    expect(after).toEqual(before)
   })
 
   it('reports the default native Trash adapter as unavailable outside Electron', async () => {
@@ -1979,7 +1984,7 @@ describe('moveCleanupToTrash', () => {
     expect(records).toHaveLength(0)
   })
 
-  it('records medium-risk cleanup moves when source paths are already missing', async () => {
+  it('records medium-risk recovery without reporting missing paths as moved', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
     const missingPath = path.join(fixtureRoot, 'codex', 'already-gone.jsonl')
     const candidate: CleanupCandidate = {
@@ -2001,12 +2006,41 @@ describe('moveCleanupToTrash', () => {
     const records = await service.moveCleanupToTrash([candidate.id])
     const recovery = service.getRecoveryRecords().find((item) => item.operation === 'trash')
 
-    expect(records).toHaveLength(1)
-    expect(records[0].originalPaths).toEqual([])
+    expect(records).toHaveLength(0)
     expect(recovery?.risk).toBe('medium')
     expect(recovery?.paths).toEqual(
       expect.arrayContaining([expect.objectContaining({ path: missingPath, role: 'source' })]),
     )
+  })
+
+  it('moves overlapping candidate paths once and reports the bytes actually moved', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const filePath = await writeJsonlSession(fixtureRoot, 'codex')
+    const actualSize = (await stat(filePath)).size
+    const baseCandidate: CleanupCandidate = {
+      id: 'overlap-old',
+      kind: 'old-session',
+      title: 'Overlapping old session',
+      source: 'codex',
+      sessionIds: [],
+      paths: [filePath],
+      sizeBytes: actualSize * 2,
+      lastUpdated: '2026-01-01T00:00:00.000Z',
+      reason: 'Fixture candidate with an overlapping path.',
+      risk: 'medium',
+      recoverable: true,
+      backedUp: false,
+    }
+    vi.spyOn(service, 'scanCleanup').mockResolvedValue([
+      baseCandidate,
+      { ...baseCandidate, id: 'overlap-large', title: 'Overlapping large session' },
+    ])
+
+    const records = await service.moveCleanupToTrash(['overlap-old', 'overlap-large'])
+
+    expect(records).toHaveLength(1)
+    expect(records[0].originalPaths).toEqual([filePath])
+    expect(records[0].sizeBytes).toBe(actualSize)
   })
 
   it('records high-risk cleanup recovery when any selected candidate is high risk', async () => {

@@ -1334,6 +1334,7 @@ export class AppService {
         metadata: { candidateIds: ids },
       })
       const movedPaths: string[] = []
+      const selectedPaths = new Set<string>()
 
       for (const candidate of selected) {
         const deletedAt = new Date().toISOString()
@@ -1345,6 +1346,7 @@ export class AppService {
         )
         try {
           const originalPaths: string[] = []
+          let movedSizeBytes = 0
           // For worktree candidates, resolve the parent repo before the .git pointer
           // is moved into Trash. We prune the parent repo after the move so its
           // worktree registry stays tidy (ADR-0001; best-effort, never blocks).
@@ -1354,11 +1356,15 @@ export class AppService {
             ? await resolveParentRepoFromWorktree(candidate.paths[0] ?? '')
             : null
           for (const originalPath of candidate.paths) {
-            if (!(await exists(originalPath))) continue
+            const resolvedPath = path.resolve(originalPath)
+            if (selectedPaths.has(resolvedPath) || !(await exists(originalPath))) continue
+            const sizeBytes = await pathSize(originalPath)
             await this.trashItemHandler(originalPath)
+            selectedPaths.add(resolvedPath)
             movedPaths.push(originalPath)
             originalPaths.push(originalPath)
-            const deletedSession = sessionsByStoragePath.get(path.resolve(originalPath))
+            movedSizeBytes += sizeBytes
+            const deletedSession = sessionsByStoragePath.get(resolvedPath)
             if (deletedSession) {
               // System Trash cannot be rolled back atomically. Persist the
               // historical session immediately so a later path/candidate
@@ -1386,13 +1392,15 @@ export class AppService {
             }
           }
 
+          if (originalPaths.length === 0) continue
+
           const record: SystemTrashResult = {
             candidateId: candidate.id,
             title: candidate.title,
             source: candidate.source,
             kind: candidate.kind,
             originalPaths,
-            sizeBytes: candidate.sizeBytes,
+            sizeBytes: movedSizeBytes,
             deletedAt,
             risk: candidate.risk,
           }
@@ -2296,7 +2304,7 @@ export class AppService {
           lastUpdated: session.lastUpdated,
           reason: backedUp
             ? `Backed up and inactive for more than ${this.requireSettings().cleanupRetentionDays} days.`
-            : `Inactive for more than ${this.requireSettings().cleanupRetentionDays} days; backup will be created first.`,
+            : `Inactive for more than ${this.requireSettings().cleanupRetentionDays} days; no backup exists.`,
           risk: backedUp ? 'low' : 'medium',
           recoverable: true,
           backedUp,
