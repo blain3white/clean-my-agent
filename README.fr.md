@@ -13,7 +13,7 @@ Elle analyse les sessions locales de Codex, Claude Code, Cursor, Gemini et OpenC
 Installez la dernière version macOS Apple Silicon avec Homebrew :
 
 ```sh
-brew tap blain3white/clean-my-agent
+brew tap blain3white/clean-my-agent https://github.com/blain3white/clean-my-agent.git
 brew install --cask clean-my-agent
 ```
 
