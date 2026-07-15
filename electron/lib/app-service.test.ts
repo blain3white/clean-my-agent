@@ -5,6 +5,24 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppService } from './app-service'
+import { adapterFor } from './adapters'
+import * as worktreesModule from './worktrees'
+import { hashId } from './files'
+
+// Default: worktree scanning is a no-op in app-service tests so they don't hit
+// the developer's real ~/.codex/worktrees. Worktree-specific tests override
+// scanAllWorktrees via vi.spyOn(worktreesModule, 'scanAllWorktrees').mockResolvedValue(...).
+vi.mock('./worktrees', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./worktrees')>()
+  return {
+    ...actual,
+    scanAllWorktrees: vi.fn(async () => ({
+      records: [],
+      diagnostics: [],
+      sizeCache: new Map(),
+    })),
+  }
+})
 import {
   agentSources,
   type AgentSource,
@@ -15,6 +33,7 @@ import {
   type SessionRecord,
   type TrashRecord,
 } from '../../src/shared/types'
+import { defaultCleanupSelection } from '../../src/features/cleanup/cleanup-model'
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -440,6 +459,18 @@ describe('init and settings', () => {
 // ---------------------------------------------------------------------------
 
 describe('getSnapshot and rescan', () => {
+  it('returns cached data without implicitly running the launch scan', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    await writeJsonlSession(fixtureRoot, 'codex')
+
+    const cached = await service.getSnapshot(false)
+
+    expect(cached.sessions).toHaveLength(0)
+    expect((await service.rescan()).sessions.some((session) => session.source === 'codex')).toBe(
+      true,
+    )
+  })
+
   it('getSnapshot(false) returns cached snapshot without re-scanning when data is current', async () => {
     // rescan() with 0 sessions triggers a recursive loop in production code, so we always
     // seed a session file first to ensure the initial rescan completes successfully.
@@ -463,6 +494,55 @@ describe('getSnapshot and rescan', () => {
     assert.ok(session)
     expect(session.storageState).toBe('live')
     expect(session.tokens.total).toBeGreaterThan(0)
+  })
+
+  it('coalesces overlapping rescans and allows a later scan', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({
+      enabledProviders: Object.fromEntries(
+        agentSources.map((source) => [source, source === 'codex']),
+      ),
+    })
+    await writeJsonlSession(fixtureRoot, 'codex')
+    const adapter = adapterFor('codex')
+    const originalScan = adapter.scan.bind(adapter)
+    let releaseFirstScan: (() => void) | undefined
+    const firstScanBlocked = new Promise<void>((resolve) => {
+      releaseFirstScan = resolve
+    })
+    const scanSpy = vi.spyOn(adapter, 'scan').mockImplementationOnce(async (settings) => {
+      await firstScanBlocked
+      return originalScan(settings)
+    })
+
+    const first = service.rescan()
+    const second = service.rescan()
+    await Promise.resolve()
+    expect(scanSpy).toHaveBeenCalledTimes(1)
+    releaseFirstScan?.()
+
+    const [firstResult, secondResult] = await Promise.all([first, second])
+    expect(firstResult.sessions).toEqual(secondResult.sessions)
+    await service.rescan()
+    expect(scanSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('clears the single-flight scan after failure', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({
+      enabledProviders: Object.fromEntries(
+        agentSources.map((source) => [source, source === 'codex']),
+      ),
+    })
+    await writeJsonlSession(fixtureRoot, 'codex')
+    const adapter = adapterFor('codex')
+    const scanSpy = vi.spyOn(adapter, 'scan').mockRejectedValueOnce(new Error('scan failed'))
+
+    await expect(service.rescan()).rejects.toThrow('scan failed')
+    await expect(service.rescan()).resolves.toMatchObject({
+      sessions: expect.arrayContaining([expect.objectContaining({ source: 'codex' })]),
+    })
+    expect(scanSpy).toHaveBeenCalled()
   })
 
   it('getSnapshot(true) forces a rescan', async () => {
@@ -720,6 +800,7 @@ describe('getSnapshot and rescan', () => {
         cursor: false,
         gemini: false,
         opencode: false,
+        pi: false,
         custom: true,
       },
       exportDirectory: path.join(userDataPath, 'Exports'),
@@ -1482,6 +1563,128 @@ describe('scanCleanup', () => {
       vi.useRealTimers()
     }
   })
+
+  it('merges worktree candidates with session candidates and sorts by size', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ cleanupRetentionDays: 0, worktreeRetentionDays: 0 }) // everything stale
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await service.rescan()
+
+    const bigRecord = {
+      id: 'wt-big',
+      path: '/wt/feature-big',
+      ownerAgent: 'other' as const,
+      repoName: 'feature-big',
+      branch: 'feature-big',
+      sizeBytes: 10_000_000,
+      lastActivity: new Date(Date.now() - 60 * 86400000).toISOString(),
+      clean: true,
+      stale: true,
+      defaultRoot: '/wt',
+    }
+    const dirtyRecord = {
+      id: 'wt-dirty',
+      path: '/wt/feature-dirty',
+      ownerAgent: 'other' as const,
+      repoName: 'feature-dirty',
+      branch: 'feature-dirty',
+      sizeBytes: 500,
+      lastActivity: new Date(Date.now() - 60 * 86400000).toISOString(),
+      clean: false,
+      stale: true,
+      defaultRoot: '/wt',
+    }
+    const spy = vi.spyOn(worktreesModule, 'scanAllWorktrees').mockResolvedValue({
+      records: [bigRecord, dirtyRecord],
+      diagnostics: [],
+      sizeCache: new Map(),
+    })
+
+    try {
+      const candidates = await service.scanCleanup()
+      expect(spy).toHaveBeenCalled()
+      const kinds = candidates.map((c) => c.kind)
+      expect(kinds).toContain('old-session')
+      expect(kinds).toContain('stale-worktree')
+      expect(kinds).toContain('dirty-worktree')
+      for (let i = 1; i < candidates.length; i += 1) {
+        expect(candidates[i - 1].sizeBytes).toBeGreaterThanOrEqual(candidates[i].sizeBytes)
+      }
+      expect(candidates[0].kind).toBe('stale-worktree')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('does not require configured worktree roots (default roots are scanned)', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ cleanupRetentionDays: 0, worktreeRoots: [] })
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await service.rescan()
+    const spy = vi.spyOn(worktreesModule, 'scanAllWorktrees')
+    try {
+      const candidates = await service.scanCleanup()
+      // scanAllWorktrees is still called (default agent roots are scanned even
+      // with no user-configured roots); in the test env it returns no records,
+      // so only session candidates appear.
+      expect(candidates.every((c) => c.kind !== 'stale-worktree')).toBe(true)
+      expect(candidates.some((c) => c.kind === 'old-session')).toBe(true)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('rolls worktree sizes into per-agent size, overview total, and storage without double-count', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ cleanupRetentionDays: 0, worktreeRetentionDays: 0 })
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await service.rescan()
+
+    // Two worktree records: one attributed to codex (400), one to 'other' (100).
+    const codexRoot = path.join(os.homedir(), '.codex', 'worktrees')
+    vi.spyOn(worktreesModule, 'scanAllWorktrees').mockResolvedValue({
+      records: [
+        {
+          id: 'w1',
+          path: path.join(codexRoot, 'g', 'a'),
+          ownerAgent: 'codex',
+          repoName: 'a',
+          sizeBytes: 400,
+          lastActivity: new Date().toISOString(),
+          clean: true,
+          stale: true,
+          defaultRoot: codexRoot,
+        },
+        {
+          id: 'w2',
+          path: '/custom/b',
+          ownerAgent: 'other',
+          repoName: 'b',
+          sizeBytes: 100,
+          lastActivity: new Date().toISOString(),
+          clean: true,
+          stale: true,
+          defaultRoot: '/custom',
+        },
+      ],
+      diagnostics: [],
+      sizeCache: new Map(),
+    })
+
+    const snap = await service.getSnapshot(true)
+    const codexAgent = snap.agents.find((a) => a.source === 'codex')
+    // codex agent size includes its 400-byte worktree (plus the small session).
+    expect(codexAgent?.sizeBytes).toBeGreaterThanOrEqual(400)
+    // overview total includes both worktrees (400 + 100).
+    expect(snap.overview.totalSizeBytes).toBeGreaterThanOrEqual(500)
+    // storage: codex slice includes its worktree; an 'other' slice holds the 100.
+    const otherSlice = snap.storage.find((s) => s.source === 'other')
+    expect(otherSlice?.sizeBytes).toBe(100)
+    // No separate additive Worktrees slice double-counts: sum of storage slices
+    // should not exceed sessions + archives + worktrees (400+100).
+    const storageTotal = snap.storage.reduce((t, s) => t + s.sizeBytes, 0)
+    expect(storageTotal).toBeGreaterThanOrEqual(500)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1645,6 +1848,94 @@ describe('moveCleanupToTrash', () => {
       ]),
     )
   })
+
+  it('moves a worktree candidate to Trash, prunes the parent repo, and records its kind', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    // Create a real directory standing in for the worktree so movePath works.
+    const worktreeDir = await mkdtemp(path.join(userDataPath, 'wt-'))
+    const expectedCandidateId = hashId(['stale-worktree', worktreeDir])
+    const worktreeRecord = {
+      id: 'wt-stale-1',
+      path: worktreeDir,
+      ownerAgent: 'other' as const,
+      repoName: 'feature-stale',
+      branch: 'feature-stale',
+      sizeBytes: 1234,
+      lastActivity: new Date(Date.now() - 60 * 86400000).toISOString(),
+      clean: true,
+      stale: true,
+      defaultRoot: userDataPath,
+    }
+    const scanSpy = vi.spyOn(worktreesModule, 'scanAllWorktrees').mockResolvedValue({
+      records: [worktreeRecord],
+      diagnostics: [],
+      sizeCache: new Map(),
+    })
+    const resolveSpy = vi
+      .spyOn(worktreesModule, 'resolveParentRepoFromWorktree')
+      .mockResolvedValue({
+        parentRepo: '/fake/parent',
+        gitFileContent: 'gitdir: /fake/parent/.git/worktrees/x',
+      })
+    const pruneSpy = vi.spyOn(worktreesModule, 'pruneWorktrees').mockResolvedValue(true)
+
+    try {
+      const records = await service.moveCleanupToTrash([expectedCandidateId])
+      expect(records).toHaveLength(1)
+      expect(records[0].kind).toBe('stale-worktree')
+      await expect(stat(worktreeDir)).rejects.toThrow()
+      expect(resolveSpy).toHaveBeenCalledWith(worktreeDir)
+      expect(pruneSpy).toHaveBeenCalledWith('/fake/parent')
+    } finally {
+      scanSpy.mockRestore()
+      resolveSpy.mockRestore()
+      pruneSpy.mockRestore()
+    }
+  }, 20_000)
+
+  it('keeps the Trash entry intact when prune fails (best-effort, non-blocking)', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const worktreeDir = await mkdtemp(path.join(userDataPath, 'wt-'))
+    const expectedCandidateId = hashId(['stale-worktree', worktreeDir])
+    const worktreeRecord = {
+      id: 'wt-stale-2',
+      path: worktreeDir,
+      ownerAgent: 'other' as const,
+      repoName: 'feature-stale-2',
+      branch: 'feature-stale-2',
+      sizeBytes: 100,
+      lastActivity: new Date(Date.now() - 60 * 86400000).toISOString(),
+      clean: true,
+      stale: true,
+      defaultRoot: userDataPath,
+    }
+    const scanSpy = vi.spyOn(worktreesModule, 'scanAllWorktrees').mockResolvedValue({
+      records: [worktreeRecord],
+      diagnostics: [],
+      sizeCache: new Map(),
+    })
+    const resolveSpy = vi
+      .spyOn(worktreesModule, 'resolveParentRepoFromWorktree')
+      .mockResolvedValue({
+        parentRepo: '/fake/parent',
+        gitFileContent: 'gitdir: /fake/parent/.git/worktrees/x',
+      })
+    const pruneSpy = vi
+      .spyOn(worktreesModule, 'pruneWorktrees')
+      .mockRejectedValue(new Error('prune exploded'))
+
+    try {
+      const records = await service.moveCleanupToTrash([expectedCandidateId])
+      expect(records).toHaveLength(1)
+      expect(records[0].kind).toBe('stale-worktree')
+      await expect(stat(worktreeDir)).rejects.toThrow()
+      expect(pruneSpy).toHaveBeenCalled()
+    } finally {
+      scanSpy.mockRestore()
+      resolveSpy.mockRestore()
+      pruneSpy.mockRestore()
+    }
+  }, 20_000)
 })
 
 // ---------------------------------------------------------------------------
@@ -1721,7 +2012,8 @@ describe('restoreTrash', () => {
     }
     await rm(trashRecord.trashPath, { recursive: true, force: true })
 
-    await expect(service.restoreTrash(trashRecord.id)).resolves.toBeUndefined()
+    // restoreTrash resolves to the restored candidate's kind (a session kind here).
+    await expect(service.restoreTrash(trashRecord.id)).resolves.toBe(trashRecord.kind)
   })
 })
 
@@ -2665,4 +2957,105 @@ describe('AppService archive vault', () => {
       await rm(localUserData, { recursive: true, force: true })
     }
   })
+})
+
+describe('worktree cleanup listing', () => {
+  it('lists all worktrees and default-selects only abandoned (stale+clean) ones', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    service.updateSettings({ cleanupRetentionDays: 0, worktreeRetentionDays: 7 })
+    await writeJsonlSession(fixtureRoot, 'codex')
+    await service.rescan()
+    const codexRoot = path.join(os.homedir(), '.codex', 'worktrees')
+    vi.spyOn(worktreesModule, 'scanAllWorktrees').mockResolvedValue({
+      records: [
+        {
+          id: 's',
+          path: path.join(codexRoot, 'g', 'stale-clean'),
+          ownerAgent: 'codex',
+          repoName: 'stale-clean',
+          sizeBytes: 10,
+          lastActivity: new Date(Date.now() - 60 * 86400000).toISOString(),
+          clean: true,
+          stale: true,
+          defaultRoot: codexRoot,
+        },
+        {
+          id: 'd',
+          path: path.join(codexRoot, 'g', 'stale-dirty'),
+          ownerAgent: 'codex',
+          repoName: 'stale-dirty',
+          sizeBytes: 10,
+          lastActivity: new Date(Date.now() - 60 * 86400000).toISOString(),
+          clean: false,
+          stale: true,
+          defaultRoot: codexRoot,
+        },
+        {
+          id: 'a',
+          path: path.join(codexRoot, 'g', 'active'),
+          ownerAgent: 'codex',
+          repoName: 'active',
+          sizeBytes: 10,
+          lastActivity: new Date().toISOString(),
+          clean: true,
+          stale: false,
+          defaultRoot: codexRoot,
+        },
+      ],
+      diagnostics: [],
+      sizeCache: new Map(),
+    })
+    const candidates = await service.scanCleanup()
+    const wt = candidates.filter((c) =>
+      ['stale-worktree', 'dirty-worktree', 'active-worktree'].includes(c.kind),
+    )
+    expect(wt.map((c) => c.kind).sort()).toEqual([
+      'active-worktree',
+      'dirty-worktree',
+      'stale-worktree',
+    ])
+    const selected = defaultCleanupSelection(candidates)
+    expect(selected).toContain(wt.find((c) => c.kind === 'stale-worktree')!.id)
+    expect(selected).not.toContain(wt.find((c) => c.kind === 'dirty-worktree')!.id)
+    expect(selected).not.toContain(wt.find((c) => c.kind === 'active-worktree')!.id)
+  })
+})
+
+describe('trashWorktree', () => {
+  it('trashes a worktree by path via the panel flow (Trash + prune)', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const worktreeDir = await mkdtemp(path.join(userDataPath, 'wt-'))
+    vi.spyOn(worktreesModule, 'scanAllWorktrees').mockResolvedValue({
+      records: [
+        {
+          id: 'w',
+          path: worktreeDir,
+          ownerAgent: 'other' as const,
+          repoName: 'feature',
+          branch: 'feature',
+          sizeBytes: 100,
+          lastActivity: new Date(Date.now() - 60 * 86400000).toISOString(),
+          clean: true,
+          stale: true,
+          defaultRoot: userDataPath,
+        },
+      ],
+      diagnostics: [],
+      sizeCache: new Map(),
+    })
+    vi.spyOn(worktreesModule, 'resolveParentRepoFromWorktree').mockResolvedValue({
+      parentRepo: '/fake/parent',
+      gitFileContent: 'gitdir: /fake/parent/.git/worktrees/x',
+    })
+    const pruneSpy = vi.spyOn(worktreesModule, 'pruneWorktrees').mockResolvedValue(true)
+    try {
+      const record = await service.trashWorktree(worktreeDir)
+      expect(record?.kind).toBe('stale-worktree')
+      await expect(stat(worktreeDir)).rejects.toThrow()
+      expect(pruneSpy).toHaveBeenCalledWith('/fake/parent')
+    } finally {
+      worktreesModule.resolveParentRepoFromWorktree.mockRestore()
+      pruneSpy.mockRestore()
+    }
+  }, 20_000)
 })

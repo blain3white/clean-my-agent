@@ -1,19 +1,5 @@
 import { type ReactNode, useMemo, useState } from 'react'
-import {
-  Activity,
-  AlertTriangle,
-  Bot,
-  CalendarClock,
-  ChartNoAxesColumn,
-  ChevronDown,
-  ChevronRight,
-  Clock,
-  Database,
-  Download,
-  FileText,
-  Gauge,
-  Terminal,
-} from 'lucide-react'
+import { Activity, Bot, ChartNoAxesColumn, Clock, Database, Gauge } from 'lucide-react'
 import {
   Area,
   AreaChart,
@@ -23,7 +9,6 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -40,7 +25,6 @@ import {
   formatHourRange,
   formatShortDate,
   formatUsageShare,
-  formatUsageTimezoneLabel,
   formatUsageTokens,
   heatLevel,
   usageHours,
@@ -48,20 +32,14 @@ import {
   usageTokenColors,
   usageTokenLabels,
   type AgentUsage,
+  type ModelUsage,
   type DailyUsageTooltipPayload,
   type DailyUsageTrendPoint,
-  type PeakWindow,
   type ProjectUsage,
   type TokenMix,
   type UsageHeatmapCell,
   type UsageHeatmapRow,
-  type UsageForecast,
-  type UsageForecastAlert,
-  type UsageForecasts,
   type UsageTokenType,
-  buildUsageReport,
-  exportUsageReportMarkdown,
-  type UsageReport,
 } from '@/features/usage/usage-analytics'
 
 const usageHeatmapMetrics: Array<{ value: UsageHeatmapMetric; label: string }> = [
@@ -115,127 +93,10 @@ function MiniSparkline({
   )
 }
 
-function formatPeakHourLabel(hour: number): string {
-  const normalized = ((hour % 24) + 24) % 24
-  const suffix = normalized >= 12 ? 'PM' : 'AM'
-  const hour12 = normalized % 12 || 12
-  return `${hour12}:00 ${suffix}`
-}
-
-function formatPeakHourRange(startHour: number, endHour: number): string {
-  return `${formatPeakHourLabel(startHour)} – ${formatPeakHourLabel(endHour)}`
-}
-
 function formatProjectDisplayName(project: Pick<ProjectUsage, 'project' | 'projectPath'>): string {
   const value = project.projectPath || project.project
   const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '')
   return normalized.split('/').filter(Boolean).pop() || project.project
-}
-
-function PeakActivityChart({ windows }: { windows: PeakWindow[] }) {
-  const featuredWindows = windows.slice(0, 5)
-  const strongest = Math.max(...featuredWindows.map((window) => window.tokens), 1)
-  const circularDistance = (hour: number, target: number) => {
-    const distance = Math.abs(hour - target)
-    return Math.min(distance, 24 - distance)
-  }
-  const activityAtHour = (hour: number) =>
-    featuredWindows.reduce((total, window, index) => {
-      const sigma = index === 0 ? 2.75 : 1.9
-      const weight = Math.max(0.4, 1 - index * 0.14)
-      const centerHour = (window.startHour + 0.58) % 24
-      const distance = circularDistance(hour, centerHour)
-      const bump = window.tokens * weight * Math.exp(-(distance ** 2) / (2 * sigma ** 2))
-      return total + bump
-    }, strongest * 0.17)
-  const samples = Array.from({ length: 97 }, (_, index) => {
-    const hour = (index / 96) * 24
-    return { hour, value: activityAtHour(hour) }
-  })
-  const max = Math.max(...samples.map((sample) => sample.value), 1)
-  const points = samples.map((sample) => {
-    const x = 18 + (sample.hour / 24) * 444
-    const y = 170 - (sample.value / max) * 138
-    return { hour: sample.hour, x, y }
-  })
-  const topDotHour = topWindowToDotHour(featuredWindows[0])
-  const topPoint = {
-    x: 18 + (topDotHour / 24) * 444,
-    y: 170 - (activityAtHour(topDotHour) / max) * 138,
-  }
-  function topWindowToDotHour(window?: PeakWindow): number {
-    if (!window) return 0
-    return (window.startHour + 0.58) % 24
-  }
-  const linePath = points.reduce((path, point, index) => {
-    if (index === 0) return `M ${point.x.toFixed(2)} ${point.y.toFixed(2)}`
-    const previous = points[index - 1]
-    const controlOffset = (point.x - previous.x) / 2
-    return `${path} C ${(previous.x + controlOffset).toFixed(2)} ${previous.y.toFixed(2)}, ${(point.x - controlOffset).toFixed(2)} ${point.y.toFixed(2)}, ${point.x.toFixed(2)} ${point.y.toFixed(2)}`
-  }, '')
-  const areaPath = `${linePath} L 462 178 L 18 178 Z`
-  const axisLabels = [
-    { hour: 0, label: '12 AM' },
-    { hour: 4, label: '4 AM' },
-    { hour: 8, label: '8 AM' },
-    { hour: 12, label: '12 PM' },
-    { hour: 16, label: '4 PM' },
-    { hour: 20, label: '8 PM' },
-    { hour: 24, label: '12 AM' },
-  ]
-
-  return (
-    <div className="usage-peak-chart" aria-hidden="true">
-      <svg viewBox="0 0 480 206" preserveAspectRatio="none">
-        <defs>
-          <linearGradient id="usagePeakArea" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#4f8cff" stopOpacity="0.44" />
-            <stop offset="58%" stopColor="#3b82f6" stopOpacity="0.13" />
-            <stop offset="100%" stopColor="#2563eb" stopOpacity="0.02" />
-          </linearGradient>
-          <filter id="usagePeakGlow" x="-20%" y="-30%" width="140%" height="160%">
-            <feGaussianBlur stdDeviation="5.5" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-        </defs>
-        {[0, 4, 8, 12, 16, 20, 24].map((hour) => {
-          const x = 18 + (hour / 24) * 444
-          return (
-            <line key={hour} x1={x} x2={x} y1="24" y2="178" className="usage-peak-chart-grid" />
-          )
-        })}
-        <path d={areaPath} fill="url(#usagePeakArea)" />
-        <path
-          d={linePath}
-          className="usage-peak-chart-glow"
-          fill="none"
-          filter="url(#usagePeakGlow)"
-        />
-        <path d={linePath} className="usage-peak-chart-line" fill="none" />
-        <circle
-          cx={topPoint?.x ?? 0}
-          cy={topPoint?.y ?? 0}
-          r="8.6"
-          className="usage-peak-chart-dot-halo"
-        />
-        <circle
-          cx={topPoint?.x ?? 0}
-          cy={topPoint?.y ?? 0}
-          r="4.4"
-          className="usage-peak-chart-dot"
-        />
-        <line x1="18" x2="462" y1="178" y2="178" className="usage-peak-chart-axis" />
-      </svg>
-      <div className="usage-peak-chart-labels">
-        {axisLabels.map((item) => (
-          <span key={item.hour}>{item.label}</span>
-        ))}
-      </div>
-    </div>
-  )
 }
 
 function UsageKpiCard({
@@ -320,110 +181,6 @@ function UsageSectionTitle({
         {action}
       </div>
     </CardHeader>
-  )
-}
-
-function formatForecastDelta(value: number | null): string {
-  if (value === null) return 'No baseline'
-  const sign = value >= 0 ? '+' : ''
-  return `${sign}${value.toFixed(1)}%`
-}
-
-function forecastConfidenceLabel(forecast: UsageForecast): string {
-  if (forecast.confidence === 'high') return 'High confidence'
-  if (forecast.confidence === 'medium') return 'Medium confidence'
-  return 'Low confidence'
-}
-
-function UsageForecastPanel({ forecast }: { forecast: UsageForecast }) {
-  const progress = Math.min(100, Math.max(0, (forecast.elapsedDays / forecast.totalDays) * 100))
-
-  return (
-    <div className="usage-forecast-panel">
-      <div className="usage-forecast-panel-header">
-        <span className="usage-forecast-period">{forecast.label}</span>
-        <Badge className="usage-forecast-confidence">{forecastConfidenceLabel(forecast)}</Badge>
-      </div>
-      <div className="usage-forecast-values">
-        <div>
-          <span>Projected tokens</span>
-          <strong className="tabular-nums">{formatUsageTokens(forecast.projectedTokens)}</strong>
-        </div>
-        <div>
-          <span>Projected cost</span>
-          <strong className="tabular-nums">{formatCost(forecast.projectedCost)}</strong>
-        </div>
-      </div>
-      <div className="usage-forecast-progress" aria-hidden="true">
-        <span style={{ width: `${progress}%` }} />
-      </div>
-      <div className="usage-forecast-meta">
-        <span className="tabular-nums">
-          {forecast.elapsedDays}/{forecast.totalDays} days
-        </span>
-        <span className="tabular-nums">{formatUsageTokens(forecast.observedTokens)} observed</span>
-      </div>
-      <div className="usage-forecast-deltas">
-        <span className="tabular-nums">
-          {formatForecastDelta(forecast.tokenChangePercent)} tokens
-        </span>
-        <span className="tabular-nums">{formatForecastDelta(forecast.costChangePercent)} cost</span>
-      </div>
-    </div>
-  )
-}
-
-function UsageForecastAlertRow({ alert }: { alert: UsageForecastAlert }) {
-  const period = alert.period === 'week' ? 'Week' : 'Month'
-  const metric = alert.metric === 'cost' ? 'cost' : 'tokens'
-  const projected =
-    alert.metric === 'cost'
-      ? formatCost(alert.projectedValue)
-      : formatUsageTokens(alert.projectedValue)
-  const baseline =
-    alert.metric === 'cost'
-      ? formatCost(alert.baselineValue)
-      : formatUsageTokens(alert.baselineValue)
-
-  return (
-    <div className="usage-forecast-alert" data-severity={alert.severity}>
-      <AlertTriangle className="size-4" />
-      <span className="min-w-0">
-        <span className="block truncate font-semibold text-white/82 tabular-nums">
-          {period} {metric} +{alert.deltaPercent.toFixed(1)}%
-        </span>
-        <span className="block truncate text-white/46 tabular-nums">
-          {projected} projected vs {baseline} baseline
-        </span>
-      </span>
-    </div>
-  )
-}
-
-function UsageForecastCard({ forecast }: { forecast: UsageForecasts }) {
-  return (
-    <Card className="glass-panel rounded-lg py-4">
-      <UsageSectionTitle
-        title="AI Spend Forecast"
-        description="Projected usage for the current week and month."
-      />
-      <CardContent className="space-y-3">
-        <UsageForecastPanel forecast={forecast.week} />
-        <UsageForecastPanel forecast={forecast.month} />
-        <div className="usage-forecast-alert-list">
-          {forecast.alerts.length > 0 ? (
-            forecast.alerts
-              .slice(0, 3)
-              .map((alert) => <UsageForecastAlertRow key={alert.id} alert={alert} />)
-          ) : (
-            <div className="usage-forecast-clear">
-              <CalendarClock className="size-4" />
-              <span>No unusual increases detected</span>
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
   )
 }
 
@@ -698,40 +455,142 @@ function DailyUsageTrendCard({ trend }: { trend: DailyUsageTrendPoint[] }) {
   )
 }
 
-function ByAgentCard({ rows }: { rows: AgentUsage[] }) {
-  const total = rows.reduce((sum, row) => sum + row.tokens, 0)
+const usageBreakdownDimensions = [
+  { value: 'agent', label: 'Agent' },
+  { value: 'model', label: 'Model' },
+] as const
+type UsageBreakdownDimension = (typeof usageBreakdownDimensions)[number]['value']
+
+const modelColorPalette = [
+  '#a78bfa',
+  '#fb923c',
+  '#38bdf8',
+  '#34d399',
+  '#f472b6',
+  '#facc15',
+  '#22d3ee',
+  '#c084fc',
+  '#4ade80',
+  '#fb7185',
+]
+
+function modelColor(key: string): string {
+  if (!key) return '#94a3b8'
+  let hash = 0
+  for (let index = 0; index < key.length; index += 1) {
+    hash = (hash * 31 + key.charCodeAt(index)) | 0
+  }
+  return modelColorPalette[Math.abs(hash) % modelColorPalette.length]
+}
+
+function UsageBreakdownCard({
+  agentRows,
+  modelRows,
+}: {
+  agentRows: AgentUsage[]
+  modelRows: ModelUsage[]
+}) {
+  const [dimension, setDimension] = useState<UsageBreakdownDimension>('agent')
+  const total =
+    dimension === 'agent'
+      ? agentRows.reduce((sum, row) => sum + row.tokens, 0)
+      : modelRows.reduce((sum, row) => sum + row.tokens, 0)
+  const title = dimension === 'agent' ? 'By Agent' : 'By Model'
+  const description =
+    dimension === 'agent' ? 'Token usage share by local agent.' : 'Token usage share by model.'
 
   return (
     <Card className="glass-panel rounded-lg py-4">
-      <UsageSectionTitle title="By Agent" description="Token usage share by local agent." />
-      <CardContent className="space-y-3">
-        {rows.map((row) => (
-          <div key={row.source} className="text-xs">
-            <div className="grid grid-cols-[96px_1fr_72px_48px] items-center gap-3">
-              <span className="truncate text-white/78">{row.agent}</span>
-              {row.hasTokenMetadata ? (
-                <>
-                  <div className="usage-agent-meter">
-                    <span
-                      style={{
-                        width: `${row.share}%`,
-                        background: `linear-gradient(90deg, ${sourceColors[row.source]}, color-mix(in srgb, ${sourceColors[row.source]} 70%, white 20%))`,
-                      }}
-                    />
-                  </div>
-                  <span className="text-right text-white/64 tabular-nums">
-                    {formatUsageTokens(row.tokens)}
-                  </span>
-                  <span className="text-right text-white/54 tabular-nums">
-                    {formatUsageShare(row.share)}
-                  </span>
-                </>
-              ) : (
-                <span className="col-span-3 text-white/38">No token metadata available</span>
-              )}
-            </div>
+      <UsageSectionTitle
+        title={title}
+        description={description}
+        action={
+          <div className="range-control flex items-center rounded-lg border border-white/10 bg-white/[0.035] p-0.5">
+            {usageBreakdownDimensions.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => setDimension(item.value)}
+                className={`h-6 rounded-md px-2 text-[11px] font-medium transition ${
+                  dimension === item.value
+                    ? 'bg-white/14 text-white shadow-sm'
+                    : 'text-white/45 hover:text-white/75'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
           </div>
-        ))}
+        }
+      />
+      <CardContent className="space-y-3">
+        {dimension === 'agent'
+          ? agentRows.map((row) => (
+              <div key={row.source} className="text-xs">
+                <div className="grid grid-cols-[96px_1fr_72px_48px] items-center gap-3">
+                  <span className="truncate text-white/78">{row.agent}</span>
+                  {row.hasTokenMetadata ? (
+                    <>
+                      <div className="usage-agent-meter">
+                        <span
+                          style={{
+                            width: `${row.share}%`,
+                            background: `linear-gradient(90deg, ${sourceColors[row.source]}, color-mix(in srgb, ${sourceColors[row.source]} 70%, white 20%))`,
+                          }}
+                        />
+                      </div>
+                      <span className="text-right text-white/64 tabular-nums">
+                        {formatUsageTokens(row.tokens)}
+                      </span>
+                      <span className="text-right text-white/54 tabular-nums">
+                        {formatUsageShare(row.share)}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="col-span-3 text-white/38">No token metadata available</span>
+                  )}
+                </div>
+              </div>
+            ))
+          : modelRows.map((row) => (
+              <div key={row.key || 'unknown'} className="text-xs">
+                <div className="grid grid-cols-[96px_1fr_72px_48px] items-center gap-3">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="truncate text-white/78">{row.model}</span>
+                    </TooltipTrigger>
+                    <TooltipContent className="chart-tooltip rounded-lg px-3 py-2 shadow-xl">
+                      {row.model}: {formatUsageTokens(row.tokens)} tokens · {formatCost(row.cost)}
+                    </TooltipContent>
+                  </Tooltip>
+                  {row.hasTokenMetadata ? (
+                    <>
+                      <div className="usage-agent-meter">
+                        <span
+                          style={{
+                            width: `${row.share}%`,
+                            background: `linear-gradient(90deg, ${modelColor(row.key)}, color-mix(in srgb, ${modelColor(row.key)} 70%, white 20%))`,
+                          }}
+                        />
+                      </div>
+                      <span className="text-right text-white/64 tabular-nums">
+                        {formatUsageTokens(row.tokens)}
+                      </span>
+                      <span className="text-right text-white/54 tabular-nums">
+                        {formatUsageShare(row.share)}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="col-span-3 text-white/38">No token metadata available</span>
+                  )}
+                </div>
+              </div>
+            ))}
+        {dimension === 'model' && modelRows.length === 0 && (
+          <div className="rounded-md border border-white/8 bg-white/[0.03] p-3 text-xs text-white/42">
+            No model metadata available
+          </div>
+        )}
         <div className="grid grid-cols-[96px_1fr_72px_48px] items-center gap-3 border-t border-white/8 pt-3 text-xs">
           <span className="text-white/58">Total</span>
           <span />
@@ -920,269 +779,6 @@ function PriceRankingCard({
   )
 }
 
-function PeakActivityWindowsCard({
-  windows,
-  timezone,
-}: {
-  windows: PeakWindow[]
-  timezone: string
-}) {
-  const visibleWindows = windows.slice(0, 5)
-  const topWindow = visibleWindows[0]
-  const timezoneLabel = formatUsageTimezoneLabel(timezone)
-
-  return (
-    <Card className="glass-panel usage-peak-card rounded-lg py-0">
-      <CardHeader className="usage-peak-header">
-        <div className="min-w-0">
-          <div className="usage-peak-title-row">
-            <CardTitle className="usage-peak-title">Peak Activity Windows</CardTitle>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <InfoButton />
-              </TooltipTrigger>
-              <TooltipContent>Highest token usage windows in the selected period.</TooltipContent>
-            </Tooltip>
-          </div>
-          <p className="usage-peak-description">
-            Highest token usage windows in the selected period.
-          </p>
-        </div>
-        <button type="button" className="usage-peak-timezone" aria-label="Peak activity timezone">
-          <Clock className="size-3.5" />
-          <span>{timezoneLabel}</span>
-          <ChevronDown className="size-3.5" />
-        </button>
-      </CardHeader>
-      <CardContent className="usage-peak-content">
-        {topWindow ? (
-          <div className="usage-peak-layout">
-            <div className="usage-peak-feature">
-              <div className="usage-peak-eyebrow">Top window</div>
-              <div className="usage-peak-time-row">
-                <div className="usage-peak-top-time">
-                  {formatPeakHourRange(topWindow.startHour, topWindow.endHour)}
-                </div>
-                <Badge className="usage-peak-share-badge tabular-nums">
-                  <span />
-                  {formatUsageShare(topWindow.share)}
-                </Badge>
-              </div>
-              <div className="usage-peak-token-count tabular-nums">
-                {formatUsageTokens(topWindow.tokens)} tokens
-              </div>
-              <PeakActivityChart windows={windows} />
-              <div className="usage-peak-chart-caption">
-                <Clock className="size-3.5" />
-                <span>{timezoneLabel}</span>
-              </div>
-            </div>
-            <div className="usage-peak-ranking">
-              <div className="usage-peak-ranking-list">
-                {visibleWindows.map((window, index) => (
-                  <div
-                    key={window.rank}
-                    className="usage-peak-row"
-                    data-active={index === 0 ? 'true' : undefined}
-                  >
-                    <span className="usage-peak-row-rank tabular-nums">{window.rank}</span>
-                    <span className="usage-peak-row-copy">
-                      <span className="usage-peak-row-time">
-                        {formatPeakHourRange(window.startHour, window.endHour)}
-                      </span>
-                      <span className="usage-peak-row-tokens tabular-nums">
-                        {formatUsageTokens(window.tokens)} tokens
-                      </span>
-                    </span>
-                    <span className="usage-peak-row-share tabular-nums">
-                      {formatUsageShare(window.share)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <button type="button" className="usage-peak-breakdown">
-                <span>View full breakdown</span>
-                <ChevronRight className="size-4" />
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="rounded-md border border-white/8 bg-white/[0.03] p-3 text-xs text-white/42">
-            No peak activity windows available
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-function UsageReportCard({
-  report,
-  snapshot,
-  range,
-  timezone,
-}: {
-  report: UsageReport
-  snapshot: DashboardSnapshot
-  range: UsagePageRange
-  timezone: string
-}) {
-  const topProjects = report.projects.slice(0, 4)
-  const topFiles = report.files.slice(0, 6)
-  const topCommands = report.commands.slice(0, 4)
-
-  return (
-    <Card className="glass-panel rounded-lg py-4">
-      <UsageSectionTitle
-        title="Weekly / Project Report"
-        description="Summarized from scanned local AI sessions, token metadata, file references, commands, and git diff file paths."
-        action={
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => exportUsageReportMarkdown(snapshot, range, timezone)}
-            className="gap-1.5 text-white/65 hover:bg-white/7 hover:text-white"
-          >
-            <Download className="size-3.5" />
-            Markdown
-          </Button>
-        }
-      />
-      <CardContent className="space-y-4">
-        <div className="grid grid-cols-6 gap-2">
-          {[
-            ['Tokens', formatUsageTokens(report.summary.totalTokens)],
-            ['Sessions', report.summary.activeSessions.toLocaleString()],
-            ['Projects', report.summary.projectCount.toLocaleString()],
-            ['Files', report.summary.fileCount.toLocaleString()],
-            ['Commands', report.summary.commandCount.toLocaleString()],
-            ['Cost', formatCost(report.summary.estimatedCost)],
-          ].map(([label, value]) => (
-            <div key={label} className="rounded-md border border-white/8 bg-white/[0.03] p-2.5">
-              <div className="text-[11px] text-white/42">{label}</div>
-              <div className="mt-1 truncate text-sm font-semibold text-white/82 tabular-nums">
-                {value}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] gap-4">
-          <div className="min-w-0 space-y-3">
-            <div className="text-xs font-medium text-white/72">Highlights</div>
-            <div className="grid gap-2">
-              {report.highlights.map((item) => (
-                <div
-                  key={item}
-                  className="flex min-w-0 items-start gap-2 rounded-md border border-white/8 bg-white/[0.025] p-2 text-xs text-white/62"
-                >
-                  <FileText className="mt-0.5 size-3.5 shrink-0 text-blue-300" />
-                  <span className="min-w-0">{item}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="min-w-0 space-y-3">
-            <div className="text-xs font-medium text-white/72">Top Projects</div>
-            <div className="space-y-2">
-              {topProjects.map((project) => (
-                <div
-                  key={`${project.project}-${project.projectPath ?? ''}`}
-                  className="grid grid-cols-[minmax(0,1fr)_86px_54px] items-center gap-2 rounded-md border border-white/8 bg-white/[0.025] p-2 text-xs"
-                >
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="truncate font-medium text-white/76">
-                        {formatProjectDisplayName(project)}
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-sm">
-                      {project.projectPath ?? project.project}
-                    </TooltipContent>
-                  </Tooltip>
-                  <span className="text-right text-white/62 tabular-nums">
-                    {formatUsageTokens(project.tokens)}
-                  </span>
-                  <span className="text-right text-white/45 tabular-nums">
-                    {formatUsageShare(project.share)}
-                  </span>
-                </div>
-              ))}
-              {topProjects.length === 0 && (
-                <div className="rounded-md border border-white/8 bg-white/[0.03] p-3 text-xs text-white/42">
-                  No project activity in this range
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] gap-4">
-          <div className="min-w-0 space-y-3">
-            <div className="text-xs font-medium text-white/72">Produced / Referenced Files</div>
-            <div className="grid gap-2">
-              {topFiles.map((file) => (
-                <div
-                  key={`${file.path}-${file.projects.join(',')}`}
-                  className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-2 rounded-md border border-white/8 bg-white/[0.025] p-2 text-xs"
-                >
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="truncate font-mono text-[11px] text-white/70">
-                        {file.path}
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-md">
-                      {file.reason} · {file.projects.join(', ')}
-                    </TooltipContent>
-                  </Tooltip>
-                  <Badge className="justify-self-end rounded-md border-white/10 bg-white/7 text-[10px] text-white/58">
-                    {file.changed ? 'changed' : 'seen'}
-                  </Badge>
-                </div>
-              ))}
-              {topFiles.length === 0 && (
-                <div className="rounded-md border border-white/8 bg-white/[0.03] p-3 text-xs text-white/42">
-                  No file metadata detected
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="min-w-0 space-y-3">
-            <div className="text-xs font-medium text-white/72">Command Signals</div>
-            <div className="grid gap-2">
-              {topCommands.map((command) => (
-                <div
-                  key={`${command.command}-${command.cwd ?? ''}`}
-                  className="flex min-w-0 items-start gap-2 rounded-md border border-white/8 bg-white/[0.025] p-2 text-xs"
-                >
-                  <Terminal className="mt-0.5 size-3.5 shrink-0 text-emerald-300" />
-                  <div className="min-w-0">
-                    <div className="truncate font-mono text-[11px] text-white/72">
-                      {command.command}
-                    </div>
-                    <div className="mt-0.5 truncate text-[11px] text-white/36 tabular-nums">
-                      {command.sessions} session{command.sessions === 1 ? '' : 's'}
-                      {command.cwd ? ` · ${command.cwd}` : ''}
-                    </div>
-                  </div>
-                </div>
-              ))}
-              {topCommands.length === 0 && (
-                <div className="rounded-md border border-white/8 bg-white/[0.03] p-3 text-xs text-white/42">
-                  No command metadata detected
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
 function UsageEmptyView() {
   return (
     <Card className="glass-panel rounded-lg py-4">
@@ -1236,7 +832,7 @@ function UsageLoadingView() {
           </Card>
         </div>
         <div className="space-y-4">
-          {Array.from({ length: 3 }, (_, index) => (
+          {Array.from({ length: 2 }, (_, index) => (
             <Card key={index} className="glass-panel rounded-lg py-4">
               <CardContent className="space-y-3">
                 <Skeleton className="h-4 w-28 bg-white/10" />
@@ -1247,12 +843,6 @@ function UsageLoadingView() {
         </div>
       </section>
       <section className="usage-bottom-grid">
-        <Card className="glass-panel rounded-lg py-4">
-          <CardContent className="space-y-3">
-            <Skeleton className="h-4 w-40 bg-white/10" />
-            <Skeleton className="h-36 w-full bg-white/8" />
-          </CardContent>
-        </Card>
         <Card className="glass-panel rounded-lg py-4">
           <CardContent className="space-y-3">
             <Skeleton className="h-4 w-28 bg-white/10" />
@@ -1278,10 +868,6 @@ export function UsageView({
 }) {
   const analytics = useMemo(
     () => buildUsageAnalytics(snapshot, range, settings.usageTimezone),
-    [snapshot, range, settings.usageTimezone],
-  )
-  const report = useMemo(
-    () => buildUsageReport(snapshot, range, settings.usageTimezone),
     [snapshot, range, settings.usageTimezone],
   )
 
@@ -1363,26 +949,14 @@ export function UsageView({
           <DailyUsageTrendCard trend={analytics.dailyTrend} />
         </div>
         <div className="space-y-4">
-          <ByAgentCard rows={analytics.agentRows} />
-          <UsageForecastCard forecast={analytics.forecast} />
+          <UsageBreakdownCard agentRows={analytics.agentRows} modelRows={analytics.modelRows} />
           <PriceRankingCard projects={analytics.projectRows} onSelectProject={onSelectProject} />
         </div>
       </section>
 
       <section className="usage-bottom-grid">
-        <PeakActivityWindowsCard
-          windows={analytics.peakWindows}
-          timezone={settings.usageTimezone}
-        />
         <TokenMixCard mix={analytics.tokenMix} />
       </section>
-
-      <UsageReportCard
-        report={report}
-        snapshot={snapshot}
-        range={range}
-        timezone={settings.usageTimezone}
-      />
     </div>
   )
 }

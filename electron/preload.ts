@@ -14,6 +14,7 @@ const api: CleanMyAgentApi = {
   getSessionDetail: (sessionId: string) => ipcRenderer.invoke('session:detail', sessionId),
   scanCleanup: (sessionId?: string) => ipcRenderer.invoke('cleanup:scan', sessionId),
   moveCleanupToTrash: (candidateIds: string[]) => ipcRenderer.invoke('cleanup:trash', candidateIds),
+  trashWorktree: (worktreePath: string) => ipcRenderer.invoke('worktree:trash', worktreePath),
   purgeExpiredTrash: () => ipcRenderer.invoke('trash:purgeExpired'),
   restoreTrash: (trashId: string) => ipcRenderer.invoke('trash:restore', trashId),
   getRecoveryRecords: () => ipcRenderer.invoke('recovery:list'),

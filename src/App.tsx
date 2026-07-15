@@ -35,6 +35,11 @@ const SkillsView = lazy(() =>
 const UsageView = lazy(() =>
   import('@/features/usage/UsageView').then((module) => ({ default: module.UsageView })),
 )
+const WorktreesView = lazy(() =>
+  import('@/features/worktrees/WorktreesView').then((module) => ({
+    default: module.WorktreesView,
+  })),
+)
 
 const viewFallback = (
   <div className="flex min-h-[320px] items-center justify-center text-sm text-white/45">
@@ -114,6 +119,13 @@ function App() {
         )
       case 'health':
         return <HealthView snapshot={dashboard.snapshot} />
+      case 'worktrees':
+        return (
+          <WorktreesView
+            worktrees={dashboard.snapshot.worktrees}
+            onTrash={dashboard.trashWorktree}
+          />
+        )
       case 'settings':
         return (
           <SettingsView
@@ -167,7 +179,7 @@ function App() {
           <main className="main-surface soft-grid flex min-w-0 flex-1 flex-col">
             <Topbar
               activeView={activeView}
-              loading={dashboard.loading}
+              loading={dashboard.scanning}
               mockDataEnabled={dashboard.mockDataEnabled}
               overviewRange={overviewRange}
               usageRange={usageRange}

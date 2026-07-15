@@ -7,6 +7,7 @@ import {
   FileJson,
   Folder,
   FolderX,
+  GitBranch,
   Languages,
   Palette,
   Play,
@@ -406,6 +407,16 @@ export function SettingsView({
     )
   }
 
+  const worktreeRootCount = settings.worktreeRoots.length
+  const addWorktreeRoots = async () => {
+    const folders = await onChooseFolders()
+    if (folders.length === 0) return
+    await onSettingsChange(
+      { worktreeRoots: Array.from(new Set([...settings.worktreeRoots, ...folders])) },
+      { rescan: true },
+    )
+  }
+
   return (
     <div className="mx-auto w-full max-w-[900px] space-y-5 pb-8">
       {lastIssue && (
@@ -731,6 +742,21 @@ export function SettingsView({
             }
           />
           <SettingsRow
+            icon={GitBranch}
+            title={t('settings.worktreeRetention')}
+            description={t('settings.worktreeRetentionDescription')}
+            trailing={
+              <NativeSelect
+                label={t('settings.worktreeRetention')}
+                value={String(settings.worktreeRetentionDays)}
+                options={retentionOptions}
+                onChange={(value) =>
+                  void onSettingsChange({ worktreeRetentionDays: Number(value) }, { rescan: true })
+                }
+              />
+            }
+          />
+          <SettingsRow
             icon={Folder}
             title={t('settings.excludedFolders')}
             description={
@@ -756,6 +782,52 @@ export function SettingsView({
                   {t('settings.manage')}
                 </Button>
               </>
+            }
+          />
+          <SettingsRow
+            icon={GitBranch}
+            title={t('settings.worktreeFolders')}
+            description={(() => {
+              const diag = snapshot.worktreeDiagnostics?.[0]
+              if (diag?.code === 'worktree-git-unavailable')
+                return t('settings.worktreeGitUnavailable')
+              if (diag?.code === 'worktree-status-failed') return t('settings.worktreeStatusFailed')
+              return worktreeRootCount > 0
+                ? t('settings.worktreeFolderCount', { count: worktreeRootCount })
+                : t('settings.worktreeFoldersDescription')
+            })()}
+            trailing={
+              <>
+                {worktreeRootCount > 0 && (
+                  <ValueButton
+                    onClick={() => void onSettingsChange({ worktreeRoots: [] }, { rescan: true })}
+                  >
+                    {t('settings.clear')}
+                  </ValueButton>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void addWorktreeRoots()}
+                  className="settings-ghost-button"
+                >
+                  {t('settings.manage')}
+                </Button>
+              </>
+            }
+          />
+          <SettingsRow
+            icon={Folder}
+            title={t('settings.worktreeScanDefaultRoots')}
+            description={t('settings.worktreeScanDefaultRootsDescription')}
+            trailing={
+              <SwitchControl
+                checked={settings.worktreeScanDefaultRoots}
+                onCheckedChange={(checked) =>
+                  void onSettingsChange({ worktreeScanDefaultRoots: checked }, { rescan: true })
+                }
+                label={t('settings.worktreeScanDefaultRoots')}
+              />
             }
           />
         </SettingsPanel>

@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { AgentAdapter, adapterFor, adapters } from './adapters'
 import type { AppSettings } from '../../src/shared/types'
 import { rootsForPlatform, scannerProviderFor, scannerProviders } from './scanner-providers'
+import type { ScannerProviderCandidate } from './scanner-providers'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -45,15 +46,7 @@ function makeAdapter(source: string, roots: string[], patterns = ['**/*.jsonl', 
   } as never)
 }
 
-type SessionCandidate = {
-  path: string
-  root?: string
-  relativePath?: string
-  sizeBytes: number
-  createdAt: string
-  lastUpdated: string
-  mtimeMs: number
-}
+type SessionCandidate = ScannerProviderCandidate
 
 // ─── temp-dir lifecycle ──────────────────────────────────────────────────────
 
@@ -497,14 +490,22 @@ describe('recentCandidates ordering and limit', () => {
 // ─── scanCandidates skipping bad files ───────────────────────────────────────
 
 describe('scanCandidates skipping bad files', () => {
-  it('skips candidates whose files cannot be read and returns the rest', async () => {
+  it('skips unreadable candidates while preserving the input order of valid sessions', async () => {
     const root = await makeTmpDir('scan-candidates-skip')
     const goodFile = path.join(root, 'good.jsonl')
+    const secondGoodFile = path.join(root, 'second-good.jsonl')
     await writeFile(
       goodFile,
       JSON.stringify({
         type: 'response_item',
         payload: { role: 'user', content: 'Good file content' },
+      }) + '\n',
+    )
+    await writeFile(
+      secondGoodFile,
+      JSON.stringify({
+        type: 'response_item',
+        payload: { role: 'user', content: 'Second good file content' },
       }) + '\n',
     )
 
@@ -528,19 +529,62 @@ describe('scanCandidates skipping bad files', () => {
       lastUpdated: now,
       mtimeMs: Date.now(),
     }
+    const secondGoodCandidate: SessionCandidate = {
+      ...goodCandidate,
+      path: secondGoodFile,
+      relativePath: 'second-good.jsonl',
+    }
 
     const adapter = makeAdapter('codex', [root])
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sessions = await adapter.scanCandidates([goodCandidate, badCandidate] as any)
+    const sessions = await adapter.scanCandidates([
+      secondGoodCandidate,
+      badCandidate,
+      goodCandidate,
+    ])
 
-    expect(sessions).toHaveLength(1)
-    expect(sessions[0].storagePath).toBe(goodFile)
+    expect(sessions.map((session) => session.storagePath)).toEqual([secondGoodFile, goodFile])
   })
 })
 
 // ─── scan diagnostics ────────────────────────────────────────────────────────
 
 describe('scan diagnostics', () => {
+  it('isolates parse failures and keeps valid sessions', async () => {
+    const root = await makeTmpDir('scan-diagnostics-parse-failure')
+    const invalidPath = path.join(root, 'invalid.jsonl')
+    const validPath = path.join(root, 'valid.jsonl')
+    await writeFile(invalidPath, 'invalid fixture')
+    await writeFile(validPath, 'valid fixture')
+
+    const adapter = new AgentAdapter({
+      source: 'codex',
+      name: 'Parse Failure Test',
+      roots: [root],
+      patterns: ['**/*.jsonl'],
+      note: 'test adapter',
+      async parseSession(pathToParse) {
+        if (pathToParse === invalidPath) throw new Error('invalid fixture')
+        return {
+          title: 'Valid session',
+          messages: [{ id: 'm1', role: 'user', text: 'valid' }],
+          files: [],
+          commands: [],
+          attachments: [],
+          metadata: {},
+        }
+      },
+    } as never)
+    const { state, sessions } = await adapter.scan(makeSettings(root))
+
+    expect(sessions.map((session) => session.storagePath)).toEqual([validPath])
+    expect(state.skippedFiles).toBe(1)
+    expect(state.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'parse-failed', path: invalidPath }),
+      ]),
+    )
+  })
+
   it('reports empty and oversized skipped files', async () => {
     const root = await makeTmpDir('scan-diagnostics-skips')
     const emptyPath = path.join(root, 'empty.jsonl')
@@ -613,6 +657,7 @@ describe('adapterFor', () => {
       'cursor',
       'gemini',
       'opencode',
+      'pi',
       'custom',
     ])
     expect(scannerProviderFor('codex')?.name).toBe('Codex')
@@ -956,6 +1001,40 @@ describe('token extraction variants', () => {
 
     expect(sessions[0].tokens.input).toBe(150)
     expect(sessions[0].tokens.output).toBe(60)
+  })
+
+  it('extracts Pi bare usage aliases (input / output / cacheRead / cacheWrite)', async () => {
+    const root = await makeTmpDir('tokens-pi-bare')
+    const filePath = path.join(root, 's.jsonl')
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        type: 'message',
+        id: 'pi-assistant-1',
+        timestamp: '2026-06-08T10:15:30.000Z',
+        message: {
+          role: 'assistant',
+          model: 'glm-5.2',
+          content: [{ type: 'text', text: 'Pi bare usage response' }],
+          usage: {
+            input: 100,
+            output: 50,
+            cacheRead: 10,
+            cacheWrite: 1000,
+            totalTokens: 1160,
+          },
+        },
+      }) + '\n',
+    )
+
+    const adapter = makeAdapter('pi', [root])
+    const { sessions } = await adapter.scan(makeSettings(root))
+
+    expect(sessions[0].tokens.input).toBe(100)
+    expect(sessions[0].tokens.output).toBe(50)
+    expect(sessions[0].tokens.cacheCreation).toBe(1000)
+    expect(sessions[0].tokens.cacheRead).toBe(10)
+    expect(sessions[0].tokens.total).toBe(1160)
   })
 
   it('extracts cache creation and cache read tokens', async () => {
@@ -1454,18 +1533,20 @@ describe('session record fields', () => {
 // ─── scan state ────────────────────────────────────────────────────────────────
 
 describe('scan state fields', () => {
-  it('populates AgentInstallState with correct name, source, sessionCount', async () => {
+  it('populates AgentInstallState and sums only candidate session file sizes', async () => {
     const root = await makeTmpDir('scan-state')
+    const contents: string[] = []
     for (let i = 0; i < 3; i++) {
       const filePath = path.join(root, `session-${i}.jsonl`)
-      await writeFile(
-        filePath,
+      const content =
         JSON.stringify({
           type: 'response_item',
           payload: { role: 'user', content: `Question ${i}` },
-        }) + '\n',
-      )
+        }) + '\n'
+      contents.push(content)
+      await writeFile(filePath, content)
     }
+    await writeFile(path.join(root, 'not-a-session.txt'), 'must not count toward scan size')
 
     const adapter = makeAdapter('claude', [root])
     const { state } = await adapter.scan(makeSettings(root, 'claude'))
@@ -1473,7 +1554,9 @@ describe('scan state fields', () => {
     expect(state.source).toBe('claude')
     expect(state.name).toBe('Test-claude')
     expect(state.sessionCount).toBe(3)
-    expect(state.sizeBytes).toBeGreaterThan(0)
+    expect(state.sizeBytes).toBe(
+      contents.reduce((total, content) => total + Buffer.byteLength(content), 0),
+    )
     expect(typeof state.lastScannedAt).toBe('string')
   })
 

@@ -30,6 +30,7 @@ export type DashboardIssue = {
 type DashboardState = {
   snapshot: DashboardSnapshot
   loading: boolean
+  scanning: boolean
   lastIssue: DashboardIssue | null
   settings: AppSettings
   mockDataEnabled: boolean
@@ -57,6 +58,7 @@ type DashboardState = {
   exportDiagnostics: () => Promise<void>
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<void>
+  trashWorktree: (worktreePath: string) => Promise<void>
   restoreTrash: (trashId: string) => Promise<void>
   purgeExpiredTrash: () => Promise<void>
   diagnoseRecovery: (recoveryId: string) => Promise<RecoveryRecord | undefined>
@@ -69,6 +71,7 @@ const agentNames: Record<AgentSource, string> = {
   cursor: 'Cursor',
   gemini: 'Gemini',
   opencode: 'OpenCode',
+  pi: 'Pi',
   custom: 'Custom',
 }
 
@@ -104,6 +107,9 @@ const defaultSettings = (): AppSettings => ({
   checkForUpdates: true,
   defaultRelayMode: 'full-context',
   exportDirectory: '',
+  worktreeRoots: [],
+  worktreeScanDefaultRoots: true,
+  worktreeRetentionDays: 30,
 })
 
 const mergeSettings = (settings?: Partial<AppSettings>): AppSettings => ({
@@ -153,6 +159,7 @@ const emptySnapshot = (): DashboardSnapshot => ({
   recovery: [],
   usage: [],
   storage: [],
+  worktrees: [],
 })
 
 const errorMessage = (error: unknown): string => {
@@ -185,6 +192,9 @@ export function useDashboard(): DashboardState {
     return mergeSettings({ mockDataEnabled, language })
   })
   const [loading, setLoading] = useState(true)
+  const [scanning, setScanning] = useState(false)
+  const [settingsHydrated, setSettingsHydrated] = useState(false)
+  const [initialSnapshotLoaded, setInitialSnapshotLoaded] = useState(false)
   const [checkingForUpdates, setCheckingForUpdates] = useState(false)
   const [lastIssue, setLastIssue] = useState<DashboardIssue | null>(null)
   const t = useCallback(
@@ -193,6 +203,8 @@ export function useDashboard(): DashboardState {
     [settings.language],
   )
   const languageRef = useRef(settings.language)
+  const initialSnapshotLoadStartedRef = useRef(false)
+  const launchScanStartedRef = useRef(false)
 
   useEffect(() => {
     languageRef.current = settings.language
@@ -201,7 +213,10 @@ export function useDashboard(): DashboardState {
   useEffect(() => {
     let cancelled = false
     const hydrateSettings = async () => {
-      if (!window.cleanMyAgent) return
+      if (!window.cleanMyAgent) {
+        setSettingsHydrated(true)
+        return
+      }
       try {
         const next = await window.cleanMyAgent.getSettings()
         let launchAtLogin = next.launchAtLogin
@@ -214,6 +229,8 @@ export function useDashboard(): DashboardState {
       } catch (error) {
         console.error(error)
         toast.error(translate(languageRef.current, 'toast.readSettingsError'))
+      } finally {
+        if (!cancelled) setSettingsHydrated(true)
       }
     }
     void hydrateSettings()
@@ -223,7 +240,7 @@ export function useDashboard(): DashboardState {
   }, [])
 
   const load = useCallback(
-    async (force = false): Promise<boolean> => {
+    async (force = false, options: { background?: boolean } = {}): Promise<boolean> => {
       if (settings.mockDataEnabled) {
         setSnapshot(mockSnapshot)
         setLoading(false)
@@ -237,7 +254,8 @@ export function useDashboard(): DashboardState {
         return true
       }
 
-      setLoading(true)
+      if (!options.background) setLoading(true)
+      if (force) setScanning(true)
       try {
         const next = force
           ? await window.cleanMyAgent.rescan()
@@ -255,19 +273,35 @@ export function useDashboard(): DashboardState {
           detail: errorMessage(error),
           occurredAt: new Date().toISOString(),
         })
-        setSnapshot(emptySnapshot())
+        if (!options.background) setSnapshot(emptySnapshot())
         return false
       } finally {
-        setLoading(false)
+        if (!options.background) setLoading(false)
+        if (force) setScanning(false)
       }
     },
     [settings.mockDataEnabled, t],
   )
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void load(false), 0)
+    const timer = window.setTimeout(() => {
+      if (initialSnapshotLoadStartedRef.current) return
+      initialSnapshotLoadStartedRef.current = true
+      void load(false).then(() => setInitialSnapshotLoaded(true))
+    }, 0)
     return () => window.clearTimeout(timer)
   }, [load])
+
+  useEffect(() => {
+    if (!settingsHydrated || !initialSnapshotLoaded || launchScanStartedRef.current) return
+    if (!settings.scanOnLaunch) return
+    const timer = window.setTimeout(() => {
+      if (launchScanStartedRef.current) return
+      launchScanStartedRef.current = true
+      void load(true, { background: true })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [initialSnapshotLoaded, load, settings.scanOnLaunch, settingsHydrated])
 
   useEffect(() => {
     if (!settings.backgroundScan || settings.mockDataEnabled || !window.cleanMyAgent) return
@@ -681,6 +715,19 @@ export function useDashboard(): DashboardState {
         )
         await load(true)
       },
+      trashWorktree: async (worktreePath: string) => {
+        if (!window.cleanMyAgent) {
+          toast.info(t('toast.trashDesktopOnly'))
+          return
+        }
+        const record = await window.cleanMyAgent.trashWorktree(worktreePath)
+        if (record) {
+          toast.success(t('toast.worktreeTrashed'))
+        } else {
+          toast.error(t('toast.worktreeTrashError'))
+        }
+        await load(true)
+      },
       restoreTrash: async (trashId: string) => {
         if (settings.mockDataEnabled) {
           toast.info(t('toast.trashRestoreLiveOnly'))
@@ -693,8 +740,12 @@ export function useDashboard(): DashboardState {
         }
 
         try {
-          await window.cleanMyAgent.restoreTrash(trashId)
-          toast.success(t('toast.trashRestored'))
+          const restoredKind = await window.cleanMyAgent.restoreTrash(trashId)
+          if (restoredKind === 'stale-worktree' || restoredKind === 'dirty-worktree') {
+            toast.success(t('toast.worktreeRestored'))
+          } else {
+            toast.success(t('toast.trashRestored'))
+          }
           await load(true)
         } catch (error) {
           console.error(error)
@@ -768,6 +819,7 @@ export function useDashboard(): DashboardState {
   return {
     snapshot,
     loading,
+    scanning,
     lastIssue,
     settings,
     mockDataEnabled: settings.mockDataEnabled,

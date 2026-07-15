@@ -3,6 +3,7 @@ import {
   CalendarDays,
   Clock,
   FlaskConical,
+  GitBranch,
   MessageSquare,
   type LucideIcon,
 } from 'lucide-react'
@@ -24,7 +25,7 @@ export type CleanupSourceProgress = {
   total: number
   status: 'Waiting' | 'Scanning' | 'Complete'
 }
-export type CleanupCategoryKey = 'large' | 'inactive' | 'test'
+export type CleanupCategoryKey = 'large' | 'inactive' | 'test' | 'worktree'
 export type CleanupCategorySummary = {
   key: CleanupCategoryKey
   title: string
@@ -65,6 +66,7 @@ export const cleanupSourceWeights: Record<AgentSource, { start: number; end: num
   cursor: { start: 34, end: 72 },
   gemini: { start: 52, end: 88 },
   opencode: { start: 72, end: 100 },
+  pi: { start: 60, end: 92 },
   custom: { start: 82, end: 100 },
 }
 
@@ -120,6 +122,24 @@ export const cleanupKindMeta: Record<
     icon: FlaskConical,
     accent: 'text-red-300 bg-red-400/12 ring-red-400/24',
   },
+  'stale-worktree': {
+    category: 'worktree',
+    label: 'stale worktree',
+    icon: GitBranch,
+    accent: 'text-emerald-300 bg-emerald-400/12 ring-emerald-400/22',
+  },
+  'dirty-worktree': {
+    category: 'worktree',
+    label: 'dirty worktree',
+    icon: GitBranch,
+    accent: 'text-amber-300 bg-amber-400/13 ring-amber-400/24',
+  },
+  'active-worktree': {
+    category: 'worktree',
+    label: 'active worktree',
+    icon: GitBranch,
+    accent: 'text-sky-300 bg-sky-400/12 ring-sky-400/22',
+  },
 }
 
 export function cleanupCategoryForCandidate(candidate: CleanupCandidate): CleanupCategoryKey {
@@ -130,7 +150,11 @@ export function defaultCleanupSelection(candidates: CleanupCandidate[]): string[
   return candidates
     .filter((candidate) => {
       const category = cleanupCategoryForCandidate(candidate)
-      return category === 'inactive' || category === 'test'
+      if (category === 'inactive' || category === 'test') return true
+      // Only abandoned worktrees (stale + clean) are auto-selected. Dirty and
+      // active worktrees are listed but must be reviewed explicitly.
+      if (category === 'worktree') return candidate.kind === 'stale-worktree'
+      return false
     })
     .map((candidate) => candidate.id)
 }
@@ -213,6 +237,16 @@ export function buildCleanupCategorySummaries(
       icon: FlaskConical,
       accent: 'text-violet-300 bg-violet-400/13 ring-violet-400/24',
     },
+    worktree: {
+      key: 'worktree',
+      title: 'Abandoned worktrees',
+      description: 'Git worktrees untouched past retention',
+      bytes: 0,
+      count: 0,
+      action: 'Review',
+      icon: GitBranch,
+      accent: 'text-sky-300 bg-sky-400/13 ring-sky-400/24',
+    },
   }
 
   for (const candidate of candidates) {
@@ -221,7 +255,7 @@ export function buildCleanupCategorySummaries(
     seed[category].count += 1
   }
 
-  return [seed.large, seed.inactive, seed.test]
+  return [seed.large, seed.inactive, seed.test, seed.worktree]
 }
 
 function cleanupTimestamp(value: string | undefined): number {
