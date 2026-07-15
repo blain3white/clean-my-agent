@@ -1,6 +1,6 @@
 cask "clean-my-agent" do
-  version "0.1.4"
-  sha256 "7e9a5eba30bb488f098ee155c6c08d6e0690dc20f57d7c40355d5d038055b01e"
+  version "0.1.5"
+  sha256 "e88206c196188dc2c68f1dc97ec8fde56b08c0727834d51b6f05bc252dc1743f"
 
   url "https://github.com/blain3white/clean-my-agent/releases/download/v#{version}/Clean-My-Agent-mac-arm64.dmg",
       verified: "github.com/blain3white/clean-my-agent/"
