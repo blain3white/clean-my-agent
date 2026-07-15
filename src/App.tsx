@@ -179,7 +179,7 @@ function App() {
           <main className="main-surface soft-grid flex min-w-0 flex-1 flex-col">
             <Topbar
               activeView={activeView}
-              loading={dashboard.loading}
+              loading={dashboard.scanning}
               mockDataEnabled={dashboard.mockDataEnabled}
               overviewRange={overviewRange}
               usageRange={usageRange}
