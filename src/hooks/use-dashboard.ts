@@ -169,12 +169,14 @@ const emptySnapshot = (): DashboardSnapshot => ({
 })
 
 const overviewFromDashboard = (snapshot: DashboardSnapshot, timezone = 'UTC'): OverviewSnapshot => {
+  const overviewDateKeys = new Set(snapshot.usage.map((point) => point.date))
   const byDate = <T>(items: T[], dateOf: (item: T) => string | undefined) => {
     const counts: Record<string, number> = {}
     for (const item of items) {
       const value = dateOf(item)
       if (!value) continue
       const key = dateKeyFromTime(new Date(value).getTime(), timezone)
+      if (!overviewDateKeys.has(key)) continue
       counts[key] = (counts[key] ?? 0) + 1
     }
     return counts
@@ -315,8 +317,9 @@ export function useDashboard(): DashboardState {
       if (!options.background) setLoading(true)
       if (force) setScanning(true)
       try {
+        if (fullSnapshotLoadRef.current) await fullSnapshotLoadRef.current
         if (force) {
-          if (fullSnapshotLoaded) {
+          if (fullSnapshotLoadedRef.current) {
             const next = await window.cleanMyAgent.rescan()
             setSnapshot(next)
             setOverviewSnapshot(overviewFromDashboard(next, settings.usageTimezone))
@@ -325,7 +328,7 @@ export function useDashboard(): DashboardState {
             setOverviewSnapshot(next)
             if (!fullSnapshotLoadedRef.current) setSnapshot(dashboardFromOverview(next))
           }
-        } else if (fullSnapshotLoaded) {
+        } else if (fullSnapshotLoadedRef.current) {
           const next = await window.cleanMyAgent.getSnapshot()
           setSnapshot(next)
           setOverviewSnapshot(overviewFromDashboard(next, settings.usageTimezone))
@@ -356,18 +359,13 @@ export function useDashboard(): DashboardState {
           detail: errorMessage(error),
           occurredAt: new Date().toISOString(),
         })
-        if (!options.background && !fullSnapshotLoaded) {
-          const empty = emptySnapshot()
-          setSnapshot(empty)
-          setOverviewSnapshot(overviewFromDashboard(empty, settings.usageTimezone))
-        }
         return false
       } finally {
         if (!options.background) setLoading(false)
         if (force) setScanning(false)
       }
     },
-    [fullSnapshotLoaded, settings.mockDataEnabled, settings.usageTimezone, t],
+    [settings.mockDataEnabled, settings.usageTimezone, t],
   )
 
   const ensureFullSnapshot = useCallback((): Promise<void> => {
@@ -427,17 +425,21 @@ export function useDashboard(): DashboardState {
     if (!settings.backgroundScan || settings.mockDataEnabled || !window.cleanMyAgent) return
     const timer = window.setInterval(
       () => {
-        const refresh = fullSnapshotLoaded
-          ? window.cleanMyAgent?.refreshRecentSessions().then((next) => {
+        const refresh = (async () => {
+          if (fullSnapshotLoadRef.current) await fullSnapshotLoadRef.current
+          if (fullSnapshotLoadedRef.current) {
+            return window.cleanMyAgent?.refreshRecentSessions().then((next) => {
               setSnapshot(next)
               setOverviewSnapshot(overviewFromDashboard(next, settings.usageTimezone))
             })
-          : window.cleanMyAgent?.refreshRecentOverview().then((next) => {
-              setOverviewSnapshot(next)
-              if (!fullSnapshotLoadedRef.current) setSnapshot(dashboardFromOverview(next))
-            })
+          }
+          return window.cleanMyAgent?.refreshRecentOverview().then((next) => {
+            setOverviewSnapshot(next)
+            if (!fullSnapshotLoadedRef.current) setSnapshot(dashboardFromOverview(next))
+          })
+        })()
         void refresh
-          ?.then(() => {
+          .then(() => {
             setLastIssue((current) => (current?.kind === 'refresh-failed' ? null : current))
           })
           .catch((error) => {
@@ -663,7 +665,11 @@ export function useDashboard(): DashboardState {
               detail: errorMessage(error),
               occurredAt: new Date().toISOString(),
             })
-            setSnapshot(emptySnapshot())
+            const empty = emptySnapshot()
+            setSnapshot(empty)
+            setOverviewSnapshot(overviewFromDashboard(empty, settings.usageTimezone))
+            fullSnapshotLoadedRef.current = false
+            setFullSnapshotLoaded(false)
           } finally {
             setLoading(false)
           }
@@ -732,14 +738,15 @@ export function useDashboard(): DashboardState {
 
         setLoading(true)
         try {
-          if (fullSnapshotLoaded) {
+          if (fullSnapshotLoadRef.current) await fullSnapshotLoadRef.current
+          if (fullSnapshotLoadedRef.current) {
             const next = await window.cleanMyAgent.refreshRecentSessions()
             setSnapshot(next)
             setOverviewSnapshot(overviewFromDashboard(next, settings.usageTimezone))
           } else {
             const next = await window.cleanMyAgent.refreshRecentOverview()
             setOverviewSnapshot(next)
-            setSnapshot(dashboardFromOverview(next))
+            if (!fullSnapshotLoadedRef.current) setSnapshot(dashboardFromOverview(next))
           }
           setLastIssue((current) => (current?.kind === 'refresh-failed' ? null : current))
           if (settings.soundEffects && settings.scanSound) {
@@ -919,7 +926,7 @@ export function useDashboard(): DashboardState {
         }
       },
     }),
-    [fullSnapshotLoaded, load, runUpdateCheck, runUpdateDownload, settings, snapshot.cleanup, t],
+    [load, runUpdateCheck, runUpdateDownload, settings, snapshot.cleanup, t],
   )
 
   return {

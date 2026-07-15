@@ -496,7 +496,7 @@ describe('getSnapshot and rescan', () => {
         id: `overview-${index}`,
         title: `Overview ${index}`,
         storagePath: `/tmp/large-cache/${index}.jsonl`,
-        lastUpdated: new Date(Date.parse(template.lastUpdated) + index).toISOString(),
+        lastUpdated: new Date(Date.now() - (index % 500) * 24 * 60 * 60 * 1_000).toISOString(),
       })),
     )
 
@@ -511,6 +511,9 @@ describe('getSnapshot and rescan', () => {
     expect(overview).not.toHaveProperty('sessions')
     expect(overview).not.toHaveProperty('cleanup')
     expect(overview).not.toHaveProperty('worktrees')
+    expect(Object.keys(overview.trends.sessionsByDate).length).toBeLessThanOrEqual(365)
+    expect(Object.keys(overview.trends.backupsByDate).length).toBeLessThanOrEqual(365)
+    expect(Object.keys(overview.trends.cleanupByDate).length).toBeLessThanOrEqual(365)
     expect(overview.performance.serviceDurationMs).toBeGreaterThanOrEqual(0)
   })
 
@@ -617,10 +620,23 @@ describe('getSnapshot and rescan', () => {
 
   it('rescanOverview and refreshRecentOverview keep the response bounded', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
-    await writeJsonlSession(fixtureRoot, 'codex')
+    const rescannedPath = await writeJsonlSession(fixtureRoot, 'codex', {
+      filename: 'overview-rescan.jsonl',
+      contentExtra: ' rescan overview candidate',
+    })
 
     const rescanned = await service.rescanOverview()
+    expect(rescanned.recentSessions.map((session) => session.storagePath)).toContain(rescannedPath)
+
+    const refreshedPath = await writeJsonlSession(fixtureRoot, 'codex', {
+      filename: 'overview-refresh.jsonl',
+      contentExtra: ' refresh overview candidate',
+    })
+    const refreshedAt = new Date(Date.now() + 60_000)
+    await utimes(refreshedPath, refreshedAt, refreshedAt)
     const refreshed = await service.refreshRecentOverview(5)
+    expect(refreshed.overview.totalSessions).toBeGreaterThan(rescanned.overview.totalSessions)
+    expect(refreshed.recentSessions.map((session) => session.storagePath)).toContain(refreshedPath)
 
     for (const overview of [rescanned, refreshed]) {
       expect(overview.overview.totalSessions).toBeGreaterThanOrEqual(1)

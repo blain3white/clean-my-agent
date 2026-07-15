@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { Button } from '@/components/ui/button'
 import { Sidebar } from '@/app/Sidebar'
 import { Topbar } from '@/app/Topbar'
 import type { ViewId } from '@/app/navigation'
@@ -61,6 +62,18 @@ function App() {
   }, [activeView, ensureFullSnapshot])
 
   const content = useMemo(() => {
+    const fullSnapshotFallback =
+      dashboard.fullSnapshotLoading || !dashboard.lastIssue ? (
+        viewFallback
+      ) : (
+        <div className="flex min-h-[320px] flex-col items-center justify-center gap-3 text-sm text-white/55">
+          <p>{dashboard.lastIssue?.detail ?? 'Unable to load local data.'}</p>
+          <Button variant="outline" onClick={() => void ensureFullSnapshot()}>
+            Try again
+          </Button>
+        </div>
+      )
+
     switch (activeView) {
       case 'overview':
         return (
@@ -75,7 +88,7 @@ function App() {
           />
         )
       case 'sessions':
-        if (!dashboard.fullSnapshotLoaded) return viewFallback
+        if (!dashboard.fullSnapshotLoaded) return fullSnapshotFallback
         return (
           <SessionsView
             key={sessionProjectQuery || 'all-sessions'}
@@ -91,7 +104,7 @@ function App() {
           />
         )
       case 'cleanup':
-        if (!dashboard.fullSnapshotLoaded) return viewFallback
+        if (!dashboard.fullSnapshotLoaded) return fullSnapshotFallback
         return (
           <CleanupView
             cleanup={dashboard.snapshot.cleanup}
@@ -105,7 +118,7 @@ function App() {
       case 'skills':
         return <SkillsView mockDataEnabled={dashboard.mockDataEnabled} />
       case 'usage':
-        if (!dashboard.fullSnapshotLoaded) return viewFallback
+        if (!dashboard.fullSnapshotLoaded) return fullSnapshotFallback
         return (
           <UsageView
             snapshot={dashboard.snapshot}
@@ -119,7 +132,7 @@ function App() {
           />
         )
       case 'relay':
-        if (!dashboard.fullSnapshotLoaded) return viewFallback
+        if (!dashboard.fullSnapshotLoaded) return fullSnapshotFallback
         return (
           <RelayView
             sessions={dashboard.snapshot.sessions}
@@ -127,10 +140,10 @@ function App() {
           />
         )
       case 'health':
-        if (!dashboard.fullSnapshotLoaded) return viewFallback
+        if (!dashboard.fullSnapshotLoaded) return fullSnapshotFallback
         return <HealthView snapshot={dashboard.snapshot} />
       case 'worktrees':
-        if (!dashboard.fullSnapshotLoaded) return viewFallback
+        if (!dashboard.fullSnapshotLoaded) return fullSnapshotFallback
         return (
           <WorktreesView
             worktrees={dashboard.snapshot.worktrees}
@@ -138,7 +151,7 @@ function App() {
           />
         )
       case 'settings':
-        if (!dashboard.fullSnapshotLoaded) return viewFallback
+        if (!dashboard.fullSnapshotLoaded) return fullSnapshotFallback
         return (
           <SettingsView
             snapshot={dashboard.snapshot}
@@ -168,6 +181,7 @@ function App() {
   }, [
     activeView,
     dashboard,
+    ensureFullSnapshot,
     overviewRange,
     sessionProjectQuery,
     theme.preference,

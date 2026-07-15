@@ -865,12 +865,14 @@ export class AppService {
           }
         }),
       )
+      const overviewDateKeys = new Set(this.buildUsage([]).map((point) => point.date))
       const byDate = <T>(items: T[], dateOf: (item: T) => string | undefined) => {
         const counts: Record<string, number> = {}
         for (const item of items) {
           const value = dateOf(item)
           if (!value) continue
           const key = dateKeyForTimezone(new Date(value), settings.usageTimezone)
+          if (!overviewDateKeys.has(key)) continue
           counts[key] = (counts[key] ?? 0) + 1
         }
         return counts
