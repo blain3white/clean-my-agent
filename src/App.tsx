@@ -123,7 +123,7 @@ function App() {
         return (
           <WorktreesView
             worktrees={dashboard.snapshot.worktrees}
-            onTrash={dashboard.trashWorktree}
+            onTrash={dashboard.trashWorktrees}
           />
         )
       case 'settings':

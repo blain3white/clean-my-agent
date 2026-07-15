@@ -23,6 +23,8 @@ import type {
   UsagePoint,
   WorktreeRecord,
   WorktreeOwner,
+  WorktreeTrashBatchResult,
+  WorktreeTrashFailure,
   RiskLevel,
   UniversalRelayDocument,
   SkillsSnapshot,
@@ -1304,6 +1306,30 @@ export class AppService {
       const records = await this.moveCleanupToTrash([candidate.id])
       return records[0]
     })
+  }
+
+  async trashWorktrees(worktreePaths: string[]): Promise<WorktreeTrashBatchResult> {
+    const paths = Array.from(
+      new Set(
+        (Array.isArray(worktreePaths) ? worktreePaths : []).map((worktreePath) =>
+          normalizePath(worktreePath, 'worktreePath'),
+        ),
+      ),
+    )
+    const moved: SystemTrashResult[] = []
+    const failed: WorktreeTrashFailure[] = []
+
+    for (const worktreePath of paths) {
+      try {
+        const record = await this.trashWorktree(worktreePath)
+        if (record) moved.push(record)
+        else failed.push({ path: worktreePath, message: 'Worktree is no longer available.' })
+      } catch {
+        failed.push({ path: worktreePath, message: 'Could not move worktree to Trash.' })
+      }
+    }
+
+    return { moved, failed }
   }
 
   async moveCleanupToTrash(candidateIds: string[]): Promise<SystemTrashResult[]> {

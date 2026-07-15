@@ -3200,4 +3200,32 @@ describe('trashWorktree', () => {
       pruneSpy.mockRestore()
     }
   }, 20_000)
+
+  it('returns per-worktree outcomes when a batch is only partially successful', async () => {
+    const service = await initServiceWithScan(fixtureRoot, userDataPath)
+    const firstPath = path.join(userDataPath, 'first-worktree')
+    const secondPath = path.join(userDataPath, 'second-worktree')
+    const trashSpy = vi.spyOn(service, 'trashWorktree')
+    trashSpy.mockImplementation(async (worktreePath) => {
+      if (worktreePath === secondPath) throw new Error('native Trash failed')
+      return {
+        candidateId: 'worktree:first',
+        title: 'first-worktree',
+        kind: 'stale-worktree',
+        originalPaths: [firstPath],
+        sizeBytes: 100,
+        deletedAt: new Date().toISOString(),
+        risk: 'low',
+      }
+    })
+
+    const result = await service.trashWorktrees([firstPath, secondPath])
+
+    expect(result.moved).toHaveLength(1)
+    expect(result.moved[0]?.originalPaths).toEqual([firstPath])
+    expect(result.failed).toEqual([
+      { path: secondPath, message: 'Could not move worktree to Trash.' },
+    ])
+    expect(trashSpy).toHaveBeenCalledTimes(2)
+  })
 })

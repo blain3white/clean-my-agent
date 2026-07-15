@@ -97,8 +97,8 @@ function registerIpc(): void {
   ipcMain.handle('cleanup:trash', (_event, candidateIds: string[]) =>
     service.moveCleanupToTrash(candidateIds),
   )
-  ipcMain.handle('worktree:trash', (_event, worktreePath: string) =>
-    service.trashWorktree(worktreePath),
+  ipcMain.handle('worktree:trash', (_event, worktreePaths: string[]) =>
+    service.trashWorktrees(worktreePaths),
   )
   ipcMain.handle('recovery:list', () => service.getRecoveryRecords())
   ipcMain.handle('recovery:diagnose', (_event, recoveryId: string) =>
