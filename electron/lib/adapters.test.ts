@@ -433,22 +433,27 @@ describe('unreadable and missing roots', () => {
     expect(state.diagnostics?.some((item) => item.code === 'root-missing')).toBe(false)
   })
 
-  it('reports existing unreadable roots as permission-blocked', async () => {
-    const root = await makeTmpDir('permission-blocked-root')
-    const adapter = makeAdapter('codex', [root])
+  it.skipIf(process.platform === 'win32')(
+    'reports existing unreadable roots as permission-blocked',
+    async () => {
+      const root = await makeTmpDir('permission-blocked-root')
+      const adapter = makeAdapter('codex', [root])
 
-    try {
-      await chmod(root, 0o000)
-      const { state } = await adapter.scan(makeSettings(root))
+      try {
+        await chmod(root, 0o000)
+        const { state } = await adapter.scan(makeSettings(root))
 
-      expect(state.installed).toBe(false)
-      expect(state.readable).toBe(false)
-      expect(state.diagnostics?.some((item) => item.code === 'root-permission-blocked')).toBe(true)
-      expect(state.diagnostics?.some((item) => item.code === 'root-missing')).toBe(false)
-    } finally {
-      await chmod(root, 0o700)
-    }
-  })
+        expect(state.installed).toBe(false)
+        expect(state.readable).toBe(false)
+        expect(state.diagnostics?.some((item) => item.code === 'root-permission-blocked')).toBe(
+          true,
+        )
+        expect(state.diagnostics?.some((item) => item.code === 'root-missing')).toBe(false)
+      } finally {
+        await chmod(root, 0o700)
+      }
+    },
+  )
 })
 
 // ─── recentCandidates ordering / limit ───────────────────────────────────────
@@ -684,7 +689,7 @@ describe('adapterFor', () => {
     )
 
     const geminiRoots = rootsForPlatform(scannerProviderFor('gemini')!, 'win32')
-    expect(geminiRoots).toEqual(['~/.gemini'])
+    expect(geminiRoots).toEqual(['~/.gemini', '~/AppData/Roaming/gemini', '~/AppData/Local/gemini'])
   })
 
   it('uses provider parser overrides for scan and universal export', async () => {

@@ -83,6 +83,7 @@ function makeService(userDataPath: string, openPath?: (p: string) => Promise<voi
     userDataPath,
     openPath: openPath ?? (async () => undefined),
   })
+  services.push(service)
   return service
 }
 
@@ -172,13 +173,16 @@ function testHashId(parts: Array<string | number | undefined>): string {
 
 let fixtureRoot: string
 let userDataPath: string
+let services: AppService[]
 
 beforeEach(async () => {
+  services = []
   fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'cma-fixture-'))
   userDataPath = await mkdtemp(path.join(os.tmpdir(), 'cma-userdata-'))
 })
 
 afterEach(async () => {
+  services.forEach((service) => service.close())
   await rm(fixtureRoot, { recursive: true, force: true })
   await rm(userDataPath, { recursive: true, force: true })
 })
@@ -2119,7 +2123,7 @@ describe('recovery system', () => {
     expect(service.getRecoveryRecords().find((record) => record.id === recovery.id)?.status).toBe(
       'undone',
     )
-  })
+  }, 20_000)
 
   it('records and undoes export operations by removing the exported file', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
@@ -2135,7 +2139,7 @@ describe('recovery system', () => {
 
     await service.undoRecovery(recovery.id)
     await expect(stat(exportPath)).rejects.toThrow()
-  })
+  }, 20_000)
 
   it('undoes a Trash move by restoring all moved files', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
@@ -2279,7 +2283,7 @@ describe('recovery system', () => {
     expect((await service.getSnapshot(false)).archives.find((item) => item.id === archive.id)).toBe(
       undefined,
     )
-  })
+  }, 20_000)
 
   it('records failed export diagnostics when the source session cannot be decoded', async () => {
     const service = await initServiceWithScan(fixtureRoot, userDataPath)
@@ -2787,14 +2791,14 @@ describe('openPath', () => {
     const handler = async (p: string) => {
       calls.push(p)
     }
-    const service = new AppService({ userDataPath, openPath: handler })
+    const service = makeService(userDataPath, handler)
     await service.init()
     await service.openPath('/some/path')
     expect(calls).toEqual(['/some/path'])
   })
 
   it('uses the default no-op handler when none is provided', async () => {
-    const service = new AppService({ userDataPath })
+    const service = makeService(userDataPath)
     await service.init()
     // Should not throw
     await expect(service.openPath('/anything')).resolves.toBeUndefined()
@@ -2802,11 +2806,8 @@ describe('openPath', () => {
 
   it('rejects non-local or relative paths', async () => {
     const calls: string[] = []
-    const service = new AppService({
-      userDataPath,
-      openPath: async (targetPath) => {
-        calls.push(targetPath)
-      },
+    const service = makeService(userDataPath, async (targetPath) => {
+      calls.push(targetPath)
     })
     await service.init()
 
@@ -2891,13 +2892,11 @@ describe('AppService archive vault', () => {
   it('archives sessions into the vault without dropping indexed stats or search text', async () => {
     const localFixture = await mkdtemp(path.join(os.tmpdir(), 'clean-my-agent-archive-fixture-'))
     const localUserData = await mkdtemp(path.join(os.tmpdir(), 'clean-my-agent-archive-user-data-'))
+    let service: AppService | undefined
     try {
       const filePath = await writeJsonlSession(localFixture, 'codex')
 
-      const service = new AppService({
-        userDataPath: localUserData,
-        openPath: async () => undefined,
-      })
+      service = makeService(localUserData)
       await service.init()
       service.updateSettings({
         scanRoots: Object.fromEntries(
@@ -2953,6 +2952,7 @@ describe('AppService archive vault', () => {
       expect(restoredSnapshot.sessions[0].storageState).toBe('live')
       expect(await readFile(filePath, 'utf8')).toContain('rare migration needle')
     } finally {
+      service?.close()
       await rm(localFixture, { recursive: true, force: true })
       await rm(localUserData, { recursive: true, force: true })
     }

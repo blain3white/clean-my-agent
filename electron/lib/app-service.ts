@@ -696,6 +696,10 @@ export class AppService {
     })
   }
 
+  close(): void {
+    this.db.close()
+  }
+
   async getSnapshot(forceRescan = false): Promise<DashboardSnapshot> {
     return this.trackAsync('app.getSnapshot', async () => {
       const settings = this.requireSettings()

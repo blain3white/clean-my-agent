@@ -304,10 +304,9 @@ function parseParentRepoFromGitdir(content: string): string | undefined {
   if (!match) return undefined
   const gitdir = match[1].trim()
   // Walk up from .../.git/worktrees/<name> to the parent repo root.
-  const worktreesSegment = `${path.sep}.git${path.sep}worktrees${path.sep}`
-  const idx = gitdir.indexOf(worktreesSegment)
-  if (idx === -1) return undefined
-  return gitdir.slice(0, idx)
+  const matchIndex = gitdir.search(/[\\/]\.git[\\/]worktrees[\\/]/)
+  if (matchIndex === -1) return undefined
+  return gitdir.slice(0, matchIndex).replace(/[\\/]/g, path.sep)
 }
 
 /**
@@ -354,7 +353,7 @@ export async function scanAllWorktrees(
   const sizeCache: WorktreeSizeCache = options.sizeCache ? new Map(options.sizeCache) : new Map()
   const records: WorktreeRecord[] = []
 
-  const userRoots = (options.roots ?? []).map((root) => expandHome(root)).filter(Boolean)
+  const userRoots = (options.roots ?? []).filter(Boolean).map(normalizeForCompare)
   const defaultEntries = options.includeDefaultRoots === false ? [] : defaultWorktreeRoots()
   // Build root → ownerAgent map. User-configured roots are "other".
   const rootOwners = new Map<string, WorktreeOwner>()
@@ -365,8 +364,8 @@ export async function scanAllWorktrees(
   // subfolder (if it exists) becomes a scan root owned by 'other'.
   const projectRoots: string[] = []
   for (const projectPath of options.projectPaths ?? []) {
-    const project = expandHome(projectPath)
-    if (!project) continue
+    if (!projectPath) continue
+    const project = normalizeForCompare(projectPath)
     for (const sub of projectWorktreeSubfolders) {
       projectRoots.push(path.join(project, sub))
     }
@@ -532,7 +531,7 @@ export async function scanWorktrees(options: ScanWorktreesOptions): Promise<Work
   const candidates: CleanupCandidate[] = []
 
   // Combine the agent-default worktree roots with any the user configured.
-  const userRoots = (options.roots ?? []).map((root) => expandHome(root)).filter(Boolean)
+  const userRoots = (options.roots ?? []).filter(Boolean).map(normalizeForCompare)
   const defaults =
     options.includeDefaultRoots === false ? [] : defaultWorktreeRoots().map((r) => r.path)
   const roots = Array.from(new Set([...defaults, ...userRoots])).map((root) => expandHome(root))

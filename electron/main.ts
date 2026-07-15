@@ -29,6 +29,7 @@ function getAppIconPath(): string {
 
 function createWindow(): void {
   const iconPath = getAppIconPath()
+  const isMac = process.platform === 'darwin'
 
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -36,12 +37,11 @@ function createWindow(): void {
     minWidth: 1040,
     minHeight: 700,
     title: appName,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 18, y: 18 },
-    transparent: true,
-    vibrancy: 'sidebar',
-    visualEffectState: 'active',
-    backgroundColor: '#00000000',
+    titleBarStyle: isMac ? 'hiddenInset' : 'default',
+    ...(isMac ? { trafficLightPosition: { x: 18, y: 18 } } : {}),
+    transparent: isMac,
+    ...(isMac ? { vibrancy: 'sidebar', visualEffectState: 'active' as const } : {}),
+    backgroundColor: isMac ? '#00000000' : '#111111',
     icon: iconPath,
     show: false,
     webPreferences: {
@@ -157,4 +157,8 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('before-quit', () => {
+  service?.close()
 })

@@ -341,7 +341,7 @@ describe('scanWorktrees', () => {
     const fs: typeof goodFs = {
       ...goodFs,
       readDir: vi.fn(async (root: string) => {
-        if (root === '/wt/bad') throw new Error('EACCES')
+        if (root === path.resolve('/wt/bad')) throw new Error('EACCES')
         return goodFs.readDir(root)
       }),
     }
@@ -545,7 +545,7 @@ describe('defaultWorktreeRoots', () => {
 describe('resolveParentRepo', () => {
   it('extracts the parent repo from a gitdir pointer', () => {
     const content = 'gitdir: /home/me/proj/.git/worktrees/feature-a'
-    expect(resolveParentRepo(content)).toBe('/home/me/proj')
+    expect(resolveParentRepo(content)).toBe(path.normalize('/home/me/proj'))
   })
 
   it('returns undefined for malformed content', () => {
@@ -901,7 +901,7 @@ describe('scanAllWorktrees', () => {
 
     expect(result.records).toEqual([])
     expect(result.diagnostics).toEqual([
-      expect.objectContaining({ code: 'worktree-root-unreadable', path: '/wt' }),
+      expect.objectContaining({ code: 'worktree-root-unreadable', path: path.resolve('/wt') }),
     ])
   })
 
@@ -958,8 +958,8 @@ describe('scanAllWorktrees', () => {
     const fs: WorktreeFs = {
       ...base,
       readDir: vi.fn(async (root: string) => {
-        if (root === '/first') return ['../shared/repo']
-        if (root === '/second') return ['../shared/repo']
+        if (root === path.resolve('/first')) return ['../shared/repo']
+        if (root === path.resolve('/second')) return ['../shared/repo']
         return []
       }),
     }
@@ -1087,7 +1087,7 @@ describe('scanAllWorktrees', () => {
 
     expect(result.records).toEqual([])
     expect(result.diagnostics).toEqual([
-      expect.objectContaining({ code: 'worktree-stat-failed', path: '/wt/broken' }),
+      expect.objectContaining({ code: 'worktree-stat-failed', path: path.resolve('/wt/broken') }),
     ])
   })
 
@@ -1106,7 +1106,7 @@ describe('scanAllWorktrees', () => {
 
     expect(result.records).toEqual([expect.objectContaining({ clean: false })])
     expect(result.diagnostics).toEqual([
-      expect.objectContaining({ code: 'worktree-status-failed', path: '/wt/broken' }),
+      expect.objectContaining({ code: 'worktree-status-failed', path: path.resolve('/wt/broken') }),
     ])
   })
 
@@ -1361,7 +1361,7 @@ describe('scanAllWorktrees', () => {
     const fs: WorktreeFs = {
       ...allFs([]),
       readDir: vi.fn(async (root: string) => {
-        if (root === '/unreadable') throw new Error('EACCES')
+        if (root === path.resolve('/unreadable')) throw new Error('EACCES')
         return []
       }),
     }
