@@ -545,7 +545,7 @@ describe('defaultWorktreeRoots', () => {
 describe('resolveParentRepo', () => {
   it('extracts the parent repo from a gitdir pointer', () => {
     const content = 'gitdir: /home/me/proj/.git/worktrees/feature-a'
-    expect(resolveParentRepo(content)).toBe('/home/me/proj')
+    expect(resolveParentRepo(content)).toBe(path.normalize('/home/me/proj'))
   })
 
   it('returns undefined for malformed content', () => {
