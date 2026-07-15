@@ -1812,6 +1812,48 @@ describe('moveCleanupToTrash', () => {
     expect((await service.getSnapshot(false)).sessions).toHaveLength(1)
   })
 
+  it('reports the default native Trash adapter as unavailable outside Electron', async () => {
+    const service = new AppService({ userDataPath })
+    services.push(service)
+    await service.init()
+    service.updateSettings({
+      scanRoots: Object.fromEntries(
+        agentSources.map((source) => [source, [path.join(fixtureRoot, source)]]),
+      ),
+      exportDirectory: path.join(userDataPath, 'Exports'),
+    })
+    service.updateSettings({ cleanupRetentionDays: 0 })
+    const filePath = await writeJsonlSession(fixtureRoot, 'codex')
+    await service.rescan()
+    const candidate = (await service.scanCleanup()).find((item) => item.source === 'codex')
+    assert.ok(candidate)
+
+    await expect(service.moveCleanupToTrash([candidate.id])).rejects.toThrow(
+      'System Trash is unavailable in this runtime.',
+    )
+    await expect(stat(filePath)).resolves.toBeDefined()
+  })
+
+  it('normalizes a non-Error native Trash rejection in recovery diagnostics', async () => {
+    const trashItem = vi.fn(async () => Promise.reject('native rejection'))
+    const service = await initServiceWithScan(fixtureRoot, userDataPath, undefined, trashItem)
+    service.updateSettings({ cleanupRetentionDays: 0 })
+    const filePath = await writeJsonlSession(fixtureRoot, 'codex')
+    await service.rescan()
+    const candidate = (await service.scanCleanup()).find((item) => item.source === 'codex')
+    assert.ok(candidate)
+
+    await expect(service.moveCleanupToTrash([candidate.id])).rejects.toBe('native rejection')
+    const recovery = service.getRecoveryRecords().find((item) => item.operation === 'trash')
+    expect(recovery).toMatchObject({ status: 'failed', error: 'Unknown error' })
+    expect(recovery?.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'operation.failed', message: 'Unknown error' }),
+      ]),
+    )
+    await expect(stat(filePath)).resolves.toBeDefined()
+  })
+
   it('keeps metadata consistent when system Trash succeeds for one candidate then fails', async () => {
     const removedPaths: string[] = []
     const trashItem = vi.fn(async (targetPath: string) => {
@@ -1875,6 +1917,41 @@ describe('moveCleanupToTrash', () => {
     expect(snapshot.sessions.map((session) => session.id)).toContain(claude.id)
     expect(snapshot.sessions.map((session) => session.id)).not.toContain(codex.id)
     expect(snapshot.overview.totalTokens).toBe(codex.tokens.total + claude.tokens.total)
+  })
+
+  it('preserves the native Trash error when reconciliation also fails after a partial move', async () => {
+    const removedPaths: string[] = []
+    const trashItem = vi.fn(async (targetPath: string) => {
+      if (removedPaths.length > 0) throw new Error('native Trash failed')
+      await rm(targetPath, { recursive: true, force: true })
+      removedPaths.push(targetPath)
+    })
+    const service = await initServiceWithScan(fixtureRoot, userDataPath, undefined, trashItem)
+    const firstPath = path.join(fixtureRoot, 'codex', 'first.jsonl')
+    const secondPath = path.join(fixtureRoot, 'codex', 'second.jsonl')
+    await mkdir(path.dirname(firstPath), { recursive: true })
+    await writeFile(firstPath, 'first')
+    await writeFile(secondPath, 'second')
+    const candidate: CleanupCandidate = {
+      id: 'partial-trash-rescan-failure',
+      kind: 'large-log',
+      title: 'Partial Trash reconciliation failure',
+      source: 'codex',
+      sessionIds: [],
+      paths: [firstPath, secondPath],
+      sizeBytes: 11,
+      lastUpdated: '2026-01-01T00:00:00.000Z',
+      reason: 'Cover reconciliation failure after a partial native Trash move.',
+      risk: 'low',
+      recoverable: true,
+      backedUp: false,
+    }
+    vi.spyOn(service, 'scanCleanup').mockResolvedValue([candidate])
+    vi.spyOn(service, 'rescan').mockRejectedValue(new Error('reconciliation unavailable'))
+
+    await expect(service.moveCleanupToTrash([candidate.id])).rejects.toThrow('native Trash failed')
+    await expect(stat(firstPath)).rejects.toThrow()
+    await expect(stat(secondPath)).resolves.toBeDefined()
   })
 
   it('can exclude deleted-session token statistics through settings', async () => {
