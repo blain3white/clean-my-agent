@@ -87,6 +87,32 @@ const staleMs = now - 30 * 24 * 60 * 60 * 1000 // 30 days ago
 const freshMs = now - 1 * 24 * 60 * 60 * 1000 // 1 day ago
 
 describe('scanWorktrees', () => {
+  it('returns immediately when all roots are disabled', async () => {
+    const runner = makeRunner({ available: vi.fn(async () => true) })
+    const result = await scanWorktrees({
+      retentionDays: 7,
+      excludedFolders: [],
+      includeDefaultRoots: false,
+      runner,
+    })
+
+    expect(result).toEqual({ candidates: [], diagnostics: [] })
+    expect(runner.available).not.toHaveBeenCalled()
+  })
+
+  it('silently skips unreadable default roots', async () => {
+    const fs = fakeFs([])
+    vi.mocked(fs.readDir).mockRejectedValue(new Error('ENOENT'))
+    const result = await scanWorktrees({
+      retentionDays: 7,
+      excludedFolders: [],
+      fs,
+      runner: makeRunner({}),
+    })
+
+    expect(result).toEqual({ candidates: [], diagnostics: [] })
+  })
+
   it('returns no candidates and a diagnostic when git is unavailable', async () => {
     const fs = fakeFs([])
     const runner = makeRunner({ available: async () => false })
@@ -879,6 +905,23 @@ describe('scanAllWorktrees', () => {
     ])
   })
 
+  it('caps diagnostics when many custom roots are unreadable', async () => {
+    const roots = Array.from({ length: 55 }, (_, index) => `/unreadable/${index}`)
+    const fs = allFs([])
+    vi.mocked(fs.readDir).mockRejectedValue(new Error('EACCES'))
+    const result = await scanAllWorktrees({
+      roots,
+      retentionDays: 7,
+      excludedFolders: [],
+      includeDefaultRoots: false,
+      fs,
+      runner: makeRunner({}),
+    })
+
+    expect(result.records).toEqual([])
+    expect(result.diagnostics).toHaveLength(50)
+  })
+
   it('silently skips unreadable default roots', async () => {
     const fs = allFs([])
     vi.mocked(fs.readDir).mockRejectedValue(new Error('ENOENT'))
@@ -907,6 +950,45 @@ describe('scanAllWorktrees', () => {
 
     expect(result.records).toHaveLength(1)
     expect(fs.statWorktree).toHaveBeenCalledTimes(1)
+  })
+
+  it('deduplicates the same worktree discovered through different roots', async () => {
+    const wtPath = '/shared/repo'
+    const base = allFs([{ dir: wtPath, mtimeMs: staleMsAll, sizeBytes: 10 }])
+    const fs: WorktreeFs = {
+      ...base,
+      readDir: vi.fn(async (root: string) => {
+        if (root === '/first') return ['../shared/repo']
+        if (root === '/second') return ['../shared/repo']
+        return []
+      }),
+    }
+    const result = await scanAllWorktrees({
+      roots: ['/first', '/second'],
+      retentionDays: 7,
+      excludedFolders: [],
+      includeDefaultRoots: false,
+      fs,
+      runner: makeRunner({}),
+    })
+
+    expect(result.records).toHaveLength(1)
+    expect(fs.statGitEntry).toHaveBeenCalledTimes(1)
+    expect(fs.statWorktree).toHaveBeenCalledTimes(1)
+  })
+
+  it('accepts omitted optional root collections', async () => {
+    const fs = allFs([])
+    const result = await scanAllWorktrees({
+      retentionDays: 7,
+      excludedFolders: [],
+      includeDefaultRoots: false,
+      fs,
+      runner: makeRunner({}),
+    })
+
+    expect(result.records).toEqual([])
+    expect(result.diagnostics).toEqual([])
   })
 
   it('skips excluded worktrees before reading their git metadata', async () => {
@@ -958,6 +1040,37 @@ describe('scanAllWorktrees', () => {
 
     expect(result.records).toEqual([])
     expect(fs.statWorktree).not.toHaveBeenCalled()
+  })
+
+  it('skips files whose git metadata is not a worktree pointer', async () => {
+    const fs = allFs([{ dir: '/wt/not-linked', mtimeMs: staleMsAll, sizeBytes: 10 }])
+    vi.mocked(fs.statGitEntry).mockResolvedValueOnce({ kind: 'file', content: 'not a gitdir' })
+    const result = await scanAllWorktrees({
+      roots: ['/wt'],
+      retentionDays: 7,
+      excludedFolders: [],
+      includeDefaultRoots: false,
+      fs,
+      runner: makeRunner({}),
+    })
+
+    expect(result.records).toEqual([])
+    expect(fs.statWorktree).not.toHaveBeenCalled()
+  })
+
+  it('checks every exclusion before accepting a worktree', async () => {
+    const fs = allFs([{ dir: '/wt/excluded', mtimeMs: staleMsAll, sizeBytes: 10 }])
+    const result = await scanAllWorktrees({
+      roots: ['/wt'],
+      retentionDays: 7,
+      excludedFolders: ['/elsewhere', '/wt/excluded'],
+      includeDefaultRoots: false,
+      fs,
+      runner: makeRunner({}),
+    })
+
+    expect(result.records).toEqual([])
+    expect(fs.statGitEntry).not.toHaveBeenCalled()
   })
 
   it('diagnoses a worktree whose disk usage cannot be measured', async () => {
