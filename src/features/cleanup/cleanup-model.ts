@@ -49,17 +49,6 @@ export type CleanupCandidateGroup = {
   bytes: number
   latestOpened?: string
 }
-export type CleanupConfirmationSummary = {
-  count: number
-  bytes: number
-  highRiskCount: number
-  needsBackupCount: number
-  unrecoverableCount: number
-  confirmationRequired: boolean
-  settingPolicy: 'settings-confirmation' | 'trash-safety-override'
-}
-export type CleanupConfirmationState = string[] | null
-
 export const cleanupSourceWeights: Record<AgentSource, { start: number; end: number }> = {
   codex: { start: 0, end: 24 },
   claude: { start: 12, end: 48 },
@@ -157,50 +146,6 @@ export function defaultCleanupSelection(candidates: CleanupCandidate[]): string[
       return false
     })
     .map((candidate) => candidate.id)
-}
-
-export function buildCleanupConfirmationSummary(
-  selectedCandidates: CleanupCandidate[],
-  confirmBeforeCleanup: boolean,
-): CleanupConfirmationSummary {
-  return {
-    count: selectedCandidates.length,
-    bytes: selectedCandidates.reduce((total, candidate) => total + candidate.sizeBytes, 0),
-    highRiskCount: selectedCandidates.filter((candidate) => candidate.risk === 'high').length,
-    needsBackupCount: selectedCandidates.filter((candidate) => !candidate.backedUp).length,
-    unrecoverableCount: selectedCandidates.filter((candidate) => !candidate.recoverable).length,
-    confirmationRequired: selectedCandidates.length > 0,
-    settingPolicy: confirmBeforeCleanup ? 'settings-confirmation' : 'trash-safety-override',
-  }
-}
-
-export function cleanupConfirmationRequest(selectedCandidates: CleanupCandidate[]): {
-  confirmationIds: CleanupConfirmationState
-  moveIds: string[] | null
-} {
-  if (selectedCandidates.length === 0) return { confirmationIds: null, moveIds: null }
-  return {
-    confirmationIds: selectedCandidates.map((candidate) => candidate.id),
-    moveIds: null,
-  }
-}
-
-export function cleanupConfirmationCancel(): {
-  confirmationIds: CleanupConfirmationState
-  moveIds: string[] | null
-} {
-  return { confirmationIds: null, moveIds: null }
-}
-
-export function cleanupConfirmationConfirm(confirmationIds: CleanupConfirmationState): {
-  confirmationIds: CleanupConfirmationState
-  moveIds: string[] | null
-} {
-  if (!confirmationIds || confirmationIds.length === 0) {
-    return { confirmationIds: null, moveIds: null }
-  }
-
-  return { confirmationIds: null, moveIds: confirmationIds }
 }
 
 export function buildCleanupCategorySummaries(

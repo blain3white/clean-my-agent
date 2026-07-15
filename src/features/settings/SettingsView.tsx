@@ -693,20 +693,6 @@ export function SettingsView({
           />
           <SettingsRow
             icon={ShieldCheck}
-            title={t('settings.confirmBeforeCleanup')}
-            description={t('settings.confirmBeforeCleanupDescription')}
-            trailing={
-              <SwitchControl
-                checked={settings.confirmBeforeCleanup}
-                onCheckedChange={(checked) =>
-                  void onSettingsChange({ confirmBeforeCleanup: checked })
-                }
-                label={toggleLabel('settings.toggleCleanupConfirmation')}
-              />
-            }
-          />
-          <SettingsRow
-            icon={ShieldCheck}
             title={t('settings.includeDeletedSessionsInStats')}
             description={t('settings.includeDeletedSessionsInStatsDescription')}
             trailing={
