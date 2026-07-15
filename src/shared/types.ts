@@ -162,6 +162,16 @@ export type SystemTrashResult = {
   risk: RiskLevel
 }
 
+export type WorktreeTrashFailure = {
+  path: string
+  message: string
+}
+
+export type WorktreeTrashBatchResult = {
+  moved: SystemTrashResult[]
+  failed: WorktreeTrashFailure[]
+}
+
 export type RecoveryOperation =
   | 'backup'
   | 'archive'
@@ -520,7 +530,7 @@ export type CleanMyAgentApi = {
   exportSession: (sessionId: string, format: ExportFormat) => Promise<string>
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<SystemTrashResult[]>
-  trashWorktree: (worktreePath: string) => Promise<SystemTrashResult | undefined>
+  trashWorktrees: (worktreePaths: string[]) => Promise<WorktreeTrashBatchResult>
   getRecoveryRecords: () => Promise<RecoveryRecord[]>
   diagnoseRecovery: (recoveryId: string) => Promise<RecoveryRecord>
   undoRecovery: (recoveryId: string) => Promise<RecoveryRecord>

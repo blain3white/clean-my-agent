@@ -1,13 +1,23 @@
 import { useMemo, useState } from 'react'
-import { GitBranch, FolderTree, HardDrive, AlertTriangle, CheckCircle2, Trash2 } from 'lucide-react'
+import {
+  GitBranch,
+  FolderTree,
+  HardDrive,
+  AlertTriangle,
+  CheckCircle2,
+  Search,
+  Trash2,
+} from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { agentLabel, formatBytes, formatRelative } from '@/lib/format'
 import { useI18n } from '@/lib/i18n-context'
-import type { WorktreeOwner, WorktreeRecord } from '@/shared/types'
+import type { WorktreeOwner, WorktreeRecord, WorktreeTrashBatchResult } from '@/shared/types'
 
 type SortKey = 'size' | 'activity' | 'agent' | 'repo'
+type FilterKey = 'all' | 'stale' | 'dirty' | 'clean'
 
 function ownerLabel(owner: WorktreeOwner): string {
   if (owner === 'other') return 'Other'
@@ -59,10 +69,17 @@ export function WorktreesView({
   onTrash,
 }: {
   worktrees: WorktreeRecord[]
-  onTrash: (worktreePath: string) => void
+  onTrash: (worktreePaths: string[]) => Promise<WorktreeTrashBatchResult>
 }) {
   const { t } = useI18n()
   const [sort, setSort] = useState<SortKey>('size')
+  const [filter, setFilter] = useState<FilterKey>('all')
+  const [query, setQuery] = useState('')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [trashing, setTrashing] = useState(false)
+
+  const availablePaths = new Set(worktrees.map((worktree) => worktree.path))
+  const selectedPaths = [...selected].filter((path) => availablePaths.has(path))
 
   const stats = useMemo(() => {
     const total = worktrees.length
@@ -80,7 +97,20 @@ export function WorktreesView({
   }, [worktrees])
 
   const sorted = useMemo(() => {
-    const list = [...worktrees]
+    const normalizedQuery = query.trim().toLocaleLowerCase()
+    const list = worktrees.filter((worktree) => {
+      const matchesFilter =
+        filter === 'all' ||
+        (filter === 'stale' && worktree.stale) ||
+        (filter === 'dirty' && !worktree.clean) ||
+        (filter === 'clean' && worktree.clean)
+      const matchesQuery =
+        !normalizedQuery ||
+        [worktree.repoName, worktree.branch, worktree.path].some((value) =>
+          (value ?? '').toLocaleLowerCase().includes(normalizedQuery),
+        )
+      return matchesFilter && matchesQuery
+    })
     if (sort === 'size') list.sort((a, b) => b.sizeBytes - a.sizeBytes)
     else if (sort === 'activity')
       list.sort((a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime())
@@ -88,7 +118,43 @@ export function WorktreesView({
       list.sort((a, b) => ownerLabel(a.ownerAgent).localeCompare(ownerLabel(b.ownerAgent)))
     else list.sort((a, b) => a.repoName.localeCompare(b.repoName))
     return list
-  }, [worktrees, sort])
+  }, [filter, query, sort, worktrees])
+
+  const visiblePaths = sorted.map((worktree) => worktree.path)
+  const allVisibleSelected =
+    visiblePaths.length > 0 && visiblePaths.every((path) => selected.has(path))
+
+  const togglePath = (worktreePath: string) => {
+    setSelected((current) => {
+      const next = new Set(current)
+      if (next.has(worktreePath)) next.delete(worktreePath)
+      else next.add(worktreePath)
+      return next
+    })
+  }
+
+  const toggleVisible = () => {
+    setSelected((current) => {
+      const next = new Set(current)
+      for (const worktreePath of visiblePaths) {
+        if (allVisibleSelected) next.delete(worktreePath)
+        else next.add(worktreePath)
+      }
+      return next
+    })
+  }
+
+  const trashPaths = async (paths: string[]) => {
+    if (paths.length === 0 || trashing) return
+    setTrashing(true)
+    try {
+      const result = await onTrash(paths)
+      const failedPaths = new Set(result.failed.map((failure) => failure.path))
+      setSelected((current) => new Set([...current].filter((path) => failedPaths.has(path))))
+    } finally {
+      setTrashing(false)
+    }
+  }
 
   if (worktrees.length === 0) {
     return (
@@ -145,25 +211,93 @@ export function WorktreesView({
         </CardContent>
       </Card>
 
-      <div className="flex items-center justify-between">
-        <h2 className="text-[15px] font-semibold text-white/80">{t('worktrees.listTitle')}</h2>
-        <select
-          value={sort}
-          onChange={(e) => setSort(e.target.value as SortKey)}
-          className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs text-white/70"
-          aria-label={t('worktrees.sort')}
-        >
-          <option value="size">{t('worktrees.sortSize')}</option>
-          <option value="activity">{t('worktrees.sortActivity')}</option>
-          <option value="agent">{t('worktrees.sortAgent')}</option>
-          <option value="repo">{t('worktrees.sortRepo')}</option>
-        </select>
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-[15px] font-semibold text-white/80">{t('worktrees.listTitle')}</h2>
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={selectedPaths.length === 0 || trashing}
+            onClick={() => void trashPaths(selectedPaths)}
+            aria-label={t('worktrees.trashSelected', { count: selectedPaths.length })}
+          >
+            <Trash2 className="mr-1.5 size-3.5" />
+            {t('worktrees.trashSelected', { count: selectedPaths.length })}
+          </Button>
+        </div>
+        <div className="flex flex-col gap-2 md:flex-row md:items-center">
+          <label className="relative min-w-0 flex-1">
+            <span className="sr-only">{t('worktrees.search')}</span>
+            <Search className="pointer-events-none absolute left-2.5 top-2 size-4 text-white/35" />
+            <Input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t('worktrees.searchPlaceholder')}
+              className="border-white/10 bg-white/5 pl-8"
+            />
+          </label>
+          <div className="flex flex-wrap gap-1" aria-label={t('worktrees.filter')}>
+            {(['all', 'stale', 'dirty', 'clean'] as FilterKey[]).map((value) => (
+              <Button
+                key={value}
+                type="button"
+                variant={filter === value ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-8"
+                aria-pressed={filter === value}
+                onClick={() => setFilter(value)}
+              >
+                {t(`worktrees.filter${value[0].toUpperCase()}${value.slice(1)}` as never)}
+              </Button>
+            ))}
+          </div>
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortKey)}
+            className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs text-white/70"
+            aria-label={t('worktrees.sort')}
+          >
+            <option value="size">{t('worktrees.sortSize')}</option>
+            <option value="activity">{t('worktrees.sortActivity')}</option>
+            <option value="agent">{t('worktrees.sortAgent')}</option>
+            <option value="repo">{t('worktrees.sortRepo')}</option>
+          </select>
+        </div>
       </div>
 
       <div className="space-y-2">
+        <label className="flex w-fit items-center gap-2 text-xs text-white/55">
+          <input
+            type="checkbox"
+            checked={allVisibleSelected}
+            onChange={toggleVisible}
+            disabled={visiblePaths.length === 0}
+            className="size-4 accent-sky-400"
+          />
+          {t('worktrees.selectVisible', { count: visiblePaths.length })}
+        </label>
+        {sorted.length === 0 ? (
+          <div className="rounded-lg border border-white/8 bg-white/[0.03] px-4 py-8 text-center text-sm text-white/55">
+            {t('worktrees.noMatches')}
+          </div>
+        ) : null}
         {sorted.map((wt) => (
           <Card key={wt.id} className="glass-panel rounded-lg px-4 py-3">
             <div className="flex items-start justify-between gap-3">
+              <label
+                className="pt-0.5"
+                title={t('worktrees.selectWorktree', { name: wt.branch || wt.repoName })}
+              >
+                <span className="sr-only">
+                  {t('worktrees.selectWorktree', { name: wt.branch || wt.repoName })}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={selected.has(wt.path)}
+                  onChange={() => togglePath(wt.path)}
+                  className="size-4 accent-sky-400"
+                />
+              </label>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <GitBranch className="size-4 shrink-0 text-white/40" />
@@ -205,7 +339,8 @@ export function WorktreesView({
                   variant="ghost"
                   size="sm"
                   className="mt-1 h-7 px-2 text-xs text-white/55 hover:text-rose-300"
-                  onClick={() => onTrash(wt.path)}
+                  disabled={trashing}
+                  onClick={() => void trashPaths([wt.path])}
                   title={t('worktrees.trashAction')}
                 >
                   <Trash2 className="mr-1 size-3.5" />

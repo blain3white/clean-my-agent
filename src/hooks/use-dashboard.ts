@@ -12,6 +12,7 @@ import {
   type ExportFormat,
   type RecoveryRecord,
   type UniversalRelayDocument,
+  type WorktreeTrashBatchResult,
 } from '@/shared/types'
 import { loadSessionDetail } from './session-detail-api'
 
@@ -58,7 +59,7 @@ type DashboardState = {
   exportDiagnostics: () => Promise<void>
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<void>
-  trashWorktree: (worktreePath: string) => Promise<void>
+  trashWorktrees: (worktreePaths: string[]) => Promise<WorktreeTrashBatchResult>
   diagnoseRecovery: (recoveryId: string) => Promise<RecoveryRecord | undefined>
   undoRecovery: (recoveryId: string) => Promise<void>
 }
@@ -718,18 +719,27 @@ export function useDashboard(): DashboardState {
         )
         await load(false)
       },
-      trashWorktree: async (worktreePath: string) => {
+      trashWorktrees: async (worktreePaths: string[]) => {
         if (!window.cleanMyAgent) {
           toast.info(t('toast.trashDesktopOnly'))
-          return
+          return {
+            moved: [],
+            failed: worktreePaths.map((path) => ({ path, message: 'Desktop app required.' })),
+          }
         }
-        const record = await window.cleanMyAgent.trashWorktree(worktreePath)
-        if (record) {
-          toast.success(t('toast.worktreeTrashed'))
-        } else {
-          toast.error(t('toast.worktreeTrashError'))
+        const result = await window.cleanMyAgent.trashWorktrees(worktreePaths)
+        const movedPaths = new Set(result.moved.flatMap((record) => record.originalPaths))
+        if (movedPaths.size > 0) {
+          setSnapshot((current) => ({
+            ...current,
+            worktrees: current.worktrees.filter((worktree) => !movedPaths.has(worktree.path)),
+          }))
+          toast.success(t('toast.worktreesTrashed', { count: result.moved.length }))
         }
-        await load(true)
+        if (result.failed.length > 0) {
+          toast.error(t('toast.worktreesTrashPartial', { count: result.failed.length }))
+        }
+        return result
       },
       diagnoseRecovery: async (recoveryId: string) => {
         if (!window.cleanMyAgent) {
