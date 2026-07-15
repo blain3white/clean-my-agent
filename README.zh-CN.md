@@ -13,7 +13,7 @@ Clean My Agent 是一个本地优先的桌面应用，用于清理、备份、�
 使用 Homebrew 安装最新的 macOS Apple Silicon 构建：
 
 ```sh
-brew tap blain3white/clean-my-agent
+brew tap blain3white/clean-my-agent https://github.com/blain3white/clean-my-agent.git
 brew install --cask clean-my-agent
 ```
 
