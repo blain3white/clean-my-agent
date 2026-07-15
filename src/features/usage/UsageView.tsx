@@ -483,6 +483,63 @@ function modelColor(key: string): string {
   return modelColorPalette[Math.abs(hash) % modelColorPalette.length]
 }
 
+function TopModelUsagePanels({ rows }: { rows: ModelUsage[] }) {
+  if (rows.length === 0) return null
+
+  return (
+    <section aria-label="Top model usage" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {rows.map((row) => (
+        <Card key={row.key || 'unknown'} className="glass-panel rounded-lg py-3">
+          <CardContent className="space-y-3 px-4">
+            <div className="flex items-start justify-between gap-3">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="truncate text-sm font-medium text-white/84">{row.model}</span>
+                </TooltipTrigger>
+                <TooltipContent>{row.model}</TooltipContent>
+              </Tooltip>
+              <span className="shrink-0 text-xs font-medium text-white/52 tabular-nums">
+                {formatUsageShare(row.share)}
+              </span>
+            </div>
+            <div
+              className="h-1.5 overflow-hidden rounded-full bg-white/8"
+              role="progressbar"
+              aria-label={`${row.model} token share`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(row.share * 10) / 10}
+            >
+              <span
+                className="block h-full rounded-full"
+                style={{ width: `${row.share}%`, backgroundColor: modelColor(row.key) }}
+              />
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-[11px]">
+              <div>
+                <div className="text-white/38">Tokens</div>
+                <div className="mt-0.5 text-white/72 tabular-nums">
+                  {formatUsageTokens(row.tokens)}
+                </div>
+              </div>
+              <div>
+                <div className="text-white/38">Cost</div>
+                <div className="mt-0.5 text-white/72 tabular-nums">{formatCost(row.cost)}</div>
+              </div>
+              <div>
+                <div className="text-white/38">Sessions</div>
+                <div className="mt-0.5 text-white/72 tabular-nums">
+                  {row.sessionCount.toLocaleString()}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </section>
+  )
+}
+
 function UsageBreakdownCard({
   agentRows,
   modelRows,
@@ -942,6 +999,8 @@ export function UsageView({
           loading={false}
         />
       </section>
+
+      <TopModelUsagePanels rows={analytics.topModelPanels} />
 
       <section className="usage-main-grid">
         <div className="space-y-4">

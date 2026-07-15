@@ -8,6 +8,7 @@ import {
 import {
   buildUsageAnalytics,
   buildUsageReport,
+  buildTopModelUsagePanels,
   costForTokenShare,
   createSparklinePath,
   exportUsageCsv,
@@ -456,7 +457,12 @@ describe('buildUsageAnalytics', () => {
     expect(rows).toHaveLength(3)
 
     const gpt = rows.find((row) => row.key === 'gpt-5-codex')
-    expect(gpt).toMatchObject({ model: 'gpt-5-codex', tokens: 1500, cost: 14 })
+    expect(gpt).toMatchObject({
+      model: 'gpt-5-codex',
+      tokens: 1500,
+      cost: 14,
+      sessionCount: 2,
+    })
     expect(gpt?.share).toBeCloseTo((1500 / 1800) * 100)
 
     const claude = rows.find((row) => row.key === 'claude-sonnet-4-5')
@@ -466,6 +472,85 @@ describe('buildUsageAnalytics', () => {
     expect(unknown).toMatchObject({ model: 'Unknown model', tokens: 50 })
     // sorted by tokens descending
     expect(rows.map((row) => row.tokens)).toEqual([1500, 250, 50])
+  })
+
+  it('builds four leading model panels and keeps Others and Unknown model explicit', () => {
+    const modelRows = [
+      ['gpt-5', 500],
+      ['claude-sonnet-4-5', 400],
+      ['gemini-2-5-pro', 300],
+      ['gpt-4o', 200],
+      ['claude-haiku-4-5', 75],
+      ['gemini-2-5-flash', 25],
+    ].map(([key, tokens], index) => ({
+      key: String(key),
+      model: String(key),
+      tokens: Number(tokens),
+      cost: index + 1,
+      sessionCount: index + 1,
+      share: Number(tokens) / 16,
+      hasTokenMetadata: true,
+    }))
+    modelRows.push({
+      key: '',
+      model: 'Unknown model',
+      tokens: 100,
+      cost: 0,
+      sessionCount: 2,
+      share: 6.25,
+      hasTokenMetadata: true,
+    })
+
+    const panels = buildTopModelUsagePanels(modelRows)
+
+    expect(panels.map((row) => row.model)).toEqual([
+      'gpt-5',
+      'claude-sonnet-4-5',
+      'gemini-2-5-pro',
+      'gpt-4o',
+      'Others',
+      'Unknown model',
+    ])
+    expect(panels.find((row) => row.key === 'others')).toMatchObject({
+      tokens: 100,
+      cost: 11,
+      sessionCount: 11,
+    })
+    expect(panels.reduce((sum, row) => sum + row.share, 0)).toBeCloseTo(100)
+  })
+
+  it('attributes model panel tokens and cost to the selected date range', () => {
+    const usage = [
+      usagePoint('2026-05-30', { codex: 800 }),
+      ...Array.from({ length: 6 }, (_, index) =>
+        usagePoint(`2026-0${index < 1 ? '5' : '6'}-${index < 1 ? '31' : `0${index}`}`),
+      ),
+      usagePoint('2026-06-06', { codex: 200 }),
+    ]
+    const snapshot = makeSnapshot(usage, [
+      makeSession({
+        tokens: {
+          input: 500,
+          output: 500,
+          cached: 0,
+          total: 1000,
+          costUsd: 10,
+          estimated: false,
+          model: 'GPT-5-Codex',
+        },
+        metadata: { usageByDate: { '2026-05-30': 800, '2026-06-06': 200 } },
+      }),
+    ])
+
+    const analytics = buildUsageAnalytics(snapshot, '7d')
+
+    expect(analytics.modelRows[0]).toMatchObject({
+      key: 'gpt-5-codex',
+      tokens: 200,
+      cost: 2,
+      sessionCount: 1,
+      share: 100,
+    })
   })
 
   it('returns no model rows when sessions carry no token metadata', () => {
