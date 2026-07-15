@@ -549,6 +549,42 @@ describe('scanCandidates skipping bad files', () => {
 // ─── scan diagnostics ────────────────────────────────────────────────────────
 
 describe('scan diagnostics', () => {
+  it('isolates parse failures and keeps valid sessions', async () => {
+    const root = await makeTmpDir('scan-diagnostics-parse-failure')
+    const invalidPath = path.join(root, 'invalid.jsonl')
+    const validPath = path.join(root, 'valid.jsonl')
+    await writeFile(invalidPath, 'invalid fixture')
+    await writeFile(validPath, 'valid fixture')
+
+    const adapter = new AgentAdapter({
+      source: 'codex',
+      name: 'Parse Failure Test',
+      roots: [root],
+      patterns: ['**/*.jsonl'],
+      note: 'test adapter',
+      async parseSession(pathToParse) {
+        if (pathToParse === invalidPath) throw new Error('invalid fixture')
+        return {
+          title: 'Valid session',
+          messages: [{ id: 'm1', role: 'user', text: 'valid' }],
+          files: [],
+          commands: [],
+          attachments: [],
+          metadata: {},
+        }
+      },
+    } as never)
+    const { state, sessions } = await adapter.scan(makeSettings(root))
+
+    expect(sessions.map((session) => session.storagePath)).toEqual([validPath])
+    expect(state.skippedFiles).toBe(1)
+    expect(state.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'parse-failed', path: invalidPath }),
+      ]),
+    )
+  })
+
   it('reports empty and oversized skipped files', async () => {
     const root = await makeTmpDir('scan-diagnostics-skips')
     const emptyPath = path.join(root, 'empty.jsonl')
