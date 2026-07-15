@@ -12,6 +12,8 @@ import { expandHome, hashId } from './files'
 const oneDayMs = 24 * 60 * 60 * 1000
 const maxDiagnostics = 50
 const gitConcurrency = 4
+const worktreeSizeCacheVersion = 2
+const worktreeSizeCacheTtlMs = 6 * 60 * 60 * 1000
 
 export type WorktreeScanResult = {
   candidates: CleanupCandidate[]
@@ -38,7 +40,10 @@ export type GitEntryInfo =
 export type WorktreeFs = {
   readDir: (root: string) => Promise<string[]>
   statGitEntry: (dir: string) => Promise<GitEntryInfo>
-  statWorktree: (dir: string) => Promise<{ mtimeMs: number; sizeBytes: number }>
+  statWorktree: (
+    dir: string,
+    cachedSizeBytes?: number,
+  ) => Promise<{ mtimeMs: number; sizeBytes: number }>
 }
 
 export type ScanWorktreesOptions = {
@@ -56,6 +61,7 @@ type DiscoveredWorktree = {
   path: string
   mtimeMs: number
   sizeBytes: number
+  sizeMeasuredAt?: number
 }
 
 type DiscoveredWorktreeFull = DiscoveredWorktree & {
@@ -67,6 +73,8 @@ type DiscoveredWorktreeFull = DiscoveredWorktree & {
 export type WorktreeSizeCacheEntry = {
   sizeBytes: number
   mtimeMs: number
+  measuredAt?: number
+  version?: number
 }
 
 export type WorktreeSizeCache = Map<string, WorktreeSizeCacheEntry>
@@ -84,7 +92,7 @@ export type ScanAllWorktreesOptions = {
   retentionDays: number
   excludedFolders: string[]
   includeDefaultRoots?: boolean
-  /** Persisted size cache (path → {sizeBytes, mtimeMs}); reused when mtime is unchanged. */
+  /** Versioned complete-size cache, reused for up to six hours after measurement. */
   sizeCache?: WorktreeSizeCache
   now?: number
   fs?: WorktreeFs
@@ -144,6 +152,66 @@ export const projectWorktreeSubfolders = [
   'worktrees',
 ]
 
+/**
+ * Measure the actual disk space occupied by a complete worktree. Unlike the
+ * session-oriented pathSize helper, this intentionally includes dependencies,
+ * build output, dotfiles, and every entry without a file-count cap.
+ */
+async function worktreeDiskUsage(root: string): Promise<number> {
+  const nativeUsage = await new Promise<number | undefined>((resolve) => {
+    const child = spawn('du', ['-sk', root], { env: process.env })
+    let stdout = ''
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf8')
+    })
+    child.on('error', () => resolve(undefined))
+    child.on('close', (code) => {
+      if (code !== 0) return resolve(undefined)
+      const kibibytes = Number.parseInt(stdout.trim().split(/\s+/, 1)[0] ?? '', 10)
+      resolve(Number.isFinite(kibibytes) ? kibibytes * 1024 : undefined)
+    })
+  })
+  if (nativeUsage !== undefined) return nativeUsage
+
+  // `du` is available on macOS/Linux and is substantially faster for large
+  // dependency trees. Keep a complete Node fallback for other platforms.
+  const { lstat, readdir } = await import('node:fs/promises')
+  const pending = [root]
+  const seenHardLinks = new Set<string>()
+  let total = 0
+
+  while (pending.length > 0) {
+    const current = pending.pop()!
+    let info: Awaited<ReturnType<typeof lstat>>
+    try {
+      info = await lstat(current)
+    } catch (error) {
+      if (current === root) throw error
+      continue
+    }
+
+    if (info.isFile() && info.nlink > 1) {
+      const identity = `${info.dev}:${info.ino}`
+      if (seenHardLinks.has(identity)) continue
+      seenHardLinks.add(identity)
+    }
+
+    // `blocks` matches filesystem usage reported by tools such as `du`.
+    // Fall back to logical size on platforms where allocated blocks are absent.
+    total += typeof info.blocks === 'number' ? info.blocks * 512 : info.size
+    if (!info.isDirectory()) continue
+
+    try {
+      const entries = await readdir(current)
+      for (const entry of entries) pending.push(path.join(current, entry))
+    } catch {
+      // Keep the directory's own allocated size and continue with readable paths.
+    }
+  }
+
+  return total
+}
+
 /** Production filesystem adapter backed by node:fs. */
 function createRealFs(): WorktreeFs {
   return {
@@ -168,11 +236,13 @@ function createRealFs(): WorktreeFs {
         return { kind: 'none' }
       }
     },
-    statWorktree: async (dir) => {
+    statWorktree: async (dir, cachedSizeBytes) => {
       const { stat } = await import('node:fs/promises')
-      const { pathSize } = await import('./files')
       const info = await stat(dir)
-      return { mtimeMs: info.mtimeMs, sizeBytes: await pathSize(dir) }
+      return {
+        mtimeMs: info.mtimeMs,
+        sizeBytes: cachedSizeBytes ?? (await worktreeDiskUsage(dir)),
+      }
     },
   }
 }
@@ -269,7 +339,7 @@ export async function resolveParentRepoFromWorktree(worktreePath: string): Promi
 
 /**
  * Scan all linked worktrees (not just stale) and return first-class WorktreeRecords,
- * with sizes cached by mtime (recomputed only when mtime changes or a worktree is new).
+ * with complete disk-usage measurements cached for up to six hours.
  * Clean/dirty is refreshed on every scan (git status --porcelain, concurrency limit).
  * ownerAgent is attributed by the default root the worktree lives under; user-configured
  * roots and non-agent defaults are "other".
@@ -336,9 +406,14 @@ export async function scanAllWorktrees(
       return false
     }
     if (gitEntry.kind !== 'file' || !/^gitdir:/m.test(gitEntry.content)) return false
+    const cached = sizeCache.get(dir)
+    const cacheIsFresh =
+      cached?.version === worktreeSizeCacheVersion &&
+      typeof cached.measuredAt === 'number' &&
+      now - cached.measuredAt < worktreeSizeCacheTtlMs
     let stats: { mtimeMs: number; sizeBytes: number }
     try {
-      stats = await fs.statWorktree(dir)
+      stats = await fs.statWorktree(dir, cacheIsFresh ? cached.sizeBytes : undefined)
     } catch {
       pushDiagnostic(diagnostics, {
         level: 'warning',
@@ -356,6 +431,7 @@ export async function scanAllWorktrees(
       path: dir,
       mtimeMs: stats.mtimeMs,
       sizeBytes: stats.sizeBytes,
+      sizeMeasuredAt: cacheIsFresh ? cached.measuredAt : now,
       ownerAgent: ownerForRoot(root),
       defaultRoot: root,
       parentRepo: parseParentRepoFromGitdir(gitEntry.content),
@@ -378,19 +454,19 @@ export async function scanAllWorktrees(
       }
       continue
     }
-    for (const entry of entries) {
+    await mapWithConcurrency(entries, gitConcurrency, async (entry) => {
       const dir = path.join(root, entry)
-      if (await tryRecordWorktree(dir, root)) continue
+      if (await tryRecordWorktree(dir, root)) return
       let subEntries: string[]
       try {
         subEntries = await fs.readDir(dir)
       } catch {
-        continue
+        return
       }
-      for (const sub of subEntries) {
-        await tryRecordWorktree(path.join(dir, sub), root)
-      }
-    }
+      await mapWithConcurrency(subEntries, gitConcurrency, (sub) =>
+        tryRecordWorktree(path.join(dir, sub), root),
+      )
+    })
   }
 
   // Probe each worktree: clean/dirty via git status (refreshed every scan, never cached).
@@ -415,16 +491,17 @@ export async function scanAllWorktrees(
       })
     }
 
-    // Size: reuse cache when mtime is unchanged; otherwise record the freshly
-    // computed size into the cache.
-    const cached = sizeCache.get(wt.path)
-    let sizeBytes: number
-    if (cached && cached.mtimeMs === wt.mtimeMs) {
-      sizeBytes = cached.sizeBytes
-    } else {
-      sizeBytes = wt.sizeBytes
-      sizeCache.set(wt.path, { sizeBytes, mtimeMs: wt.mtimeMs })
-    }
+    // Directory mtime cannot reliably invalidate nested changes. Cache only
+    // complete measurements from this algorithm and expire them after six hours.
+    // Entries written by the old truncated algorithm have no version and are
+    // therefore recomputed immediately on the first scan after upgrading.
+    const sizeBytes = wt.sizeBytes
+    sizeCache.set(wt.path, {
+      sizeBytes,
+      mtimeMs: wt.mtimeMs,
+      measuredAt: wt.sizeMeasuredAt ?? now,
+      version: worktreeSizeCacheVersion,
+    })
 
     const branch = await safeBranchName(runner, wt.path)
     const repoName = path.basename(path.dirname(wt.path))
