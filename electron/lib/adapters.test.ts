@@ -684,7 +684,7 @@ describe('adapterFor', () => {
     )
 
     const geminiRoots = rootsForPlatform(scannerProviderFor('gemini')!, 'win32')
-    expect(geminiRoots).toEqual(['~/.gemini'])
+    expect(geminiRoots).toEqual(['~/.gemini', '~/AppData/Roaming/gemini', '~/AppData/Local/gemini'])
   })
 
   it('uses provider parser overrides for scan and universal export', async () => {
