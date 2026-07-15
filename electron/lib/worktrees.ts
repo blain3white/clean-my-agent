@@ -306,7 +306,7 @@ function parseParentRepoFromGitdir(content: string): string | undefined {
   // Walk up from .../.git/worktrees/<name> to the parent repo root.
   const matchIndex = gitdir.search(/[\\/]\.git[\\/]worktrees[\\/]/)
   if (matchIndex === -1) return undefined
-  return gitdir.slice(0, matchIndex)
+  return gitdir.slice(0, matchIndex).replace(/[\\/]/g, path.sep)
 }
 
 /**
