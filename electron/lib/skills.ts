@@ -170,7 +170,12 @@ export function resolveSkillRoots(settings?: Pick<AppSettings, 'scanRoots'>): Sk
 export function formatSkillPathForDisplay(filePath: string): string {
   const home = expandHome('~')
   if (filePath === home) return '~'
-  if (filePath.startsWith(`${home}${path.sep}`)) return `~/${filePath.slice(home.length + 1)}`
+  if (filePath.startsWith(`${home}${path.sep}`)) {
+    return `~/${filePath
+      .slice(home.length + 1)
+      .split(path.sep)
+      .join('/')}`
+  }
   return filePath
 }
 

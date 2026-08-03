@@ -13,7 +13,7 @@ Codex、Claude Code、Cursor、Gemini、OpenCode のローカルセッション�
 Homebrew で最新の macOS Apple Silicon ビルドをインストールできます。
 
 ```sh
-brew tap blain3white/clean-my-agent
+brew tap blain3white/clean-my-agent https://github.com/blain3white/clean-my-agent.git
 brew install --cask clean-my-agent
 ```
 

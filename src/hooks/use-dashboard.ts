@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { dateKeyFromTime } from '@/lib/date-key'
 import { defaultLanguage, languageOptions, normalizeLanguage, translate } from '@/lib/i18n'
 import { mockSnapshot } from '@/lib/mock-data'
 import {
@@ -10,8 +11,10 @@ import {
   type CleanupCandidate,
   type DashboardSnapshot,
   type ExportFormat,
+  type OverviewSnapshot,
   type RecoveryRecord,
   type UniversalRelayDocument,
+  type WorktreeTrashBatchResult,
 } from '@/shared/types'
 import { loadSessionDetail } from './session-detail-api'
 
@@ -29,7 +32,11 @@ export type DashboardIssue = {
 
 type DashboardState = {
   snapshot: DashboardSnapshot
+  overviewSnapshot: OverviewSnapshot
   loading: boolean
+  fullSnapshotLoading: boolean
+  fullSnapshotLoaded: boolean
+  scanning: boolean
   lastIssue: DashboardIssue | null
   settings: AppSettings
   mockDataEnabled: boolean
@@ -47,6 +54,7 @@ type DashboardState = {
   setLaunchAtLogin: (enabled: boolean) => Promise<void>
   downloadLatestUpdate: () => Promise<void>
   rescan: () => Promise<void>
+  ensureFullSnapshot: () => Promise<void>
   refreshRecentSessions: () => Promise<void>
   getSessionDetail: (sessionId: string) => Promise<UniversalRelayDocument>
   backupSession: (sessionId: string) => Promise<void>
@@ -57,8 +65,7 @@ type DashboardState = {
   exportDiagnostics: () => Promise<void>
   scanCleanup: () => Promise<CleanupCandidate[]>
   moveCleanupToTrash: (candidateIds: string[]) => Promise<void>
-  restoreTrash: (trashId: string) => Promise<void>
-  purgeExpiredTrash: () => Promise<void>
+  trashWorktrees: (worktreePaths: string[]) => Promise<WorktreeTrashBatchResult>
   diagnoseRecovery: (recoveryId: string) => Promise<RecoveryRecord | undefined>
   undoRecovery: (recoveryId: string) => Promise<void>
 }
@@ -69,6 +76,7 @@ const agentNames: Record<AgentSource, string> = {
   cursor: 'Cursor',
   gemini: 'Gemini',
   opencode: 'OpenCode',
+  pi: 'Pi',
   custom: 'Custom',
 }
 
@@ -95,6 +103,7 @@ const defaultSettings = (): AppSettings => ({
   scanOnLaunch: true,
   backgroundScan: true,
   confirmBeforeCleanup: true,
+  includeDeletedSessionsInStats: true,
   excludedFolders: [],
   soundEffects: true,
   cleanupSound: true,
@@ -104,6 +113,9 @@ const defaultSettings = (): AppSettings => ({
   checkForUpdates: true,
   defaultRelayMode: 'full-context',
   exportDirectory: '',
+  worktreeRoots: [],
+  worktreeScanDefaultRoots: true,
+  worktreeRetentionDays: 30,
 })
 
 const mergeSettings = (settings?: Partial<AppSettings>): AppSettings => ({
@@ -153,6 +165,49 @@ const emptySnapshot = (): DashboardSnapshot => ({
   recovery: [],
   usage: [],
   storage: [],
+  worktrees: [],
+})
+
+const overviewFromDashboard = (snapshot: DashboardSnapshot, timezone = 'UTC'): OverviewSnapshot => {
+  const overviewDateKeys = new Set(snapshot.usage.map((point) => point.date))
+  const byDate = <T>(items: T[], dateOf: (item: T) => string | undefined) => {
+    const counts: Record<string, number> = {}
+    for (const item of items) {
+      const value = dateOf(item)
+      if (!value) continue
+      const key = dateKeyFromTime(new Date(value).getTime(), timezone)
+      if (!overviewDateKeys.has(key)) continue
+      counts[key] = (counts[key] ?? 0) + 1
+    }
+    return counts
+  }
+
+  return {
+    generatedAt: snapshot.generatedAt,
+    overview: snapshot.overview,
+    agents: snapshot.agents,
+    recentSessions: snapshot.sessions.slice(0, 6),
+    recentCleanup: snapshot.cleanup.slice(0, 4),
+    usage: snapshot.usage,
+    storage: snapshot.storage,
+    trends: {
+      sessionsByDate: byDate(snapshot.sessions, (session) => session.lastUpdated),
+      backupsByDate: byDate(snapshot.backups, (backup) => backup.createdAt),
+      cleanupByDate: byDate(snapshot.cleanup, (candidate) => candidate.lastUpdated),
+    },
+    performance: { serviceDurationMs: 0 },
+  }
+}
+
+const dashboardFromOverview = (snapshot: OverviewSnapshot): DashboardSnapshot => ({
+  ...emptySnapshot(),
+  generatedAt: snapshot.generatedAt,
+  overview: snapshot.overview,
+  agents: snapshot.agents,
+  sessions: snapshot.recentSessions,
+  cleanup: snapshot.recentCleanup,
+  usage: snapshot.usage,
+  storage: snapshot.storage,
 })
 
 const errorMessage = (error: unknown): string => {
@@ -174,6 +229,9 @@ const updateIssueKind = (error: unknown): DashboardIssueKind =>
 
 export function useDashboard(): DashboardState {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(() => emptySnapshot())
+  const [overviewSnapshot, setOverviewSnapshot] = useState<OverviewSnapshot>(() =>
+    overviewFromDashboard(emptySnapshot()),
+  )
   const [settings, setSettings] = useState<AppSettings>(() => {
     const mockDataEnabled =
       globalThis.localStorage?.getItem('clean-my-agent.mockDataEnabled') === 'true'
@@ -185,6 +243,11 @@ export function useDashboard(): DashboardState {
     return mergeSettings({ mockDataEnabled, language })
   })
   const [loading, setLoading] = useState(true)
+  const [fullSnapshotLoading, setFullSnapshotLoading] = useState(false)
+  const [fullSnapshotLoaded, setFullSnapshotLoaded] = useState(false)
+  const [scanning, setScanning] = useState(false)
+  const [settingsHydrated, setSettingsHydrated] = useState(false)
+  const [initialSnapshotLoaded, setInitialSnapshotLoaded] = useState(false)
   const [checkingForUpdates, setCheckingForUpdates] = useState(false)
   const [lastIssue, setLastIssue] = useState<DashboardIssue | null>(null)
   const t = useCallback(
@@ -193,6 +256,10 @@ export function useDashboard(): DashboardState {
     [settings.language],
   )
   const languageRef = useRef(settings.language)
+  const initialSnapshotLoadStartedRef = useRef(false)
+  const launchScanStartedRef = useRef(false)
+  const fullSnapshotLoadedRef = useRef(false)
+  const fullSnapshotLoadRef = useRef<Promise<void> | null>(null)
 
   useEffect(() => {
     languageRef.current = settings.language
@@ -201,7 +268,10 @@ export function useDashboard(): DashboardState {
   useEffect(() => {
     let cancelled = false
     const hydrateSettings = async () => {
-      if (!window.cleanMyAgent) return
+      if (!window.cleanMyAgent) {
+        setSettingsHydrated(true)
+        return
+      }
       try {
         const next = await window.cleanMyAgent.getSettings()
         let launchAtLogin = next.launchAtLogin
@@ -214,6 +284,8 @@ export function useDashboard(): DashboardState {
       } catch (error) {
         console.error(error)
         toast.error(translate(languageRef.current, 'toast.readSettingsError'))
+      } finally {
+        if (!cancelled) setSettingsHydrated(true)
       }
     }
     void hydrateSettings()
@@ -223,26 +295,58 @@ export function useDashboard(): DashboardState {
   }, [])
 
   const load = useCallback(
-    async (force = false): Promise<boolean> => {
+    async (force = false, options: { background?: boolean } = {}): Promise<boolean> => {
       if (settings.mockDataEnabled) {
         setSnapshot(mockSnapshot)
+        setOverviewSnapshot(overviewFromDashboard(mockSnapshot, settings.usageTimezone))
+        setFullSnapshotLoaded(true)
         setLoading(false)
         setLastIssue(null)
         return true
       }
 
       if (!window.cleanMyAgent) {
-        setSnapshot(emptySnapshot())
+        const empty = emptySnapshot()
+        setSnapshot(empty)
+        setOverviewSnapshot(overviewFromDashboard(empty, settings.usageTimezone))
+        setFullSnapshotLoaded(true)
         setLoading(false)
         return true
       }
 
-      setLoading(true)
+      if (!options.background) setLoading(true)
+      if (force) setScanning(true)
       try {
-        const next = force
-          ? await window.cleanMyAgent.rescan()
-          : await window.cleanMyAgent.getSnapshot()
-        setSnapshot(next)
+        if (fullSnapshotLoadRef.current) await fullSnapshotLoadRef.current
+        if (force) {
+          if (fullSnapshotLoadedRef.current) {
+            const next = await window.cleanMyAgent.rescan()
+            setSnapshot(next)
+            setOverviewSnapshot(overviewFromDashboard(next, settings.usageTimezone))
+          } else {
+            const next = await window.cleanMyAgent.rescanOverview()
+            setOverviewSnapshot(next)
+            if (!fullSnapshotLoadedRef.current) setSnapshot(dashboardFromOverview(next))
+          }
+        } else if (fullSnapshotLoadedRef.current) {
+          const next = await window.cleanMyAgent.getSnapshot()
+          setSnapshot(next)
+          setOverviewSnapshot(overviewFromDashboard(next, settings.usageTimezone))
+          fullSnapshotLoadedRef.current = true
+          setFullSnapshotLoaded(true)
+        } else {
+          const startedAt = performance.now()
+          const next = await window.cleanMyAgent.getOverviewSnapshot()
+          const ready = {
+            ...next,
+            performance: {
+              ...next.performance,
+              rendererDurationMs: Math.round((performance.now() - startedAt) * 100) / 100,
+            },
+          }
+          setOverviewSnapshot(ready)
+          if (!fullSnapshotLoadedRef.current) setSnapshot(dashboardFromOverview(ready))
+        }
         setLastIssue((current) =>
           current?.kind === 'scan-failed' || current?.kind === 'refresh-failed' ? null : current,
         )
@@ -255,28 +359,87 @@ export function useDashboard(): DashboardState {
           detail: errorMessage(error),
           occurredAt: new Date().toISOString(),
         })
-        setSnapshot(emptySnapshot())
         return false
       } finally {
-        setLoading(false)
+        if (!options.background) setLoading(false)
+        if (force) setScanning(false)
       }
     },
-    [settings.mockDataEnabled, t],
+    [settings.mockDataEnabled, settings.usageTimezone, t],
   )
 
+  const ensureFullSnapshot = useCallback((): Promise<void> => {
+    if (fullSnapshotLoaded || settings.mockDataEnabled) return Promise.resolve()
+    if (fullSnapshotLoadRef.current) return fullSnapshotLoadRef.current
+    if (!window.cleanMyAgent) {
+      fullSnapshotLoadedRef.current = true
+      setFullSnapshotLoaded(true)
+      return Promise.resolve()
+    }
+    setFullSnapshotLoading(true)
+    const request = window.cleanMyAgent
+      .getSnapshot()
+      .then((next) => {
+        fullSnapshotLoadedRef.current = true
+        setSnapshot(next)
+        setFullSnapshotLoaded(true)
+      })
+      .catch((error) => {
+        console.error(error)
+        toast.error(t('toast.readLocalDataError'))
+        setLastIssue({
+          kind: 'scan-failed',
+          detail: errorMessage(error),
+          occurredAt: new Date().toISOString(),
+        })
+      })
+      .finally(() => {
+        fullSnapshotLoadRef.current = null
+        setFullSnapshotLoading(false)
+      })
+    fullSnapshotLoadRef.current = request
+    return request
+  }, [fullSnapshotLoaded, settings.mockDataEnabled, t])
+
   useEffect(() => {
-    const timer = window.setTimeout(() => void load(false), 0)
+    const timer = window.setTimeout(() => {
+      if (initialSnapshotLoadStartedRef.current) return
+      initialSnapshotLoadStartedRef.current = true
+      void load(false).then(() => setInitialSnapshotLoaded(true))
+    }, 0)
     return () => window.clearTimeout(timer)
   }, [load])
+
+  useEffect(() => {
+    if (!settingsHydrated || !initialSnapshotLoaded || launchScanStartedRef.current) return
+    if (!settings.scanOnLaunch) return
+    const timer = window.setTimeout(() => {
+      if (launchScanStartedRef.current) return
+      launchScanStartedRef.current = true
+      void load(true, { background: true })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [initialSnapshotLoaded, load, settings.scanOnLaunch, settingsHydrated])
 
   useEffect(() => {
     if (!settings.backgroundScan || settings.mockDataEnabled || !window.cleanMyAgent) return
     const timer = window.setInterval(
       () => {
-        void window.cleanMyAgent
-          ?.refreshRecentSessions()
-          .then((next) => {
-            setSnapshot(next)
+        const refresh = (async () => {
+          if (fullSnapshotLoadRef.current) await fullSnapshotLoadRef.current
+          if (fullSnapshotLoadedRef.current) {
+            return window.cleanMyAgent?.refreshRecentSessions().then((next) => {
+              setSnapshot(next)
+              setOverviewSnapshot(overviewFromDashboard(next, settings.usageTimezone))
+            })
+          }
+          return window.cleanMyAgent?.refreshRecentOverview().then((next) => {
+            setOverviewSnapshot(next)
+            if (!fullSnapshotLoadedRef.current) setSnapshot(dashboardFromOverview(next))
+          })
+        })()
+        void refresh
+          .then(() => {
             setLastIssue((current) => (current?.kind === 'refresh-failed' ? null : current))
           })
           .catch((error) => {
@@ -302,6 +465,8 @@ export function useDashboard(): DashboardState {
     settings.mockDataEnabled,
     settings.soundEffects,
     settings.soundVolume,
+    settings.usageTimezone,
+    fullSnapshotLoaded,
   ])
 
   useEffect(() => {
@@ -434,7 +599,11 @@ export function useDashboard(): DashboardState {
             : optimistic
           const nextSettings = mergeSettings(persisted)
           setSettings(nextSettings)
-          if (options.rescan && !nextSettings.mockDataEnabled) await load(true)
+          if (options.rescan && !nextSettings.mockDataEnabled) {
+            await load(true)
+          } else if ('includeDeletedSessionsInStats' in patch && !nextSettings.mockDataEnabled) {
+            await load(false)
+          }
           return nextSettings
         } catch (error) {
           console.error(error)
@@ -470,6 +639,9 @@ export function useDashboard(): DashboardState {
 
         if (enabled) {
           setSnapshot(mockSnapshot)
+          setOverviewSnapshot(overviewFromDashboard(mockSnapshot, settings.usageTimezone))
+          fullSnapshotLoadedRef.current = true
+          setFullSnapshotLoaded(true)
           setLoading(false)
           setLastIssue(null)
           toast.success(t('toast.demoEnabled'))
@@ -478,9 +650,12 @@ export function useDashboard(): DashboardState {
           setLoading(true)
           try {
             const next = window.cleanMyAgent
-              ? await window.cleanMyAgent.getSnapshot()
-              : emptySnapshot()
-            setSnapshot(next)
+              ? await window.cleanMyAgent.getOverviewSnapshot()
+              : overviewFromDashboard(emptySnapshot(), settings.usageTimezone)
+            setOverviewSnapshot(next)
+            setSnapshot(dashboardFromOverview(next))
+            fullSnapshotLoadedRef.current = false
+            setFullSnapshotLoaded(false)
             setLastIssue((current) => (current?.kind === 'scan-failed' ? null : current))
           } catch (error) {
             console.error(error)
@@ -490,7 +665,11 @@ export function useDashboard(): DashboardState {
               detail: errorMessage(error),
               occurredAt: new Date().toISOString(),
             })
-            setSnapshot(emptySnapshot())
+            const empty = emptySnapshot()
+            setSnapshot(empty)
+            setOverviewSnapshot(overviewFromDashboard(empty, settings.usageTimezone))
+            fullSnapshotLoadedRef.current = false
+            setFullSnapshotLoaded(false)
           } finally {
             setLoading(false)
           }
@@ -559,8 +738,16 @@ export function useDashboard(): DashboardState {
 
         setLoading(true)
         try {
-          const next = await window.cleanMyAgent.refreshRecentSessions()
-          setSnapshot(next)
+          if (fullSnapshotLoadRef.current) await fullSnapshotLoadRef.current
+          if (fullSnapshotLoadedRef.current) {
+            const next = await window.cleanMyAgent.refreshRecentSessions()
+            setSnapshot(next)
+            setOverviewSnapshot(overviewFromDashboard(next, settings.usageTimezone))
+          } else {
+            const next = await window.cleanMyAgent.refreshRecentOverview()
+            setOverviewSnapshot(next)
+            if (!fullSnapshotLoadedRef.current) setSnapshot(dashboardFromOverview(next))
+          }
           setLastIssue((current) => (current?.kind === 'refresh-failed' ? null : current))
           if (settings.soundEffects && settings.scanSound) {
             const { playCleanupSystemSound } =
@@ -618,7 +805,7 @@ export function useDashboard(): DashboardState {
         }
         await window.cleanMyAgent.restoreArchive(archiveId)
         toast.success(t('toast.restored'))
-        await load(true)
+        await load(false)
       },
       exportSession: async (sessionId: string, format: ExportFormat) => {
         if (!window.cleanMyAgent) {
@@ -679,52 +866,29 @@ export function useDashboard(): DashboardState {
             plural: records.length === 1 ? '' : 's',
           }),
         )
-        await load(true)
+        await load(false)
       },
-      restoreTrash: async (trashId: string) => {
-        if (settings.mockDataEnabled) {
-          toast.info(t('toast.trashRestoreLiveOnly'))
-          return
-        }
-
+      trashWorktrees: async (worktreePaths: string[]) => {
         if (!window.cleanMyAgent) {
           toast.info(t('toast.trashDesktopOnly'))
-          return
+          return {
+            moved: [],
+            failed: worktreePaths.map((path) => ({ path, message: 'Desktop app required.' })),
+          }
         }
-
-        try {
-          await window.cleanMyAgent.restoreTrash(trashId)
-          toast.success(t('toast.trashRestored'))
-          await load(true)
-        } catch (error) {
-          console.error(error)
-          toast.error(t('toast.trashRestoreError'))
+        const result = await window.cleanMyAgent.trashWorktrees(worktreePaths)
+        const movedPaths = new Set(result.moved.flatMap((record) => record.originalPaths))
+        if (movedPaths.size > 0) {
+          setSnapshot((current) => ({
+            ...current,
+            worktrees: current.worktrees.filter((worktree) => !movedPaths.has(worktree.path)),
+          }))
+          toast.success(t('toast.worktreesTrashed', { count: result.moved.length }))
         }
-      },
-      purgeExpiredTrash: async () => {
-        if (settings.mockDataEnabled) {
-          toast.info(t('toast.trashPurgeLiveOnly'))
-          return
+        if (result.failed.length > 0) {
+          toast.error(t('toast.worktreesTrashPartial', { count: result.failed.length }))
         }
-
-        if (!window.cleanMyAgent) {
-          toast.info(t('toast.trashDesktopOnly'))
-          return
-        }
-
-        try {
-          const records = await window.cleanMyAgent.purgeExpiredTrash()
-          toast.success(
-            t('toast.trashPurged', {
-              count: records.length,
-              plural: records.length === 1 ? '' : 's',
-            }),
-          )
-          await load(false)
-        } catch (error) {
-          console.error(error)
-          toast.error(t('toast.trashPurgeError'))
-        }
+        return result
       },
       diagnoseRecovery: async (recoveryId: string) => {
         if (!window.cleanMyAgent) {
@@ -767,7 +931,11 @@ export function useDashboard(): DashboardState {
 
   return {
     snapshot,
+    overviewSnapshot,
     loading,
+    fullSnapshotLoading,
+    fullSnapshotLoaded,
+    scanning,
     lastIssue,
     settings,
     mockDataEnabled: settings.mockDataEnabled,
@@ -775,5 +943,6 @@ export function useDashboard(): DashboardState {
     launchAtLogin: settings.launchAtLogin,
     checkingForUpdates,
     ...actions,
+    ensureFullSnapshot,
   }
 }

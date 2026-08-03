@@ -51,6 +51,11 @@ const sortedModelPricingEntries = Object.entries(modelPricing).sort(
   ([left], [right]) => right.length - left.length,
 )
 
+export function canonicalModelKey(modelName?: string): string {
+  if (!modelName) return ''
+  return normalizedModelName(modelName)
+}
+
 function normalizedModelName(modelName: string): string {
   const normalized = modelName
     .toLowerCase()

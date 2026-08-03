@@ -3,6 +3,7 @@ import {
   CalendarDays,
   Clock,
   FlaskConical,
+  GitBranch,
   MessageSquare,
   type LucideIcon,
 } from 'lucide-react'
@@ -24,7 +25,7 @@ export type CleanupSourceProgress = {
   total: number
   status: 'Waiting' | 'Scanning' | 'Complete'
 }
-export type CleanupCategoryKey = 'large' | 'inactive' | 'test'
+export type CleanupCategoryKey = 'large' | 'inactive' | 'test' | 'worktree'
 export type CleanupCategorySummary = {
   key: CleanupCategoryKey
   title: string
@@ -48,23 +49,13 @@ export type CleanupCandidateGroup = {
   bytes: number
   latestOpened?: string
 }
-export type CleanupConfirmationSummary = {
-  count: number
-  bytes: number
-  highRiskCount: number
-  needsBackupCount: number
-  unrecoverableCount: number
-  confirmationRequired: boolean
-  settingPolicy: 'settings-confirmation' | 'trash-safety-override'
-}
-export type CleanupConfirmationState = string[] | null
-
 export const cleanupSourceWeights: Record<AgentSource, { start: number; end: number }> = {
   codex: { start: 0, end: 24 },
   claude: { start: 12, end: 48 },
   cursor: { start: 34, end: 72 },
   gemini: { start: 52, end: 88 },
   opencode: { start: 72, end: 100 },
+  pi: { start: 60, end: 92 },
   custom: { start: 82, end: 100 },
 }
 
@@ -120,6 +111,24 @@ export const cleanupKindMeta: Record<
     icon: FlaskConical,
     accent: 'text-red-300 bg-red-400/12 ring-red-400/24',
   },
+  'stale-worktree': {
+    category: 'worktree',
+    label: 'stale worktree',
+    icon: GitBranch,
+    accent: 'text-emerald-300 bg-emerald-400/12 ring-emerald-400/22',
+  },
+  'dirty-worktree': {
+    category: 'worktree',
+    label: 'dirty worktree',
+    icon: GitBranch,
+    accent: 'text-amber-300 bg-amber-400/13 ring-amber-400/24',
+  },
+  'active-worktree': {
+    category: 'worktree',
+    label: 'active worktree',
+    icon: GitBranch,
+    accent: 'text-sky-300 bg-sky-400/12 ring-sky-400/22',
+  },
 }
 
 export function cleanupCategoryForCandidate(candidate: CleanupCandidate): CleanupCategoryKey {
@@ -130,53 +139,13 @@ export function defaultCleanupSelection(candidates: CleanupCandidate[]): string[
   return candidates
     .filter((candidate) => {
       const category = cleanupCategoryForCandidate(candidate)
-      return category === 'inactive' || category === 'test'
+      if (category === 'inactive' || category === 'test') return true
+      // Only abandoned worktrees (stale + clean) are auto-selected. Dirty and
+      // active worktrees are listed but must be reviewed explicitly.
+      if (category === 'worktree') return candidate.kind === 'stale-worktree'
+      return false
     })
     .map((candidate) => candidate.id)
-}
-
-export function buildCleanupConfirmationSummary(
-  selectedCandidates: CleanupCandidate[],
-  confirmBeforeCleanup: boolean,
-): CleanupConfirmationSummary {
-  return {
-    count: selectedCandidates.length,
-    bytes: selectedCandidates.reduce((total, candidate) => total + candidate.sizeBytes, 0),
-    highRiskCount: selectedCandidates.filter((candidate) => candidate.risk === 'high').length,
-    needsBackupCount: selectedCandidates.filter((candidate) => !candidate.backedUp).length,
-    unrecoverableCount: selectedCandidates.filter((candidate) => !candidate.recoverable).length,
-    confirmationRequired: selectedCandidates.length > 0,
-    settingPolicy: confirmBeforeCleanup ? 'settings-confirmation' : 'trash-safety-override',
-  }
-}
-
-export function cleanupConfirmationRequest(selectedCandidates: CleanupCandidate[]): {
-  confirmationIds: CleanupConfirmationState
-  moveIds: string[] | null
-} {
-  if (selectedCandidates.length === 0) return { confirmationIds: null, moveIds: null }
-  return {
-    confirmationIds: selectedCandidates.map((candidate) => candidate.id),
-    moveIds: null,
-  }
-}
-
-export function cleanupConfirmationCancel(): {
-  confirmationIds: CleanupConfirmationState
-  moveIds: string[] | null
-} {
-  return { confirmationIds: null, moveIds: null }
-}
-
-export function cleanupConfirmationConfirm(confirmationIds: CleanupConfirmationState): {
-  confirmationIds: CleanupConfirmationState
-  moveIds: string[] | null
-} {
-  if (!confirmationIds || confirmationIds.length === 0) {
-    return { confirmationIds: null, moveIds: null }
-  }
-
-  return { confirmationIds: null, moveIds: confirmationIds }
 }
 
 export function buildCleanupCategorySummaries(
@@ -213,6 +182,16 @@ export function buildCleanupCategorySummaries(
       icon: FlaskConical,
       accent: 'text-violet-300 bg-violet-400/13 ring-violet-400/24',
     },
+    worktree: {
+      key: 'worktree',
+      title: 'Abandoned worktrees',
+      description: 'Git worktrees untouched past retention',
+      bytes: 0,
+      count: 0,
+      action: 'Review',
+      icon: GitBranch,
+      accent: 'text-sky-300 bg-sky-400/13 ring-sky-400/24',
+    },
   }
 
   for (const candidate of candidates) {
@@ -221,7 +200,7 @@ export function buildCleanupCategorySummaries(
     seed[category].count += 1
   }
 
-  return [seed.large, seed.inactive, seed.test]
+  return [seed.large, seed.inactive, seed.test, seed.worktree]
 }
 
 function cleanupTimestamp(value: string | undefined): number {

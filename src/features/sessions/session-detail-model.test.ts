@@ -5,6 +5,7 @@ import {
   countTimelineEvents,
   filterTimelineEvents,
   sessionActionLabel,
+  sessionResultRowClassName,
 } from './session-detail-model'
 
 function makeDocument(): UniversalRelayDocument {
@@ -72,6 +73,13 @@ function makeDocument(): UniversalRelayDocument {
 }
 
 describe('session detail model', () => {
+  it('paints session row hover and keyboard focus through every table cell', () => {
+    expect(sessionResultRowClassName).toContain('hover:[&>td]:bg-white/[0.035]')
+    expect(sessionResultRowClassName).toContain('focus-visible:[&>td]:bg-white/[0.05]')
+    expect(sessionResultRowClassName).toContain('hover:bg-transparent')
+    expect(sessionResultRowClassName).toContain('focus-visible:bg-transparent')
+  })
+
   it('classifies relay messages into timeline event kinds', () => {
     const events = buildSessionTimeline(makeDocument())
     expect(events.map((event) => event.kind)).toEqual([

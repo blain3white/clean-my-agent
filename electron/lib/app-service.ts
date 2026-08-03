@@ -4,20 +4,29 @@ import type {
   AgentSource,
   AppLanguage,
   AgentInstallState,
+  AgentScanDiagnostic,
   ArchiveRecord,
   AppSettings,
   BackupRecord,
   CleanupCandidate,
+  CleanupKind,
   DashboardSnapshot,
   DiagnosticOperation,
   DiagnosticPerformanceMetric,
   DiagnosticReport,
   ExportFormat,
+  OverviewSnapshot,
   RecoveryDiagnostic,
   SessionRecord,
   StorageSlice,
+  SystemTrashResult,
   TrashRecord,
   UsagePoint,
+  WorktreeRecord,
+  WorktreeOwner,
+  WorktreeTrashBatchResult,
+  WorktreeTrashFailure,
+  RiskLevel,
   UniversalRelayDocument,
   SkillsSnapshot,
   RecoveryRecord,
@@ -27,6 +36,12 @@ import { agentSources, appLanguages, defaultLanguage, exportFormats } from '../.
 import { adapters, adapterFor, enabledProviderSources } from './adapters'
 import { LocalDatabase } from './database'
 import { scanSkills } from './skills'
+import {
+  scanAllWorktrees,
+  pruneWorktrees,
+  resolveParentRepoFromWorktree,
+  type WorktreeSizeCache,
+} from './worktrees'
 import {
   compressFileBrotli,
   copyPath,
@@ -70,6 +85,7 @@ const agentLabels: Record<AgentSource, string> = {
   cursor: 'Cursor',
   gemini: 'Gemini',
   opencode: 'OpenCode',
+  pi: 'Pi',
   custom: 'Custom',
 }
 
@@ -236,6 +252,64 @@ function bytesFromRecords(records: Array<{ sizeBytes: number }>): number {
   return records.reduce((total, record) => total + record.sizeBytes, 0)
 }
 
+/** Distinct, non-empty project paths from sessions, for project-level worktree scanning. */
+function uniqueProjectPaths(sessions: Array<{ projectPath?: string }>): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const session of sessions) {
+    const p = session.projectPath
+    if (!p || typeof p !== 'string') continue
+    const trimmed = p.trim()
+    if (!trimmed) continue
+    const key = path.resolve(expandHome(trimmed)).replace(/[/\\]+$/, '')
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(trimmed)
+  }
+  return result
+}
+
+/**
+ * Derive cleanup candidates from WorktreeRecords. Currently emits only stale
+ * worktrees (preserving existing cleanup behaviour); #56 will broaden this to
+ * list all worktrees with abandoned ones default-selected.
+ */
+function worktreeRecordsToCleanupCandidates(
+  records: WorktreeRecord[],
+  retentionDays: number,
+): CleanupCandidate[] {
+  return records
+    .map((record) => {
+      const dirty = !record.clean
+      const kind: CleanupKind = !record.stale
+        ? 'active-worktree'
+        : dirty
+          ? 'dirty-worktree'
+          : 'stale-worktree'
+      const reason = !record.stale
+        ? `Recently active (within ${retentionDays} days); listed for review, not auto-selected.`
+        : dirty
+          ? `Untouched for more than ${retentionDays} days but has uncommitted/untracked changes. Review before removing.`
+          : `Untouched for more than ${retentionDays} days; working tree is clean. Regenerable from git.`
+      return {
+        id: hashId([kind, record.path]),
+        kind,
+        title: record.branch || record.repoName,
+        source: undefined,
+        sessionIds: [],
+        paths: [record.path],
+        sizeBytes: record.sizeBytes,
+        lastUpdated: record.lastActivity,
+        reason,
+        // Only stale+clean is low-risk (auto-selected); dirty and active need review.
+        risk: (kind === 'stale-worktree' ? 'low' : 'high') as RiskLevel,
+        recoverable: true,
+        backedUp: kind === 'stale-worktree',
+      } as CleanupCandidate
+    })
+    .sort((a, b) => b.sizeBytes - a.sizeBytes)
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
@@ -375,6 +449,17 @@ function safeScanRoots(value: unknown): AppSettings['scanRoots'] {
   return scanRoots
 }
 
+function safeWorktreeRoots(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return Array.from(
+    new Set(
+      value
+        .filter((root): root is string => typeof root === 'string' && isSafePathString(root))
+        .map((root) => expandHome(root.trim())),
+    ),
+  )
+}
+
 function normalizeSettingsPatch(patch: Partial<AppSettings>): Partial<AppSettings> {
   if (!isRecord(patch)) throw new Error('settings patch must be an object.')
 
@@ -416,6 +501,12 @@ function normalizeSettingsPatch(patch: Partial<AppSettings>): Partial<AppSetting
   if ('confirmBeforeCleanup' in patch) {
     next.confirmBeforeCleanup = normalizeBoolean(patch.confirmBeforeCleanup, 'confirmBeforeCleanup')
   }
+  if ('includeDeletedSessionsInStats' in patch) {
+    next.includeDeletedSessionsInStats = normalizeBoolean(
+      patch.includeDeletedSessionsInStats,
+      'includeDeletedSessionsInStats',
+    )
+  }
   if ('excludedFolders' in patch) {
     next.excludedFolders = normalizeExcludedFolders(patch.excludedFolders)
   }
@@ -446,21 +537,25 @@ function normalizeSettingsPatch(patch: Partial<AppSettings>): Partial<AppSetting
   if ('exportDirectory' in patch) {
     next.exportDirectory = normalizePath(patch.exportDirectory, 'exportDirectory')
   }
+  if ('worktreeRoots' in patch) {
+    next.worktreeRoots = safeWorktreeRoots(patch.worktreeRoots)
+  }
+  if ('worktreeScanDefaultRoots' in patch) {
+    next.worktreeScanDefaultRoots = safeBoolean(patch.worktreeScanDefaultRoots, true)
+  }
+  if ('worktreeRetentionDays' in patch) {
+    next.worktreeRetentionDays = normalizeDays(patch.worktreeRetentionDays, 'worktreeRetentionDays')
+  }
 
   return next
 }
 
 function usageSeed(date: string): UsagePoint {
-  return {
-    date,
-    codex: 0,
-    claude: 0,
-    cursor: 0,
-    gemini: 0,
-    opencode: 0,
-    custom: 0,
-    total: 0,
+  const seed = { date, total: 0 } as UsagePoint
+  for (const source of agentSources) {
+    seed[source] = 0
   }
+  return seed
 }
 
 function archiveBytes(records: ArchiveRecord[]): number {
@@ -575,20 +670,34 @@ export class AppService {
   private readonly userDataPath: string
   private readonly appVersion: string
   private readonly openPathHandler: (targetPath: string) => Promise<unknown>
+  private readonly trashItemHandler: (targetPath: string) => Promise<void>
   private diagnosticOperations: DiagnosticOperation[] = []
-  private launchScanCompleted = false
+  private rescanPromise?: Promise<void>
   private scanStates = new Map<AgentSource, AgentInstallState>()
+  private worktreeCandidates: CleanupCandidate[] = []
+  private worktreeRecords: WorktreeRecord[] = []
+  private worktreeDiagnostics: AgentScanDiagnostic[] = []
+  private worktreeSizeCache: WorktreeSizeCache = new Map()
   private settings?: AppSettings
 
   constructor(options: {
     userDataPath: string
     appVersion?: string
     openPath?: (targetPath: string) => Promise<unknown>
+    trashItem?: (targetPath: string) => Promise<void>
   }) {
-    const { userDataPath, appVersion = '0.0.0', openPath = async () => undefined } = options
+    const {
+      userDataPath,
+      appVersion = '0.0.0',
+      openPath = async () => undefined,
+      trashItem = async () => {
+        throw new Error('System Trash is unavailable in this runtime.')
+      },
+    } = options
     this.userDataPath = userDataPath
     this.appVersion = appVersion
     this.openPathHandler = openPath
+    this.trashItemHandler = trashItem
     this.db = new LocalDatabase(path.join(userDataPath, 'clean-my-agent.sqlite'))
   }
 
@@ -597,17 +706,24 @@ export class AppService {
       await this.db.open()
       this.settings = this.mergeSettings(this.db.getSetting<Partial<AppSettings>>('settings'))
       this.db.setSetting('settings', this.settings)
+      const cached =
+        this.db.getSetting<Record<string, { sizeBytes: number; mtimeMs: number }>>(
+          'worktreeSizeCache',
+        )
+      if (cached && typeof cached === 'object') {
+        this.worktreeSizeCache = new Map(Object.entries(cached))
+      }
     })
+  }
+
+  close(): void {
+    this.db.close()
   }
 
   async getSnapshot(forceRescan = false): Promise<DashboardSnapshot> {
     return this.trackAsync('app.getSnapshot', async () => {
       const settings = this.requireSettings()
-      const shouldRunLaunchScan = settings.scanOnLaunch && !this.launchScanCompleted
-      if (forceRescan || shouldRunLaunchScan || this.shouldRescanCachedSessions()) {
-        this.launchScanCompleted = true
-        await this.rescan()
-      }
+      if (forceRescan) await this.rescan()
 
       const archives = this.db.getArchives()
       const allSessions = this.mergeBackupStatus([
@@ -615,12 +731,20 @@ export class AppService {
         ...this.sessionsFromArchives(archives),
       ])
       const enabledSources = new Set(enabledProviderSources(settings))
-      const sessions = allSessions.filter((session) => enabledSources.has(session.source))
+      const persistedSessions = allSessions.filter((session) => enabledSources.has(session.source))
+      const sessions = persistedSessions.filter((session) => session.storageState !== 'deleted')
+      const analyticsSessions = settings.includeDeletedSessionsInStats
+        ? persistedSessions
+        : sessions
       const backups = this.db.getBackups()
       const trash = this.db.getTrash()
       const recovery = this.db.getRecoveryRecords()
       const liveSessions = sessions.filter((session) => session.storageState === 'live')
-      const cleanup = this.buildCleanupCandidates(liveSessions, backups)
+      const wtByOwner = this.worktreeSizeByOwner()
+      const cleanup = [
+        ...this.buildCleanupCandidates(liveSessions, backups),
+        ...this.worktreeCandidates,
+      ].sort((a, b) => b.sizeBytes - a.sizeBytes)
       const lastScannedAt = this.db.getSetting<string>('lastScannedAt')
       const agents = await Promise.all(
         adapters.map(async (adapter): Promise<AgentInstallState> => {
@@ -643,7 +767,7 @@ export class AppService {
             readable: providerEnabled ? (state?.readable ?? sourceSessions.length > 0) : false,
             rootPaths: state?.rootPaths ?? roots,
             sessionCount: sourceSessions.length,
-            sizeBytes: bytesFromRecords(liveSourceSessions),
+            sizeBytes: bytesFromRecords(liveSourceSessions) + (wtByOwner.get(adapter.source) ?? 0),
             lastScannedAt: providerEnabled ? (state?.lastScannedAt ?? lastScannedAt) : undefined,
             note: providerEnabled
               ? (state?.note ?? adapter.name)
@@ -660,12 +784,18 @@ export class AppService {
             .length,
           reclaimableBytes: cleanup.reduce((total, item) => total + item.sizeBytes, 0),
           lastBackupAt: backups[0]?.createdAt,
-          totalTokens: sessions.reduce((total, session) => total + session.tokens.total, 0),
-          totalCostUsd: sessions.reduce(
+          totalTokens: analyticsSessions.reduce(
+            (total, session) => total + session.tokens.total,
+            0,
+          ),
+          totalCostUsd: analyticsSessions.reduce(
             (total, session) => total + (session.tokens.costUsd ?? 0),
             0,
           ),
-          totalSizeBytes: bytesFromRecords(liveSessions) + archiveBytes(archives),
+          totalSizeBytes:
+            bytesFromRecords(liveSessions) +
+            archiveBytes(archives) +
+            this.worktreeRecords.reduce((total, wt) => total + wt.sizeBytes, 0),
           highRiskCleanupCount: cleanup.filter((item) => item.risk === 'high').length,
         },
         agents,
@@ -675,14 +805,132 @@ export class AppService {
         backups,
         trash,
         recovery,
-        usage: this.buildUsage(sessions),
+        worktreeDiagnostics: this.worktreeDiagnostics,
+        worktrees: this.worktreeRecords,
+        usage: this.buildUsage(analyticsSessions),
         storage: this.buildStorage(sessions, archives, backups, trash),
       }
     })
   }
 
+  async getOverviewSnapshot(): Promise<OverviewSnapshot> {
+    return this.trackAsync('app.getOverviewSnapshot', async () => {
+      const startedAt = performance.now()
+      const settings = this.requireSettings()
+      const archives = this.db.getArchives()
+      const allSessions = this.mergeBackupStatus([
+        ...this.db.getSessions(),
+        ...this.sessionsFromArchives(archives),
+      ])
+      const enabledSources = new Set(enabledProviderSources(settings))
+      const persistedSessions = allSessions.filter((session) => enabledSources.has(session.source))
+      const sessions = persistedSessions.filter((session) => session.storageState !== 'deleted')
+      const analyticsSessions = settings.includeDeletedSessionsInStats
+        ? persistedSessions
+        : sessions
+      const backups = this.db.getBackups()
+      const trash = this.db.getTrash()
+      const liveSessions = sessions.filter((session) => session.storageState === 'live')
+      const cleanup = [
+        ...this.buildCleanupCandidates(liveSessions, backups),
+        ...this.worktreeCandidates,
+      ].sort((a, b) => b.sizeBytes - a.sizeBytes)
+      const wtByOwner = this.worktreeSizeByOwner()
+      const lastScannedAt = this.db.getSetting<string>('lastScannedAt')
+      const agents = await Promise.all(
+        adapters.map(async (adapter): Promise<AgentInstallState> => {
+          const providerEnabled = enabledSources.has(adapter.source)
+          const sourceSessions = sessions.filter((session) => session.source === adapter.source)
+          const liveSourceSessions = sourceSessions.filter(
+            (session) => session.storageState === 'live',
+          )
+          const roots = adapter.roots(settings)
+          const state = this.scanStates.get(adapter.source)
+          return {
+            ...state,
+            source: adapter.source,
+            name: adapter.name,
+            installed: providerEnabled
+              ? (state?.installed ?? sourceSessions.length > 0) ||
+                (adapter.source === 'custom' && roots.length > 0)
+              : false,
+            readable: providerEnabled ? (state?.readable ?? sourceSessions.length > 0) : false,
+            rootPaths: state?.rootPaths ?? roots,
+            sessionCount: sourceSessions.length,
+            sizeBytes: bytesFromRecords(liveSourceSessions) + (wtByOwner.get(adapter.source) ?? 0),
+            lastScannedAt: providerEnabled ? (state?.lastScannedAt ?? lastScannedAt) : undefined,
+            note: providerEnabled
+              ? (state?.note ?? adapter.name)
+              : 'Provider disabled in Settings.',
+          }
+        }),
+      )
+      const overviewDateKeys = new Set(this.buildUsage([]).map((point) => point.date))
+      const byDate = <T>(items: T[], dateOf: (item: T) => string | undefined) => {
+        const counts: Record<string, number> = {}
+        for (const item of items) {
+          const value = dateOf(item)
+          if (!value) continue
+          const key = dateKeyForTimezone(new Date(value), settings.usageTimezone)
+          if (!overviewDateKeys.has(key)) continue
+          counts[key] = (counts[key] ?? 0) + 1
+        }
+        return counts
+      }
+
+      return {
+        generatedAt: new Date().toISOString(),
+        overview: {
+          totalSessions: sessions.length,
+          backedUpSessions: sessions.filter((session) => session.backupStatus === 'backed-up')
+            .length,
+          reclaimableBytes: cleanup.reduce((total, item) => total + item.sizeBytes, 0),
+          lastBackupAt: backups[0]?.createdAt,
+          totalTokens: analyticsSessions.reduce(
+            (total, session) => total + session.tokens.total,
+            0,
+          ),
+          totalCostUsd: analyticsSessions.reduce(
+            (total, session) => total + (session.tokens.costUsd ?? 0),
+            0,
+          ),
+          totalSizeBytes:
+            bytesFromRecords(liveSessions) +
+            archiveBytes(archives) +
+            this.worktreeRecords.reduce((total, wt) => total + wt.sizeBytes, 0),
+          highRiskCleanupCount: cleanup.filter((item) => item.risk === 'high').length,
+        },
+        agents,
+        recentSessions: sessions.slice(0, 6),
+        recentCleanup: cleanup.slice(0, 4),
+        usage: this.buildUsage(analyticsSessions),
+        storage: this.buildStorage(sessions, archives, backups, trash),
+        trends: {
+          sessionsByDate: byDate(sessions, (session) => session.lastUpdated),
+          backupsByDate: byDate(backups, (backup) => backup.createdAt),
+          cleanupByDate: byDate(cleanup, (candidate) => candidate.lastUpdated),
+        },
+        performance: {
+          serviceDurationMs: roundDuration(performance.now() - startedAt),
+        },
+      }
+    })
+  }
+
   async rescan(): Promise<DashboardSnapshot> {
-    return this.trackAsync('app.rescan', async () => {
+    await this.scanPersistedData()
+    return this.getSnapshot(false)
+  }
+
+  async rescanOverview(): Promise<OverviewSnapshot> {
+    await this.scanPersistedData()
+    return this.getOverviewSnapshot()
+  }
+
+  private async scanPersistedData(): Promise<void> {
+    if (this.rescanPromise) return this.rescanPromise
+
+    const scan = this.trackAsync('app.rescan', async () => {
       const settings = this.requireSettings()
       const enabledSources = new Set(enabledProviderSources(settings))
       const activeAdapters = adapters.filter((adapter) => enabledSources.has(adapter.source))
@@ -692,14 +940,35 @@ export class AppService {
       const inactiveCachedSessions = this.db
         .getSessions()
         .filter((session) => !enabledSources.has(session.source))
-      this.db.replaceSessions(this.mergeBackupStatus([...inactiveCachedSessions, ...sessions]))
+      this.db.reconcileScannedSessions(
+        this.mergeBackupStatus([...inactiveCachedSessions, ...sessions]),
+      )
       this.db.setSetting('scanSchemaVersion', scanSchemaVersion)
       this.db.setSetting('lastScannedAt', new Date().toISOString())
-      return this.getSnapshot(false)
+      await this.refreshWorktreeScan(
+        settings,
+        uniqueProjectPaths([...sessions, ...inactiveCachedSessions]),
+      )
     })
+    this.rescanPromise = scan
+    const clearRescan = () => {
+      if (this.rescanPromise === scan) this.rescanPromise = undefined
+    }
+    void scan.then(clearRescan, clearRescan)
+    return scan
   }
 
   async refreshRecentSessions(limit = 10): Promise<DashboardSnapshot> {
+    await this.refreshRecentSessionData(limit)
+    return this.getSnapshot(false)
+  }
+
+  async refreshRecentOverview(limit = 10): Promise<OverviewSnapshot> {
+    await this.refreshRecentSessionData(limit)
+    return this.getOverviewSnapshot()
+  }
+
+  private async refreshRecentSessionData(limit: number): Promise<void> {
     return this.trackAsync('app.refreshRecentSessions', async () => {
       const settings = this.requireSettings()
       const enabledSources = new Set(enabledProviderSources(settings))
@@ -724,7 +993,6 @@ export class AppService {
         )
       ).flat()
       this.db.upsertSessions(this.mergeBackupStatus(sessions))
-      return this.getSnapshot(false)
     })
   }
 
@@ -1115,22 +1383,84 @@ export class AppService {
 
   async scanCleanup(): Promise<CleanupCandidate[]> {
     return this.trackAsync('cleanup.scan', async () => {
-      const enabledSources = new Set(enabledProviderSources(this.requireSettings()))
-      return this.buildCleanupCandidates(
-        this.mergeBackupStatus(this.db.getSessions()).filter((session) =>
-          enabledSources.has(session.source),
+      const settings = this.requireSettings()
+      const enabledSources = new Set(enabledProviderSources(settings))
+      const allSessions = this.mergeBackupStatus(this.db.getSessions())
+      const sessionCandidates = this.buildCleanupCandidates(
+        allSessions.filter(
+          (session) => enabledSources.has(session.source) && session.storageState !== 'deleted',
         ),
         this.db.getBackups(),
+      )
+      await this.refreshWorktreeScan(settings, uniqueProjectPaths(allSessions))
+      return [...sessionCandidates, ...this.worktreeCandidates].sort(
+        (a, b) => b.sizeBytes - a.sizeBytes,
       )
     })
   }
 
-  async moveCleanupToTrash(candidateIds: string[]): Promise<TrashRecord[]> {
+  private async refreshWorktreeScan(
+    settings: AppSettings,
+    projectPaths: string[] = [],
+  ): Promise<void> {
+    const result = await scanAllWorktrees({
+      roots: settings.worktreeRoots,
+      projectPaths,
+      retentionDays: settings.worktreeRetentionDays,
+      excludedFolders: settings.excludedFolders,
+      includeDefaultRoots: settings.worktreeScanDefaultRoots,
+      sizeCache: this.worktreeSizeCache,
+    })
+    this.worktreeRecords = result.records
+    this.worktreeDiagnostics = result.diagnostics
+    this.worktreeSizeCache = result.sizeCache
+    this.db.setSetting('worktreeSizeCache', Object.fromEntries(result.sizeCache))
+    this.worktreeCandidates = worktreeRecordsToCleanupCandidates(
+      result.records,
+      settings.worktreeRetentionDays,
+    )
+  }
+
+  async trashWorktree(worktreePath: string): Promise<SystemTrashResult | undefined> {
+    return this.trackAsync('worktree.trash', async () => {
+      const candidates = await this.scanCleanup()
+      const candidate = candidates.find((c) => c.paths[0] === worktreePath)
+      if (!candidate) return undefined
+      const records = await this.moveCleanupToTrash([candidate.id])
+      return records[0]
+    })
+  }
+
+  async trashWorktrees(worktreePaths: string[]): Promise<WorktreeTrashBatchResult> {
+    const paths = Array.from(
+      new Set(
+        (Array.isArray(worktreePaths) ? worktreePaths : []).map((worktreePath) =>
+          normalizePath(worktreePath, 'worktreePath'),
+        ),
+      ),
+    )
+    const moved: SystemTrashResult[] = []
+    const failed: WorktreeTrashFailure[] = []
+
+    for (const worktreePath of paths) {
+      try {
+        const record = await this.trashWorktree(worktreePath)
+        if (record) moved.push(record)
+        else failed.push({ path: worktreePath, message: 'Worktree is no longer available.' })
+      } catch {
+        failed.push({ path: worktreePath, message: 'Could not move worktree to Trash.' })
+      }
+    }
+
+    return { moved, failed }
+  }
+
+  async moveCleanupToTrash(candidateIds: string[]): Promise<SystemTrashResult[]> {
     return this.trackAsync('cleanup.moveToTrash', async () => {
       const ids = validateIdentifierArray(candidateIds, 'candidateIds')
       const candidates = await this.scanCleanup()
       const selected = candidates.filter((candidate) => ids.includes(candidate.id))
-      const records: TrashRecord[] = []
+      const records: SystemTrashResult[] = []
       if (selected.length === 0) return records
 
       const recoveryPaths: RecoveryRecord['paths'] = selected.flatMap((candidate) =>
@@ -1143,8 +1473,7 @@ export class AppService {
       const recovery = this.startRecovery({
         operation: 'trash',
         title: `Move ${selected.length} cleanup item${selected.length === 1 ? '' : 's'} to Trash`,
-        explanation:
-          'Backs up any unprotected sessions first, then moves cleanup candidate files into the app Trash instead of permanently deleting them.',
+        explanation: 'Moves cleanup candidate files into the operating system Trash.',
         risk: selected.some((candidate) => candidate.risk === 'high')
           ? 'high'
           : selected.some((candidate) => candidate.risk === 'medium')
@@ -1153,75 +1482,93 @@ export class AppService {
         paths: recoveryPaths,
         metadata: { candidateIds: ids },
       })
-      const movedPaths: Array<{ from: string; to: string }> = []
-      const createdTrashIds: string[] = []
-      const createdTrashPaths: string[] = []
+      const movedPaths: string[] = []
+      const selectedPaths = new Set<string>()
 
       for (const candidate of selected) {
+        const deletedAt = new Date().toISOString()
+        const sessionsByStoragePath = new Map(
+          candidate.sessionIds
+            .map((sessionId) => this.db.getSession(sessionId))
+            .filter((session): session is SessionRecord => Boolean(session))
+            .map((session) => [path.resolve(session.storagePath), session] as const),
+        )
         try {
-          if (!candidate.backedUp && candidate.sessionIds.length > 0) {
-            for (const sessionId of candidate.sessionIds) {
-              await this.backupSession(sessionId)
+          const originalPaths: string[] = []
+          let movedSizeBytes = 0
+          // For worktree candidates, resolve the parent repo before the .git pointer
+          // is moved into Trash. We prune the parent repo after the move so its
+          // worktree registry stays tidy (ADR-0001; best-effort, never blocks).
+          const isWorktree =
+            candidate.kind === 'stale-worktree' || candidate.kind === 'dirty-worktree'
+          const worktreeParent = isWorktree
+            ? await resolveParentRepoFromWorktree(candidate.paths[0] ?? '')
+            : null
+          for (const originalPath of candidate.paths) {
+            const resolvedPath = path.resolve(originalPath)
+            if (selectedPaths.has(resolvedPath) || !(await exists(originalPath))) continue
+            const sizeBytes = await pathSize(originalPath)
+            await this.trashItemHandler(originalPath)
+            selectedPaths.add(resolvedPath)
+            movedPaths.push(originalPath)
+            originalPaths.push(originalPath)
+            movedSizeBytes += sizeBytes
+            const deletedSession = sessionsByStoragePath.get(resolvedPath)
+            if (deletedSession) {
+              // System Trash cannot be rolled back atomically. Persist the
+              // historical session immediately so a later path/candidate
+              // failure cannot lose its usage metadata.
+              this.db.upsertSessions([
+                {
+                  ...deletedSession,
+                  storageState: 'deleted',
+                  sizeBytes: 0,
+                  metadata: {
+                    ...deletedSession.metadata,
+                    deletedAt,
+                    deletedFromState: deletedSession.storageState,
+                  },
+                },
+              ])
+            }
+          }
+          if (worktreeParent) {
+            // Best-effort prune: failures must not roll back the Trash move.
+            try {
+              await pruneWorktrees(worktreeParent.parentRepo)
+            } catch {
+              // Non-fatal — the Trash entry remains intact and restorable.
             }
           }
 
-          const deletedAt = new Date().toISOString()
-          const trashPath = path.join(
-            this.userDataPath,
-            'Trash',
-            `${sanitizeName(candidate.title)}-${candidate.id}`,
-          )
-          await ensureDir(trashPath)
-          createdTrashPaths.push(trashPath)
-          recoveryPaths.push({
-            label: `App Trash: ${candidate.title}`,
-            path: trashPath,
-            role: 'trash',
-          })
+          if (originalPaths.length === 0) continue
 
-          const originalPaths: string[] = []
-          for (const originalPath of candidate.paths) {
-            if (!(await exists(originalPath))) continue
-            const target = path.join(trashPath, sanitizeName(path.basename(originalPath)))
-            await movePath(originalPath, target)
-            movedPaths.push({ from: originalPath, to: target })
-            originalPaths.push(originalPath)
-            recoveryPaths.push({
-              label: `Moved copy: ${candidate.title}`,
-              path: target,
-              role: 'trash',
-            })
-          }
-
-          const record: TrashRecord = {
-            id: hashId([candidate.id, deletedAt]),
+          const record: SystemTrashResult = {
             candidateId: candidate.id,
             title: candidate.title,
             source: candidate.source,
+            kind: candidate.kind,
             originalPaths,
-            trashPath,
-            sizeBytes: await pathSize(trashPath),
+            sizeBytes: movedSizeBytes,
             deletedAt,
             risk: candidate.risk,
-            recoverable: true,
           }
-          this.db.insertTrash(record)
-          createdTrashIds.push(record.id)
           records.push(record)
         } catch (error) {
-          for (const movedPath of movedPaths.slice().reverse()) {
-            if ((await exists(movedPath.to)) && !(await exists(movedPath.from))) {
-              await movePath(movedPath.to, movedPath.from)
-            }
-          }
-          createdTrashIds.forEach((trashId) => this.db.deleteTrashRecord(trashId))
-          for (const trashPath of createdTrashPaths) {
-            await removePath(trashPath)
-          }
           this.failRecovery(recovery, error, {
             paths: recoveryPaths,
             metadata: { candidateIds: ids, movedPaths },
           })
+          if (movedPaths.length > 0) {
+            // Reconcile any paths that survived a partial native Trash
+            // failure. A rediscovered session becomes live again, while a
+            // fully moved session remains in deleted history.
+            try {
+              await this.rescan()
+            } catch {
+              // Preserve the original native Trash failure for the caller.
+            }
+          }
           throw error
         }
       }
@@ -1229,14 +1576,13 @@ export class AppService {
       const completedRecovery = this.completeRecovery(recovery, {
         paths: recoveryPaths,
         undo: {
-          kind: 'restore-trash',
-          available: records.length > 0,
-          label: 'Restore moved cleanup items',
-          ...(records.length === 0 ? { reason: 'No files were moved to Trash.' } : {}),
+          kind: 'none',
+          available: false,
+          label: 'Restore from the system Trash',
+          reason: 'Use the operating system Trash to restore deleted files.',
         },
         metadata: {
           candidateIds: ids,
-          trashIds: records.map((record) => record.id),
           movedPaths,
         },
       })
@@ -1254,13 +1600,12 @@ export class AppService {
             },
           ],
         })
-        throw error
       }
       return records
     })
   }
 
-  async restoreTrash(trashId: string): Promise<void> {
+  async restoreTrash(trashId: string): Promise<CleanupKind | undefined> {
     return this.trackAsync('trash.restore', async () => {
       const record = this.db.getTrashRecord(validateIdentifier(trashId, 'trashId'))
       if (!record) throw new Error(`Trash item not found: ${trashId}`)
@@ -1298,6 +1643,7 @@ export class AppService {
         this.failRecovery(recovery, error)
         throw error
       }
+      return record.kind
     })
   }
 
@@ -1774,6 +2120,7 @@ export class AppService {
       scanOnLaunch: true,
       backgroundScan: true,
       confirmBeforeCleanup: true,
+      includeDeletedSessionsInStats: true,
       excludedFolders: [],
       soundEffects: true,
       cleanupSound: true,
@@ -1783,6 +2130,9 @@ export class AppService {
       checkForUpdates: true,
       defaultRelayMode: 'full-context',
       exportDirectory: path.join(this.userDataPath, 'Exports'),
+      worktreeRoots: [],
+      worktreeScanDefaultRoots: true,
+      worktreeRetentionDays: 30,
     }
   }
 
@@ -1820,6 +2170,10 @@ export class AppService {
       scanOnLaunch: safeBoolean(raw.scanOnLaunch, defaults.scanOnLaunch),
       backgroundScan: safeBoolean(raw.backgroundScan, defaults.backgroundScan),
       confirmBeforeCleanup: safeBoolean(raw.confirmBeforeCleanup, defaults.confirmBeforeCleanup),
+      includeDeletedSessionsInStats: safeBoolean(
+        raw.includeDeletedSessionsInStats,
+        defaults.includeDeletedSessionsInStats,
+      ),
       excludedFolders: Array.isArray(raw.excludedFolders)
         ? Array.from(
             new Set(
@@ -1841,6 +2195,9 @@ export class AppService {
       defaultRelayMode,
       scanRoots: safeScanRoots(raw.scanRoots),
       exportDirectory: safePath(raw.exportDirectory, defaults.exportDirectory),
+      worktreeRoots: safeWorktreeRoots(raw.worktreeRoots),
+      worktreeScanDefaultRoots: safeBoolean(raw.worktreeScanDefaultRoots, true),
+      worktreeRetentionDays: safeDays(raw.worktreeRetentionDays, 30),
     }
   }
 
@@ -1918,7 +2275,9 @@ export class AppService {
           rootIds: roots.map(diagnosticPathId).filter((item): item is string => Boolean(item)),
           sessionCount: sourceSessions.length,
           liveSessionCount: liveSourceSessions.length,
-          sizeBytes: bytesFromRecords(liveSourceSessions),
+          sizeBytes:
+            bytesFromRecords(liveSourceSessions) +
+            (this.worktreeSizeByOwner().get(adapter.source) ?? 0),
           scannedFiles: state?.scannedFiles,
           skippedFiles: state?.skippedFiles,
           lastScannedAt: state?.lastScannedAt,
@@ -2009,11 +2368,6 @@ export class AppService {
     }
   }
 
-  private shouldRescanCachedSessions(): boolean {
-    if (this.db.getArchives().length > 0) return false
-    return (this.db.getSetting<number>('scanSchemaVersion') ?? 0) !== scanSchemaVersion
-  }
-
   private requireSession(sessionId: string): SessionRecord {
     const session = this.mergeBackupStatus([
       ...this.db.getSessions(),
@@ -2099,7 +2453,7 @@ export class AppService {
           lastUpdated: session.lastUpdated,
           reason: backedUp
             ? `Backed up and inactive for more than ${this.requireSettings().cleanupRetentionDays} days.`
-            : `Inactive for more than ${this.requireSettings().cleanupRetentionDays} days; backup will be created first.`,
+            : `Inactive for more than ${this.requireSettings().cleanupRetentionDays} days; no backup exists.`,
           risk: backedUp ? 'low' : 'medium',
           recoverable: true,
           backedUp,
@@ -2187,6 +2541,14 @@ export class AppService {
     return Array.from(points.values())
   }
 
+  private worktreeSizeByOwner(): Map<WorktreeOwner, number> {
+    const byOwner = new Map<WorktreeOwner, number>()
+    for (const wt of this.worktreeRecords) {
+      byOwner.set(wt.ownerAgent, (byOwner.get(wt.ownerAgent) ?? 0) + wt.sizeBytes)
+    }
+    return byOwner
+  }
+
   private buildStorage(
     sessions: SessionRecord[],
     archives: ArchiveRecord[],
@@ -2200,12 +2562,23 @@ export class AppService {
         bySource.set(session.source, [...(bySource.get(session.source) ?? []), session])
       })
 
+    const wtByOwner = this.worktreeSizeByOwner()
     const slices: StorageSlice[] = Array.from(bySource.entries()).map(([source, items]) => ({
       source,
       label: agentLabels[source],
-      sizeBytes: bytesFromRecords(items),
+      sizeBytes: bytesFromRecords(items) + (wtByOwner.get(source) ?? 0),
       sessions: items.length,
     }))
+
+    // Worktrees attributed to a non-agent owner (superpowers, user-configured roots).
+    const otherWorktreeBytes = wtByOwner.get('other') ?? 0
+    if (otherWorktreeBytes > 0) {
+      slices.push({
+        source: 'other',
+        label: 'Worktrees (other)',
+        sizeBytes: otherWorktreeBytes,
+      })
+    }
 
     slices.push({
       source: 'archives',

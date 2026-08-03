@@ -7,6 +7,7 @@ import {
   FileJson,
   Folder,
   FolderX,
+  GitBranch,
   Languages,
   Palette,
   Play,
@@ -23,7 +24,7 @@ import { AgentGlyph } from '@/components/agent-glyph'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { playCleanupSystemSound } from '@/features/cleanup/cleanup-system-sound'
-import { trashPrimaryPath, usageTimezoneSelectOptions } from '@/features/settings/settings-model'
+import { usageTimezoneSelectOptions } from '@/features/settings/settings-model'
 import { agentLabel, formatBytes } from '@/lib/format'
 import { languageOptions } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n-context'
@@ -58,8 +59,6 @@ type SettingsViewProps = {
   onDownloadLatestUpdate: () => Promise<void>
   onExportDiagnostics: () => Promise<void>
   onRescan: () => Promise<void>
-  onRestoreTrash: (trashId: string) => Promise<void>
-  onPurgeExpiredTrash: () => Promise<void>
   onDiagnoseRecovery: (recoveryId: string) => Promise<RecoveryRecord | undefined>
   onUndoRecovery: (recoveryId: string) => Promise<void>
 }
@@ -330,8 +329,6 @@ export function SettingsView({
   onDownloadLatestUpdate,
   onExportDiagnostics,
   onRescan,
-  onRestoreTrash,
-  onPurgeExpiredTrash,
   onDiagnoseRecovery,
   onUndoRecovery,
 }: SettingsViewProps) {
@@ -402,6 +399,16 @@ export function SettingsView({
     if (folders.length === 0) return
     await onSettingsChange(
       { excludedFolders: Array.from(new Set([...settings.excludedFolders, ...folders])) },
+      { rescan: true },
+    )
+  }
+
+  const worktreeRootCount = settings.worktreeRoots.length
+  const addWorktreeRoots = async () => {
+    const folders = await onChooseFolders()
+    if (folders.length === 0) return
+    await onSettingsChange(
+      { worktreeRoots: Array.from(new Set([...settings.worktreeRoots, ...folders])) },
       { rescan: true },
     )
   }
@@ -686,35 +693,16 @@ export function SettingsView({
           />
           <SettingsRow
             icon={ShieldCheck}
-            title={t('settings.confirmBeforeCleanup')}
-            description={t('settings.confirmBeforeCleanupDescription')}
+            title={t('settings.includeDeletedSessionsInStats')}
+            description={t('settings.includeDeletedSessionsInStatsDescription')}
             trailing={
               <SwitchControl
-                checked={settings.confirmBeforeCleanup}
+                checked={settings.includeDeletedSessionsInStats}
                 onCheckedChange={(checked) =>
-                  void onSettingsChange({ confirmBeforeCleanup: checked })
+                  void onSettingsChange({ includeDeletedSessionsInStats: checked })
                 }
-                label={toggleLabel('settings.toggleCleanupConfirmation')}
+                label={t('settings.includeDeletedSessionsInStats')}
               />
-            }
-          />
-          <SettingsRow
-            icon={Clock3}
-            title={t('settings.purgeExpiredTrash')}
-            description={t('settings.purgeExpiredTrashDescription', {
-              count: snapshot.trash.length,
-              plural: snapshot.trash.length === 1 ? '' : 's',
-            })}
-            trailing={
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void onPurgeExpiredTrash()}
-                className="settings-outline-button"
-              >
-                <Trash2 className="mr-2 size-4" />
-                {t('settings.purgeExpiredTrashAction')}
-              </Button>
             }
           />
           <SettingsRow
@@ -727,6 +715,21 @@ export function SettingsView({
                 value={String(settings.cleanupRetentionDays)}
                 options={retentionOptions}
                 onChange={(value) => void onSettingsChange({ cleanupRetentionDays: Number(value) })}
+              />
+            }
+          />
+          <SettingsRow
+            icon={GitBranch}
+            title={t('settings.worktreeRetention')}
+            description={t('settings.worktreeRetentionDescription')}
+            trailing={
+              <NativeSelect
+                label={t('settings.worktreeRetention')}
+                value={String(settings.worktreeRetentionDays)}
+                options={retentionOptions}
+                onChange={(value) =>
+                  void onSettingsChange({ worktreeRetentionDays: Number(value) }, { rescan: true })
+                }
               />
             }
           />
@@ -758,55 +761,52 @@ export function SettingsView({
               </>
             }
           />
-        </SettingsPanel>
-      </SettingsSection>
-
-      <SettingsSection title={t('settings.trash')}>
-        <SettingsPanel>
-          {snapshot.trash.length === 0 ? (
-            <SettingsRow
-              icon={Trash2}
-              title={t('settings.trashEmpty')}
-              description={t('settings.trashEmptyDescription')}
-            />
-          ) : (
-            snapshot.trash.map((record) => (
-              <div
-                key={record.id}
-                className="settings-row flex min-h-[92px] items-center gap-4 border-b px-5 py-4 last:border-b-0"
-              >
-                <div className="settings-row-icon grid size-6 shrink-0 place-items-center">
-                  <Trash2 className="size-[19px]" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="settings-row-title truncate text-[15px] font-semibold">
-                    {record.title}
-                  </div>
-                  <div className="settings-row-description mt-1 flex flex-wrap items-center gap-2 text-sm">
-                    <span>
-                      {record.source ? agentLabel[record.source] : t('settings.unknownSource')}
-                    </span>
-                    <span className="settings-row-separator">•</span>
-                    <span>{formatBytes(record.sizeBytes)}</span>
-                    <span className="settings-row-separator">•</span>
-                    <span>{formatRelative(record.deletedAt)}</span>
-                  </div>
-                  <div className="settings-row-description mt-1 truncate text-xs">
-                    {trashPrimaryPath(record)}
-                  </div>
-                </div>
+          <SettingsRow
+            icon={GitBranch}
+            title={t('settings.worktreeFolders')}
+            description={(() => {
+              const diag = snapshot.worktreeDiagnostics?.[0]
+              if (diag?.code === 'worktree-git-unavailable')
+                return t('settings.worktreeGitUnavailable')
+              if (diag?.code === 'worktree-status-failed') return t('settings.worktreeStatusFailed')
+              return worktreeRootCount > 0
+                ? t('settings.worktreeFolderCount', { count: worktreeRootCount })
+                : t('settings.worktreeFoldersDescription')
+            })()}
+            trailing={
+              <>
+                {worktreeRootCount > 0 && (
+                  <ValueButton
+                    onClick={() => void onSettingsChange({ worktreeRoots: [] }, { rescan: true })}
+                  >
+                    {t('settings.clear')}
+                  </ValueButton>
+                )}
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
-                  onClick={() => void onRestoreTrash(record.id)}
-                  className="settings-outline-button"
+                  onClick={() => void addWorktreeRoots()}
+                  className="settings-ghost-button"
                 >
-                  <RefreshCcw className="mr-2 size-4" />
-                  {t('settings.restoreTrashAction')}
+                  {t('settings.manage')}
                 </Button>
-              </div>
-            ))
-          )}
+              </>
+            }
+          />
+          <SettingsRow
+            icon={Folder}
+            title={t('settings.worktreeScanDefaultRoots')}
+            description={t('settings.worktreeScanDefaultRootsDescription')}
+            trailing={
+              <SwitchControl
+                checked={settings.worktreeScanDefaultRoots}
+                onCheckedChange={(checked) =>
+                  void onSettingsChange({ worktreeScanDefaultRoots: checked }, { rescan: true })
+                }
+                label={t('settings.worktreeScanDefaultRoots')}
+              />
+            }
+          />
         </SettingsPanel>
       </SettingsSection>
 

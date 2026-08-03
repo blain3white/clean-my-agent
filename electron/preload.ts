@@ -2,6 +2,19 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { AppSettings, CleanMyAgentApi, ExportFormat } from '../src/shared/types'
 
 const api: CleanMyAgentApi = {
+  getOverviewSnapshot: async () => {
+    const startedAt = performance.now()
+    const snapshot = await ipcRenderer.invoke('app:getOverviewSnapshot')
+    return {
+      ...snapshot,
+      performance: {
+        ...snapshot.performance,
+        ipcDurationMs: Math.round((performance.now() - startedAt) * 100) / 100,
+      },
+    }
+  },
+  rescanOverview: () => ipcRenderer.invoke('app:rescanOverview'),
+  refreshRecentOverview: () => ipcRenderer.invoke('app:refreshRecentOverview'),
   getSnapshot: () => ipcRenderer.invoke('app:getSnapshot'),
   rescan: () => ipcRenderer.invoke('app:rescan'),
   refreshRecentSessions: () => ipcRenderer.invoke('app:refreshRecentSessions'),
@@ -14,8 +27,7 @@ const api: CleanMyAgentApi = {
   getSessionDetail: (sessionId: string) => ipcRenderer.invoke('session:detail', sessionId),
   scanCleanup: (sessionId?: string) => ipcRenderer.invoke('cleanup:scan', sessionId),
   moveCleanupToTrash: (candidateIds: string[]) => ipcRenderer.invoke('cleanup:trash', candidateIds),
-  purgeExpiredTrash: () => ipcRenderer.invoke('trash:purgeExpired'),
-  restoreTrash: (trashId: string) => ipcRenderer.invoke('trash:restore', trashId),
+  trashWorktrees: (worktreePaths: string[]) => ipcRenderer.invoke('worktree:trash', worktreePaths),
   getRecoveryRecords: () => ipcRenderer.invoke('recovery:list'),
   diagnoseRecovery: (recoveryId: string) => ipcRenderer.invoke('recovery:diagnose', recoveryId),
   undoRecovery: (recoveryId: string) => ipcRenderer.invoke('recovery:undo', recoveryId),

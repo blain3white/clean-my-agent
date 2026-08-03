@@ -6,6 +6,7 @@ export const sourceColors: Record<AgentSource, string> = {
   cursor: '#cbd5e1',
   gemini: '#38bdf8',
   opencode: '#60a5fa',
+  pi: '#00f0d8',
   custom: '#34d399',
 }
 

@@ -83,7 +83,7 @@ jobs:
           fi
 
           {
-            echo "Automated macOS Apple Silicon release."
+            echo "Automated macOS Apple Silicon and Windows x64 release."
             echo
             echo "## Changes"
             echo
@@ -96,6 +96,8 @@ jobs:
             echo
             echo "- Clean-My-Agent-mac-arm64.dmg"
             echo "- Clean-My-Agent-mac-arm64.dmg.blockmap"
+            echo "- Clean-My-Agent-windows-x64-setup.exe"
+            echo "- Clean-My-Agent-windows-x64-setup.exe.blockmap"
             echo "- latest-mac.yml"
             echo "- checksums.txt"
             echo
@@ -106,7 +108,7 @@ jobs:
           test -s release-notes.md
 
       - name: Upload release artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: clean-my-agent-${{ github.ref_name }}-mac-arm64
           path: |
@@ -192,3 +194,66 @@ jobs:
             --head "${update_branch}" \
             --title "${pr_title}" \
             --body "${pr_body}"
+
+  windows:
+    name: Build Windows release
+    needs: macos
+    runs-on: windows-2025
+    timeout-minutes: 30
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run checks
+        run: pnpm check
+
+      - name: Build Windows installer
+        run: pnpm dist:win
+
+      - name: Generate checksum
+        shell: pwsh
+        run: |
+          $artifact = 'release/Clean-My-Agent-windows-x64-setup.exe'
+          $hash = (Get-FileHash -Algorithm SHA256 $artifact).Hash.ToLowerInvariant()
+          "$hash  Clean-My-Agent-windows-x64-setup.exe" |
+            Set-Content -Encoding ascii release/checksums-windows.txt
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clean-my-agent-${{ github.ref_name }}-windows-x64
+          path: |
+            release/Clean-My-Agent-windows-x64-setup.exe
+            release/Clean-My-Agent-windows-x64-setup.exe.blockmap
+            release/checksums-windows.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Add Windows files to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            release/Clean-My-Agent-windows-x64-setup.exe \
+            release/Clean-My-Agent-windows-x64-setup.exe.blockmap \
+            release/checksums-windows.txt \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
