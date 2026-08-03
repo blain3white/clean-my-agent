@@ -1,11 +1,14 @@
-import { mkdir, mkdtemp, readFile, stat, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import assert from 'node:assert/strict'
 import { AppService } from '../electron/lib/app-service'
 import type { AgentSource } from '../src/shared/types'
 
-const sources: AgentSource[] = ['codex', 'claude', 'cursor', 'gemini', 'opencode', 'custom']
+const sources: AgentSource[] = ['codex', 'claude', 'cursor', 'gemini', 'opencode', 'pi', 'custom']
+const piUsageTotal = 1160
+const fakeTrashItem = (targetPath: string) => rm(targetPath, { recursive: true, force: true })
 
 function slashPath(filePath: string): string {
   return filePath.replace(/\\/g, '/')
@@ -18,6 +21,9 @@ async function writeSession(root: string, source: AgentSource, daysOld: number, 
   const workspace = path.join(os.tmpdir(), 'clean-my-agent-fixture', source)
   const date = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000)
   const timestamp = date.toISOString()
+  if (source === 'pi') {
+    return writePiSession(filePath, workspace, timestamp, date)
+  }
   const referencedFile = path.join(workspace, 'src', 'auth.ts')
   const sensitiveFile = path.join(workspace, '.env.local')
   const attachmentPath = path.join(workspace, 'artifacts', 'auth-flow.png')
@@ -78,6 +84,49 @@ async function writeSession(root: string, source: AgentSource, daysOld: number, 
   return filePath
 }
 
+// Writes a Pi-agent shaped JSONL session: a `session` header carrying the
+// project cwd, a user message, and an assistant message whose nested
+// `message.usage` uses Pi's bare field names (input/output/cacheRead/cacheWrite/
+// totalTokens). This exercises both Pi format parsing and the generic usage
+// extractor's bare-name aliases.
+async function writePiSession(filePath: string, workspace: string, timestamp: string, date: Date) {
+  const lines = [
+    { type: 'session', version: 3, id: 'pi-session-1', timestamp, cwd: workspace },
+    {
+      type: 'message',
+      id: 'pi-user-1',
+      parentId: null,
+      timestamp,
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'Refactor pi auth flow' }],
+        timestamp,
+      },
+    },
+    {
+      type: 'message',
+      id: 'pi-assistant-1',
+      parentId: 'pi-user-1',
+      timestamp,
+      message: {
+        role: 'assistant',
+        model: 'glm-5.2',
+        content: [{ type: 'text', text: 'Finished pi refactor' }],
+        usage: {
+          input: 100,
+          output: 50,
+          cacheRead: 10,
+          cacheWrite: 1000,
+          totalTokens: piUsageTotal,
+        },
+      },
+    },
+  ]
+  await writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`)
+  await utimes(filePath, date, date)
+  return filePath
+}
+
 async function main() {
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'clean-my-agent-fixture-'))
   const userDataPath = await mkdtemp(path.join(os.tmpdir(), 'clean-my-agent-user-data-'))
@@ -90,6 +139,7 @@ async function main() {
   const service = new AppService({
     userDataPath,
     openPath: async () => undefined,
+    trashItem: fakeTrashItem,
   })
   await service.init()
   service.updateSettings({
@@ -99,6 +149,7 @@ async function main() {
       sources.map((source) => [source, [path.join(fixtureRoot, source)]]),
     ),
     exportDirectory: path.join(userDataPath, 'Exports'),
+    worktreeScanDefaultRoots: false,
   })
 
   const snapshot = await service.rescan()
@@ -192,7 +243,7 @@ async function main() {
     .slice(0, 10)
   assert.equal(
     snapshot.usage.find((point) => point.date === fixtureUsageDate)?.total,
-    sources.length * 3340,
+    (sources.length - 1) * 3340 + piUsageTotal,
     'usage chart should bucket tokens by message timestamp beyond the last 30 days',
   )
   assert.equal(snapshot.usage.length, 365, 'usage chart should keep one year of daily buckets')
@@ -257,47 +308,35 @@ async function main() {
   const target = cleanup.find((item) => item.sessionIds.includes(session.id))
   assert.ok(target, 'cleanup candidate should reference the session')
 
+  const tokensBeforeTrash = (await service.getSnapshot(false)).overview.totalTokens
   const trash = await service.moveCleanupToTrash([target.id])
-  assert.equal(trash.length, 1, 'cleanup should move one item to trash')
+  assert.equal(trash.length, 1, 'cleanup should move one item to the system Trash')
+  await assert.rejects(
+    stat(session.storagePath),
+    undefined,
+    'trashed session path should be removed',
+  )
+  const snapshotWithDeletedStats = await service.getSnapshot(false)
+  assert.ok(
+    !snapshotWithDeletedStats.sessions.some((item) => item.id === session.id),
+    'trashed session should disappear from active sessions',
+  )
   assert.equal(
-    (await service.getSnapshot(false)).sessions.some((item) => item.id === session.id),
-    false,
+    snapshotWithDeletedStats.overview.totalTokens,
+    tokensBeforeTrash,
+    'token totals should include deleted sessions by default',
   )
-
-  await service.restoreTrash(trash[0].id)
+  service.updateSettings({ includeDeletedSessionsInStats: false })
   assert.equal(
-    (await service.getSnapshot(true)).sessions.some((item) => item.id === session.id),
-    true,
+    (await service.getSnapshot(false)).overview.totalTokens,
+    tokensBeforeTrash - session.tokens.total,
+    'token totals should exclude deleted sessions when the setting is disabled',
   )
-
-  const purgeFile = await writeSession(fixtureRoot, 'codex', 60, 'purge')
-  const purgeSnapshot = await service.rescan()
-  const purgeSession = purgeSnapshot.sessions.find((item) => item.storagePath === purgeFile)
-  assert.ok(purgeSession, 'purge smoke session should be scanned')
-  const purgeTarget = (await service.scanCleanup()).find((item) =>
-    item.sessionIds.includes(purgeSession.id),
-  )
-  assert.ok(purgeTarget, 'purge smoke session should become a cleanup candidate')
-  const [purgeTrash] = await service.moveCleanupToTrash([purgeTarget.id])
-  assert.ok(purgeTrash, 'purge smoke cleanup should move to trash')
-  ;(
-    service as unknown as {
-      db: {
-        insertTrash: (record: typeof purgeTrash) => void
-      }
-    }
-  ).db.insertTrash({
-    ...purgeTrash,
-    deletedAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(),
-  })
-  const purgedTrash = await service.purgeExpiredTrash()
-  assert.equal(purgedTrash.length, 1, 'expired trash purge should remove one item')
-  assert.equal(purgedTrash[0].id, purgeTrash.id, 'expired trash purge should return the record')
-  await assert.rejects(stat(purgeTrash.trashPath), undefined, 'purged trash path should be removed')
 
   const staleService = new AppService({
     userDataPath: await mkdtemp(path.join(os.tmpdir(), 'clean-my-agent-stale-user-data-')),
     openPath: async () => undefined,
+    trashItem: fakeTrashItem,
   })
   await staleService.init()
   staleService.updateSettings({
@@ -329,11 +368,114 @@ async function main() {
   ;(
     staleService as unknown as { db: { setSetting: (key: string, value: unknown) => void } }
   ).db.setSetting('scanSchemaVersion', 1)
-  const refreshedSnapshot = await staleService.getSnapshot(false)
+  const cachedStaleSnapshot = await staleService.getSnapshot(false)
+  assert.notEqual(
+    cachedStaleSnapshot.overview.totalTokens,
+    expectedStaleTokenTotal,
+    'cached snapshot should return immediately without an implicit scan',
+  )
+  const refreshedSnapshot = await staleService.rescan()
   assert.equal(
     refreshedSnapshot.overview.totalTokens,
     expectedStaleTokenTotal,
-    'stale scan cache should be invalidated automatically',
+    'explicit background rescan should replace stale cached parser output',
+  )
+
+  // ---------------------------------------------------------------------
+  // Worktree cleanup: scan → suggest → system Trash → prune
+  // ---------------------------------------------------------------------
+  const gitAvailable = spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0
+  assert.ok(gitAvailable, 'git must be available for the worktree smoke test')
+
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), 'cma-worktree-root-'))
+  const parentRepo = await mkdtemp(path.join(os.tmpdir(), 'cma-worktree-parent-'))
+  const runGit = (args: string[], cwd: string) => spawnSync('git', args, { cwd, encoding: 'utf8' })
+  // Initialise a parent repo with one commit.
+  assert.equal(runGit(['init', '-q'], parentRepo).status, 0, 'git init should succeed')
+  await writeFile(path.join(parentRepo, 'README.md'), 'hello\n')
+  assert.equal(runGit(['add', 'README.md'], parentRepo).status, 0)
+  assert.equal(
+    runGit(
+      ['-c', 'user.email=smoke@test', '-c', 'user.name=Smoke', 'commit', '-q', '-m', 'init'],
+      parentRepo,
+    ).status,
+    0,
+    'git commit should succeed',
+  )
+  // Add a linked worktree under the worktree root.
+  const worktreeDir = path.join(worktreeRoot, 'feature-smoke')
+  assert.equal(
+    runGit(['worktree', 'add', worktreeDir, '-b', 'feature-smoke'], parentRepo).status,
+    0,
+    'git worktree add should succeed',
+  )
+  // Make the worktree stale by setting its mtime far in the past.
+  const staleDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
+  await utimes(worktreeDir, staleDate, staleDate)
+  // A second, active worktree (fresh mtime) to exercise "list all".
+  const activeDir = path.join(worktreeRoot, 'active-smoke')
+  assert.equal(
+    runGit(['worktree', 'add', activeDir, '-b', 'active-smoke'], parentRepo).status,
+    0,
+    'git worktree add (active) should succeed',
+  )
+
+  const worktreeService = new AppService({
+    userDataPath: await mkdtemp(path.join(os.tmpdir(), 'cma-worktree-userdata-')),
+    openPath: async () => undefined,
+    trashItem: fakeTrashItem,
+  })
+  await worktreeService.init()
+  worktreeService.updateSettings({
+    cleanupRetentionDays: 0,
+    worktreeRoots: [worktreeRoot],
+    worktreeScanDefaultRoots: false,
+    scanRoots: {},
+    exportDirectory: path.join(os.tmpdir(), 'cma-worktree-exports'),
+  })
+
+  const wtCleanup = await worktreeService.scanCleanup()
+  const wtCandidate = wtCleanup.find((item) => item.kind === 'stale-worktree')
+  assert.ok(wtCandidate, 'abandoned worktree should appear as a stale-worktree candidate')
+  assert.equal(wtCandidate.risk, 'low', 'clean stale worktree should be low-risk')
+  assert.equal(wtCandidate.backedUp, true, 'clean worktree is regenerable from git')
+  // Cleanup lists ALL worktrees, not just stale ones.
+  assert.ok(
+    wtCleanup.some((item) => item.kind === 'active-worktree'),
+    'cleanup should also list the active worktree',
+  )
+
+  // Snapshot carries first-class worktree records for both worktrees.
+  const wtSnapshot = await worktreeService.getSnapshot(false)
+  assert.ok(
+    wtSnapshot.worktrees.length >= 2,
+    'snapshot should include a WorktreeRecord per worktree',
+  )
+  const staleRecord = wtSnapshot.worktrees.find((w) => w.path === worktreeDir)
+  const activeRecord = wtSnapshot.worktrees.find((w) => w.path === activeDir)
+  assert.ok(staleRecord && staleRecord.stale, 'stale worktree record should be marked stale')
+  assert.ok(activeRecord && !activeRecord.stale, 'active worktree record should not be stale')
+  // Overview total size includes worktree sizes (at least the two worktrees).
+  const worktreeBytes = wtSnapshot.worktrees.reduce((sum, w) => sum + w.sizeBytes, 0)
+  assert.ok(
+    wtSnapshot.overview.totalSizeBytes >= worktreeBytes,
+    'overview total should include worktree sizes',
+  )
+  // No double-count: storage slices' sum should not exceed sessions + archives + worktrees by
+  // more than the worktree bytes once.
+  const storageTotal = wtSnapshot.storage.reduce((sum, s) => sum + s.sizeBytes, 0)
+  assert.ok(storageTotal >= worktreeBytes, 'storage should reflect worktree sizes')
+
+  const [wtTrash] = await worktreeService.moveCleanupToTrash([wtCandidate.id])
+  assert.ok(wtTrash, 'worktree candidate should move to the system Trash')
+  assert.equal(wtTrash.kind, 'stale-worktree', 'trash result should carry the worktree kind')
+  await assert.rejects(stat(worktreeDir), undefined, 'worktree directory should be removed')
+
+  // Prune should have cleared the parent repo's stale worktree registration.
+  const worktreeList = runGit(['worktree', 'list'], parentRepo).stdout
+  assert.ok(
+    !worktreeList.includes('feature-smoke'),
+    'parent repo should no longer list the trashed worktree after prune',
   )
 
   console.log('Function verification passed')

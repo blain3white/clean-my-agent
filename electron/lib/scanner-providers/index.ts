@@ -5,6 +5,7 @@ import { cursorScannerProvider } from './cursor'
 import { customScannerProvider } from './custom'
 import { geminiScannerProvider } from './gemini'
 import { opencodeScannerProvider } from './opencode'
+import { piScannerProvider } from './pi'
 import type { AgentScannerProvider, ScannerPlatform } from './types'
 
 export type {
@@ -19,6 +20,7 @@ export const scannerProviders: AgentScannerProvider[] = [
   cursorScannerProvider,
   geminiScannerProvider,
   opencodeScannerProvider,
+  piScannerProvider,
   customScannerProvider,
 ]
 

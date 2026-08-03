@@ -13,7 +13,7 @@ It scans local sessions from Codex, Claude Code, Cursor, Gemini, and OpenCode, t
 Install the latest macOS Apple Silicon build with Homebrew:
 
 ```sh
-brew tap blain3white/clean-my-agent
+brew tap blain3white/clean-my-agent https://github.com/blain3white/clean-my-agent.git
 brew install --cask clean-my-agent
 ```
 

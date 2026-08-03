@@ -2740,6 +2740,17 @@ select option {
     0 5px 12px rgb(0 0 0 / 16%);
 }
 
+.agent-logo[data-source='pi'] {
+  background:
+    radial-gradient(circle at 34% 16%, rgb(255 255 255 / 18%), transparent 32%),
+    linear-gradient(145deg, rgb(28 30 32 / 60%), rgb(12 14 15 / 64%)), rgb(8 10 11 / 78%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 12%),
+    inset 0 -1px 0 rgb(0 0 0 / 30%),
+    0 0 16px rgb(0 0 0 / 22%),
+    0 5px 12px rgb(0 0 0 / 16%);
+}
+
 .agent-logo svg,
 .agent-logo [role='img'],
 .agent-logo img {

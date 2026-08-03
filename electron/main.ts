@@ -29,6 +29,7 @@ function getAppIconPath(): string {
 
 function createWindow(): void {
   const iconPath = getAppIconPath()
+  const isMac = process.platform === 'darwin'
 
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -36,12 +37,11 @@ function createWindow(): void {
     minWidth: 1040,
     minHeight: 700,
     title: appName,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 18, y: 18 },
-    transparent: true,
-    vibrancy: 'sidebar',
-    visualEffectState: 'active',
-    backgroundColor: '#00000000',
+    titleBarStyle: isMac ? 'hiddenInset' : 'default',
+    ...(isMac ? { trafficLightPosition: { x: 18, y: 18 } } : {}),
+    transparent: isMac,
+    ...(isMac ? { vibrancy: 'sidebar', visualEffectState: 'active' as const } : {}),
+    backgroundColor: isMac ? '#00000000' : '#111111',
     icon: iconPath,
     show: false,
     webPreferences: {
@@ -76,6 +76,9 @@ async function openTarget(targetPath: string): Promise<void> {
 }
 
 function registerIpc(): void {
+  ipcMain.handle('app:getOverviewSnapshot', () => service.getOverviewSnapshot())
+  ipcMain.handle('app:rescanOverview', () => service.rescanOverview())
+  ipcMain.handle('app:refreshRecentOverview', () => service.refreshRecentOverview(10))
   ipcMain.handle('app:getSnapshot', () => service.getSnapshot(false))
   ipcMain.handle('app:rescan', () => service.getSnapshot(true))
   ipcMain.handle('app:refreshRecentSessions', () => service.refreshRecentSessions(10))
@@ -97,8 +100,9 @@ function registerIpc(): void {
   ipcMain.handle('cleanup:trash', (_event, candidateIds: string[]) =>
     service.moveCleanupToTrash(candidateIds),
   )
-  ipcMain.handle('trash:purgeExpired', () => service.purgeExpiredTrash())
-  ipcMain.handle('trash:restore', (_event, trashId: string) => service.restoreTrash(trashId))
+  ipcMain.handle('worktree:trash', (_event, worktreePaths: string[]) =>
+    service.trashWorktrees(worktreePaths),
+  )
   ipcMain.handle('recovery:list', () => service.getRecoveryRecords())
   ipcMain.handle('recovery:diagnose', (_event, recoveryId: string) =>
     service.diagnoseRecovery(recoveryId),
@@ -138,6 +142,7 @@ app.whenReady().then(async () => {
     userDataPath: app.getPath('userData'),
     appVersion: app.getVersion(),
     openPath: openTarget,
+    trashItem: (targetPath) => shell.trashItem(targetPath),
   })
   updateService = new UpdateService({
     userDataPath: app.getPath('userData'),
@@ -154,4 +159,8 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('before-quit', () => {
+  service?.close()
 })

@@ -33,7 +33,7 @@ import type {
   UniversalRelayDocument,
 } from '@/shared/types'
 import { SessionDetailDrawer } from './SessionDetailDrawer'
-import { sessionActionLabel } from './session-detail-model'
+import { sessionActionLabel, sessionResultRowClassName } from './session-detail-model'
 
 export function SessionsView({
   sessions,
@@ -202,7 +202,7 @@ export function SessionsView({
                             void openSessionDetail(session)
                           }
                         }}
-                        className="cursor-pointer border-white/7 outline-none hover:bg-white/[0.035] focus-visible:bg-white/[0.05]"
+                        className={sessionResultRowClassName}
                       >
                         <TableCell>
                           <div className="flex items-center gap-2">

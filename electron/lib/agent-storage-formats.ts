@@ -7,17 +7,21 @@ export type TokenUsageLike = {
   prompt_tokens?: number
   promptTokens?: number
   inputTokens?: number
+  input?: number
   output_tokens?: number
   completion_tokens?: number
   completionTokens?: number
   outputTokens?: number
+  output?: number
   cached_tokens?: number
   cached_input_tokens?: number
   cachedInputTokens?: number
   cache_read_input_tokens?: number
   cacheReadInputTokens?: number
+  cacheRead?: number
   cache_creation_input_tokens?: number
   cacheCreationInputTokens?: number
+  cacheWrite?: number
   cachedTokens?: number
   cacheTokens?: number
   total_tokens?: number

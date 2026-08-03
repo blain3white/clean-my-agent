@@ -30,7 +30,7 @@ export type RealWorldAgentFixtureLibrary = {
   root: string
   scanRoots: Partial<Record<AgentSource, string[]>>
   expectations: Record<
-    'codex' | 'claude' | 'cursor' | 'gemini' | 'opencode',
+    'codex' | 'claude' | 'cursor' | 'gemini' | 'opencode' | 'pi',
     CompatibilityFixtureExpectation
   >
   ignoredCredentialPhrase: string
@@ -302,6 +302,58 @@ export async function writeRealWorldAgentFixtures(
     content: ignoredCredentialPhrase,
   })
 
+  const piProject = path.join(home, 'workspaces', 'pi-real')
+  const piRoot = path.join(home, '.pi', 'agent', 'sessions')
+  await writeJsonl(
+    path.join(piRoot, '--Users-demo-pi-real--', '2026-06-08T10-15-30-000Z_pi-dirty-session.jsonl'),
+    [
+      {
+        type: 'session',
+        version: 3,
+        id: 'pi-dirty-session',
+        timestamp,
+        cwd: piProject,
+      },
+      {
+        type: 'message',
+        id: 'pi-user-1',
+        parentId: null,
+        timestamp,
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Pi dirty compatibility prompt' }],
+          timestamp,
+        },
+      },
+      {
+        type: 'message',
+        id: 'pi-assistant-1',
+        parentId: 'pi-user-1',
+        timestamp,
+        message: {
+          role: 'assistant',
+          model: 'glm-5.2',
+          content: [{ type: 'text', text: 'Pi dirty compatibility response' }],
+          usage: {
+            input: 80,
+            output: 20,
+            cacheRead: 5,
+            cacheWrite: 30,
+            totalTokens: 130,
+          },
+        },
+      },
+    ],
+  )
+  // Credential-like files live in the parent ~/.pi/agent/ directory, above the
+  // sessions scan root, and must never be scanned.
+  await writeJson(path.join(home, '.pi', 'agent', 'auth.json'), {
+    content: ignoredCredentialPhrase,
+  })
+  await writeJson(path.join(home, '.pi', 'agent', 'models.json'), {
+    content: ignoredCredentialPhrase,
+  })
+
   return {
     root,
     scanRoots: {
@@ -310,6 +362,7 @@ export async function writeRealWorldAgentFixtures(
       cursor: [cursorRoot],
       gemini: [geminiRoot],
       opencode: [opencodeRoot],
+      pi: [piRoot],
     },
     expectations: {
       codex: {
@@ -353,6 +406,14 @@ export async function writeRealWorldAgentFixtures(
         storageKind: 'file',
         minMessages: 2,
         minTokens: 60,
+      },
+      pi: {
+        phrase: 'Pi dirty compatibility prompt',
+        projectPath: piProject,
+        sourceFormat: 'claude-jsonl',
+        storageKind: 'file',
+        minMessages: 2,
+        minTokens: 100,
       },
     },
     ignoredCredentialPhrase,

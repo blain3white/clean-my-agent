@@ -7,6 +7,7 @@ export const geminiScannerProvider: AgentScannerProvider = {
   platformRoots: {
     darwin: ['~/.config/gemini', '~/Library/Application Support/Gemini'],
     linux: ['~/.config/gemini'],
+    win32: ['~/AppData/Roaming/gemini', '~/AppData/Local/gemini'],
   },
   patterns: ['**/*.json', '**/*.jsonl', '**/*.md', '**/*.log'],
   note: 'Scans configurable Gemini CLI/session storage roots.',

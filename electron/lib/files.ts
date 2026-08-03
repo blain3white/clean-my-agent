@@ -131,7 +131,7 @@ export async function listFiles(
     ],
   })
 
-  return files.slice(0, maxFiles)
+  return files.slice(0, maxFiles).map((filePath) => path.resolve(filePath))
 }
 
 export async function copyPath(sourcePath: string, targetPath: string): Promise<void> {

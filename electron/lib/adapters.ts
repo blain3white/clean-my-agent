@@ -1,4 +1,5 @@
 import path from 'node:path'
+import os from 'node:os'
 import { constants, createReadStream } from 'node:fs'
 import { access, stat } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
@@ -23,7 +24,7 @@ import {
   toRecord,
   type JsonRecord,
 } from './agent-storage-formats'
-import { expandHome, hashId, listFiles, pathSize, readable, safeReadText } from './files'
+import { expandHome, hashId, listFiles, readable, safeReadText } from './files'
 import { rootsForPlatform, scannerProviders } from './scanner-providers'
 import type {
   AgentScannerProvider,
@@ -57,6 +58,7 @@ type SqliteModule = {
 }
 
 const maxDiagnosticsPerScan = 50
+const scanConcurrency = Math.max(2, Math.min(8, os.availableParallelism()))
 const maxRelayItems = 500
 const maxRelayDiffLength = 200_000
 const sqliteJsonValueColumns = ['value', 'json', 'data', 'body', 'content', 'contents']
@@ -116,6 +118,22 @@ function errorCode(error: unknown): string | undefined {
   return typeof error === 'object' && error !== null && 'code' in error
     ? String((error as { code?: unknown }).code)
     : undefined
+}
+
+async function mapConcurrent<T, R>(
+  values: T[],
+  worker: (value: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length)
+  let nextIndex = 0
+  const workers = Array.from({ length: Math.min(scanConcurrency, values.length) }, async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex++
+      results[index] = await worker(values[index], index)
+    }
+  })
+  await Promise.all(workers)
+  return results
 }
 
 async function rootAccess(
@@ -642,18 +660,25 @@ function extractUsage(
       'prompt_tokens',
       'promptTokens',
       'inputTokens',
+      'input',
     ])
     const output = numberFromRecord(record, [
       'output_tokens',
       'completion_tokens',
       'completionTokens',
       'outputTokens',
+      'output',
     ])
     const cacheCreation = numberFromRecord(record, [
       'cache_creation_input_tokens',
       'cacheCreationInputTokens',
+      'cacheWrite',
     ])
-    const cacheRead = numberFromRecord(record, ['cache_read_input_tokens', 'cacheReadInputTokens'])
+    const cacheRead = numberFromRecord(record, [
+      'cache_read_input_tokens',
+      'cacheReadInputTokens',
+      'cacheRead',
+    ])
     const legacyCached = numberFromRecord(record, [
       'cached_tokens',
       'cached_input_tokens',
@@ -1119,31 +1144,33 @@ export class AgentAdapter {
     diagnostics.push(...discovery.diagnostics)
     const files = discovery.candidates
 
+    const parsedCandidates = await mapConcurrent<
+      SessionFileCandidate,
+      | { kind: 'parsed'; session: SessionRecord }
+      | { kind: 'failed'; candidate: SessionFileCandidate; error: unknown }
+    >(files, async (candidate) => {
+      try {
+        return { kind: 'parsed', session: await this.parseCandidate(candidate) }
+      } catch (error) {
+        return { kind: 'failed', candidate, error }
+      }
+    })
     const sessions: SessionRecord[] = []
     let skippedFiles = discovery.skippedFiles
-    for (const candidate of files) {
-      try {
-        sessions.push(await this.parseCandidate(candidate))
-      } catch (error) {
+    for (const result of parsedCandidates) {
+      if (result.kind === 'parsed') {
+        sessions.push(result.session)
+      } else {
         skippedFiles += 1
         pushDiagnostic(diagnostics, {
           level: 'warning',
           code: 'parse-failed',
-          message: `Could not parse session file: ${errorMessage(error)}`,
-          path: candidate.path,
+          message: `Could not parse session file: ${errorMessage(result.error)}`,
+          path: result.candidate.path,
         })
-        continue
       }
     }
-
-    const sizeBytes = await readableRoots.reduce<Promise<number>>(async (promise, root) => {
-      const total = await promise
-      try {
-        return total + (await pathSize(root, 400))
-      } catch {
-        return total
-      }
-    }, Promise.resolve(0))
+    const sizeBytes = files.reduce((total, candidate) => total + candidate.sizeBytes, 0)
 
     return {
       state: {
@@ -1165,15 +1192,14 @@ export class AgentAdapter {
   }
 
   async scanCandidates(candidates: SessionFileCandidate[]): Promise<SessionRecord[]> {
-    const sessions: SessionRecord[] = []
-    for (const candidate of candidates) {
+    const results = await mapConcurrent(candidates, async (candidate) => {
       try {
-        sessions.push(await this.parseCandidate(candidate))
+        return await this.parseCandidate(candidate)
       } catch {
-        continue
+        return undefined
       }
-    }
-    return sessions
+    })
+    return results.filter((session): session is SessionRecord => session !== undefined)
   }
 
   async toUniversal(session: SessionRecord): Promise<UniversalRelayDocument> {
@@ -1223,49 +1249,56 @@ export class AgentAdapter {
     const diagnostics: AgentScanDiagnostic[] = []
     let skippedFiles = 0
     for (const { root, files } of filesByRoot) {
-      for (const filePath of files) {
+      const inspected = await mapConcurrent(files, async (filePath) => {
         try {
-          if (exclusions.some((excluded) => isInsidePath(filePath, excluded))) continue
+          if (exclusions.some((excluded) => isInsidePath(filePath, excluded))) {
+            return { kind: 'excluded' as const }
+          }
           const info = await stat(filePath)
           if (info.size === 0) {
-            skippedFiles += 1
-            pushDiagnostic(diagnostics, {
-              level: 'info',
-              code: 'empty-file-skipped',
-              message: 'Skipped an empty session file.',
-              path: filePath,
-            })
-            continue
+            return { kind: 'empty' as const, filePath }
           }
           if (info.size > 250_000_000) {
-            skippedFiles += 1
-            pushDiagnostic(diagnostics, {
-              level: 'warning',
-              code: 'oversized-file-skipped',
-              message: 'Skipped a session file larger than 250 MB.',
-              path: filePath,
-            })
-            continue
+            return { kind: 'oversized' as const, filePath }
           }
-
-          candidates.push({
-            path: filePath,
-            root,
-            relativePath: path.relative(root, filePath),
-            sizeBytes: info.size,
-            createdAt: info.birthtime.toISOString(),
-            lastUpdated: info.mtime.toISOString(),
-            mtimeMs: info.mtimeMs,
-          })
+          return {
+            kind: 'candidate' as const,
+            candidate: {
+              path: filePath,
+              root,
+              relativePath: path.relative(root, filePath),
+              sizeBytes: info.size,
+              createdAt: info.birthtime.toISOString(),
+              lastUpdated: info.mtime.toISOString(),
+              mtimeMs: info.mtimeMs,
+            },
+          }
         } catch (error) {
+          return { kind: 'failed' as const, filePath, error }
+        }
+      })
+
+      for (const result of inspected) {
+        if (result.kind === 'candidate') {
+          candidates.push(result.candidate)
+        } else if (result.kind !== 'excluded') {
           skippedFiles += 1
           pushDiagnostic(diagnostics, {
-            level: 'warning',
-            code: 'candidate-stat-failed',
-            message: `Could not inspect session file: ${errorMessage(error)}`,
-            path: filePath,
+            level: result.kind === 'empty' ? 'info' : 'warning',
+            code:
+              result.kind === 'empty'
+                ? 'empty-file-skipped'
+                : result.kind === 'oversized'
+                  ? 'oversized-file-skipped'
+                  : 'candidate-stat-failed',
+            message:
+              result.kind === 'empty'
+                ? 'Skipped an empty session file.'
+                : result.kind === 'oversized'
+                  ? 'Skipped a session file larger than 250 MB.'
+                  : `Could not inspect session file: ${errorMessage(result.error)}`,
+            path: result.filePath,
           })
-          continue
         }
       }
     }

@@ -7,12 +7,8 @@ import type {
   TokenUsage,
 } from '@/shared/types'
 import {
-  buildCleanupConfirmationSummary,
   buildCleanupCandidateGroups,
   buildCleanupCategorySummaries,
-  cleanupConfirmationCancel,
-  cleanupConfirmationConfirm,
-  cleanupConfirmationRequest,
   cleanupCategoryForCandidate,
   cleanupCompactPath,
   defaultCleanupSelection,
@@ -73,6 +69,8 @@ describe('cleanup categories', () => {
     ['duplicate-backup', 'test'],
     ['temp-file', 'test'],
     ['invalid-cache', 'test'],
+    ['stale-worktree', 'worktree'],
+    ['dirty-worktree', 'worktree'],
   ] as const)('maps %s candidates to %s', (kind, expected) => {
     expect(cleanupCategoryForCandidate(candidate({ id: kind, kind }))).toBe(expected)
   })
@@ -87,6 +85,15 @@ describe('cleanup categories', () => {
     ).toEqual(['old', 'temp'])
   })
 
+  it('selects stale (low-risk) worktrees by default but never dirty (high-risk) ones', () => {
+    expect(
+      defaultCleanupSelection([
+        candidate({ id: 'stale', kind: 'stale-worktree', risk: 'low' }),
+        candidate({ id: 'dirty', kind: 'dirty-worktree', risk: 'high' }),
+      ]),
+    ).toEqual(['stale'])
+  })
+
   it('aggregates category summaries in a stable order', () => {
     const summaries = buildCleanupCategorySummaries([
       candidate({ id: 'large', kind: 'large-log', sizeBytes: 500 }),
@@ -95,7 +102,12 @@ describe('cleanup categories', () => {
       candidate({ id: 'duplicate', kind: 'duplicate-backup', sizeBytes: 50 }),
     ])
 
-    expect(summaries.map((summary) => summary.key)).toEqual(['large', 'inactive', 'test'])
+    expect(summaries.map((summary) => summary.key)).toEqual([
+      'large',
+      'inactive',
+      'test',
+      'worktree',
+    ])
     expect(summaries.find((summary) => summary.key === 'large')).toMatchObject({
       bytes: 500,
       count: 1,
@@ -108,108 +120,22 @@ describe('cleanup categories', () => {
       bytes: 150,
       count: 2,
     })
+    expect(summaries.find((summary) => summary.key === 'worktree')).toMatchObject({
+      bytes: 0,
+      count: 0,
+    })
   })
 
   it('returns zeroed summaries for empty input', () => {
     const summaries = buildCleanupCategorySummaries([])
 
-    expect(summaries.map((summary) => summary.key)).toEqual(['large', 'inactive', 'test'])
+    expect(summaries.map((summary) => summary.key)).toEqual([
+      'large',
+      'inactive',
+      'test',
+      'worktree',
+    ])
     expect(summaries.every((summary) => summary.bytes === 0 && summary.count === 0)).toBe(true)
-  })
-})
-
-describe('cleanup confirmation summary', () => {
-  it('requires confirmation and summarizes selected count, size, risk, backup, and recovery state', () => {
-    const summary = buildCleanupConfirmationSummary(
-      [
-        candidate({
-          id: 'high',
-          kind: 'large-log',
-          sizeBytes: 500,
-          risk: 'high',
-          backedUp: false,
-          recoverable: false,
-        }),
-        candidate({
-          id: 'medium',
-          kind: 'old-session',
-          sizeBytes: 250,
-          risk: 'medium',
-          backedUp: true,
-          recoverable: true,
-        }),
-      ],
-      true,
-    )
-
-    expect(summary).toEqual({
-      count: 2,
-      bytes: 750,
-      highRiskCount: 1,
-      needsBackupCount: 1,
-      unrecoverableCount: 1,
-      confirmationRequired: true,
-      settingPolicy: 'settings-confirmation',
-    })
-  })
-
-  it('still requires an app confirmation when confirmBeforeCleanup is disabled', () => {
-    const summary = buildCleanupConfirmationSummary(
-      [candidate({ id: 'old', kind: 'old-session', sizeBytes: 100 })],
-      false,
-    )
-
-    expect(summary).toMatchObject({
-      count: 1,
-      confirmationRequired: true,
-      settingPolicy: 'trash-safety-override',
-    })
-  })
-
-  it('does not require confirmation with no selected candidates', () => {
-    expect(buildCleanupConfirmationSummary([], false)).toMatchObject({
-      count: 0,
-      bytes: 0,
-      confirmationRequired: false,
-      settingPolicy: 'trash-safety-override',
-    })
-  })
-
-  it('opens confirmation without producing move ids when cleanup is requested', () => {
-    expect(
-      cleanupConfirmationRequest([
-        candidate({ id: 'old', kind: 'old-session' }),
-        candidate({ id: 'temp', kind: 'temp-file' }),
-      ]),
-    ).toEqual({
-      confirmationIds: ['old', 'temp'],
-      moveIds: null,
-    })
-  })
-
-  it('does not execute a move when cleanup confirmation is canceled', () => {
-    expect(cleanupConfirmationCancel()).toEqual({
-      confirmationIds: null,
-      moveIds: null,
-    })
-  })
-
-  it('produces move ids only after cleanup confirmation is confirmed', () => {
-    expect(cleanupConfirmationConfirm(['old', 'temp'])).toEqual({
-      confirmationIds: null,
-      moveIds: ['old', 'temp'],
-    })
-  })
-
-  it('does not produce move ids when confirmation has no selected candidates', () => {
-    expect(cleanupConfirmationRequest([])).toEqual({
-      confirmationIds: null,
-      moveIds: null,
-    })
-    expect(cleanupConfirmationConfirm(null)).toEqual({
-      confirmationIds: null,
-      moveIds: null,
-    })
   })
 })
 

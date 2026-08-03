@@ -1,4 +1,12 @@
-export const agentSources = ['codex', 'claude', 'cursor', 'gemini', 'opencode', 'custom'] as const
+export const agentSources = [
+  'codex',
+  'claude',
+  'cursor',
+  'gemini',
+  'opencode',
+  'pi',
+  'custom',
+] as const
 
 export type AgentSource = (typeof agentSources)[number]
 
@@ -10,7 +18,7 @@ export const defaultLanguage: AppLanguage = 'en'
 
 export type BackupStatus = 'backed-up' | 'pending' | 'unknown'
 
-export type SessionStorageState = 'live' | 'archived'
+export type SessionStorageState = 'live' | 'archived' | 'deleted'
 
 export type RiskLevel = 'low' | 'medium' | 'high'
 
@@ -110,6 +118,9 @@ export type CleanupKind =
   | 'temp-file'
   | 'orphan-session'
   | 'invalid-cache'
+  | 'stale-worktree'
+  | 'dirty-worktree'
+  | 'active-worktree'
 
 export type CleanupCandidate = {
   id: string
@@ -131,12 +142,34 @@ export type TrashRecord = {
   candidateId: string
   title: string
   source?: AgentSource
+  kind?: CleanupKind
   originalPaths: string[]
   trashPath: string
   sizeBytes: number
   deletedAt: string
   risk: RiskLevel
   recoverable: boolean
+}
+
+export type SystemTrashResult = {
+  candidateId: string
+  title: string
+  source?: AgentSource
+  kind?: CleanupKind
+  originalPaths: string[]
+  sizeBytes: number
+  deletedAt: string
+  risk: RiskLevel
+}
+
+export type WorktreeTrashFailure = {
+  path: string
+  message: string
+}
+
+export type WorktreeTrashBatchResult = {
+  moved: SystemTrashResult[]
+  failed: WorktreeTrashFailure[]
 }
 
 export type RecoveryOperation =
@@ -219,17 +252,12 @@ export type RecoveryRecord = {
 
 export type UsagePoint = {
   date: string
-  codex: number
-  claude: number
-  cursor: number
-  gemini: number
-  opencode: number
-  custom: number
+} & { [K in AgentSource]: number } & {
   total: number
 }
 
 export type StorageSlice = {
-  source: AgentSource | 'archives' | 'backups' | 'trash' | 'logs' | 'cache'
+  source: AgentSource | 'archives' | 'backups' | 'trash' | 'logs' | 'cache' | 'other'
   label: string
   sizeBytes: number
   sessions?: number
@@ -258,6 +286,44 @@ export type DashboardSnapshot = {
   recovery: RecoveryRecord[]
   usage: UsagePoint[]
   storage: StorageSlice[]
+  worktrees: WorktreeRecord[]
+  worktreeDiagnostics?: AgentScanDiagnostic[]
+}
+
+export type OverviewSnapshot = {
+  generatedAt: string
+  overview: DashboardOverview
+  agents: AgentInstallState[]
+  recentSessions: SessionRecord[]
+  recentCleanup: CleanupCandidate[]
+  usage: UsagePoint[]
+  storage: StorageSlice[]
+  trends: {
+    sessionsByDate: Record<string, number>
+    backupsByDate: Record<string, number>
+    cleanupByDate: Record<string, number>
+  }
+  performance: {
+    serviceDurationMs: number
+    ipcDurationMs?: number
+    rendererDurationMs?: number
+  }
+}
+
+export type WorktreeOwner = AgentSource | 'other'
+
+export type WorktreeRecord = {
+  id: string
+  path: string
+  ownerAgent: WorktreeOwner
+  repoName: string
+  branch?: string
+  sizeBytes: number
+  lastActivity: string
+  clean: boolean
+  stale: boolean
+  parentRepo?: string
+  defaultRoot: string
 }
 
 export type SkillStatus = 'synced' | 'local' | 'backed-up'
@@ -342,6 +408,7 @@ export type AppSettings = {
   scanOnLaunch: boolean
   backgroundScan: boolean
   confirmBeforeCleanup: boolean
+  includeDeletedSessionsInStats: boolean
   excludedFolders: string[]
   soundEffects: boolean
   cleanupSound: boolean
@@ -351,6 +418,9 @@ export type AppSettings = {
   checkForUpdates: boolean
   defaultRelayMode: 'full-context' | 'fit-to-window' | 'manual-select'
   exportDirectory: string
+  worktreeRoots: string[]
+  worktreeScanDefaultRoots: boolean
+  worktreeRetentionDays: number
 }
 
 export type ThemePreference = 'system' | 'light' | 'dark'
@@ -469,6 +539,9 @@ export type DiagnosticReport = {
 }
 
 export type CleanMyAgentApi = {
+  getOverviewSnapshot: () => Promise<OverviewSnapshot>
+  rescanOverview: () => Promise<OverviewSnapshot>
+  refreshRecentOverview: () => Promise<OverviewSnapshot>
   getSnapshot: () => Promise<DashboardSnapshot>
   rescan: () => Promise<DashboardSnapshot>
   refreshRecentSessions: () => Promise<DashboardSnapshot>
@@ -479,9 +552,8 @@ export type CleanMyAgentApi = {
   restoreArchive: (archiveId: string) => Promise<void>
   exportSession: (sessionId: string, format: ExportFormat) => Promise<string>
   scanCleanup: () => Promise<CleanupCandidate[]>
-  moveCleanupToTrash: (candidateIds: string[]) => Promise<TrashRecord[]>
-  purgeExpiredTrash: () => Promise<TrashRecord[]>
-  restoreTrash: (trashId: string) => Promise<void>
+  moveCleanupToTrash: (candidateIds: string[]) => Promise<SystemTrashResult[]>
+  trashWorktrees: (worktreePaths: string[]) => Promise<WorktreeTrashBatchResult>
   getRecoveryRecords: () => Promise<RecoveryRecord[]>
   diagnoseRecovery: (recoveryId: string) => Promise<RecoveryRecord>
   undoRecovery: (recoveryId: string) => Promise<RecoveryRecord>

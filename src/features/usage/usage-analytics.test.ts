@@ -8,6 +8,7 @@ import {
 import {
   buildUsageAnalytics,
   buildUsageReport,
+  buildTopModelUsagePanels,
   costForTokenShare,
   createSparklinePath,
   exportUsageCsv,
@@ -402,6 +403,246 @@ describe('buildUsageAnalytics', () => {
 
     expect(analytics.agentRows.every((row) => row.tokens === 0)).toBe(true)
     expect(analytics.agentRows.every((row) => row.hasTokenMetadata === false)).toBe(true)
+  })
+
+  it('clusters model usage rows by normalised model, merging variants and bucketing unknowns', () => {
+    const snapshot = makeSnapshot(
+      [],
+      [
+        makeSession({
+          id: 'model-gpt',
+          tokens: {
+            input: 400,
+            output: 300,
+            cached: 0,
+            total: 1000,
+            costUsd: 10,
+            estimated: false,
+            model: 'gpt-5-codex',
+          },
+        }),
+        makeSession({
+          id: 'model-gpt-variant',
+          tokens: {
+            input: 200,
+            output: 100,
+            cached: 0,
+            total: 500,
+            costUsd: 4,
+            estimated: false,
+            model: 'GPT-5-Codex',
+          },
+        }),
+        makeSession({
+          id: 'model-claude',
+          tokens: {
+            input: 100,
+            output: 50,
+            cached: 0,
+            total: 250,
+            costUsd: 2,
+            estimated: false,
+            model: 'claude-sonnet-4-5',
+          },
+        }),
+        makeSession({
+          id: 'model-unknown',
+          tokens: { input: 40, output: 10, cached: 0, total: 50, costUsd: 0, estimated: false },
+        }),
+      ],
+    )
+    const analytics = buildUsageAnalytics(snapshot, 'all')
+
+    const rows = analytics.modelRows
+    expect(rows).toHaveLength(3)
+
+    const gpt = rows.find((row) => row.key === 'gpt-5-codex')
+    expect(gpt).toMatchObject({
+      model: 'gpt-5-codex',
+      tokens: 1500,
+      cost: 14,
+      sessionCount: 2,
+    })
+    expect(gpt?.share).toBeCloseTo((1500 / 1800) * 100)
+
+    const claude = rows.find((row) => row.key === 'claude-sonnet-4-5')
+    expect(claude).toMatchObject({ model: 'claude-sonnet-4-5', tokens: 250, cost: 2 })
+
+    const unknown = rows.find((row) => row.key === '')
+    expect(unknown).toMatchObject({ model: 'Unknown model', tokens: 50 })
+    // sorted by tokens descending
+    expect(rows.map((row) => row.tokens)).toEqual([1500, 250, 50])
+  })
+
+  it('builds four leading model panels and keeps Others and Unknown model explicit', () => {
+    const modelRows = [
+      ['gpt-5', 500],
+      ['claude-sonnet-4-5', 400],
+      ['gemini-2-5-pro', 300],
+      ['gpt-4o', 200],
+      ['claude-haiku-4-5', 75],
+      ['gemini-2-5-flash', 25],
+    ].map(([key, tokens], index) => ({
+      key: String(key),
+      model: String(key),
+      tokens: Number(tokens),
+      cost: index + 1,
+      sessionCount: index + 1,
+      share: Number(tokens) / 16,
+      hasTokenMetadata: true,
+    }))
+    modelRows.push({
+      key: '',
+      model: 'Unknown model',
+      tokens: 100,
+      cost: 0,
+      sessionCount: 2,
+      share: 6.25,
+      hasTokenMetadata: true,
+    })
+
+    const panels = buildTopModelUsagePanels(modelRows)
+
+    expect(panels.map((row) => row.model)).toEqual([
+      'gpt-5',
+      'claude-sonnet-4-5',
+      'gemini-2-5-pro',
+      'gpt-4o',
+      'Others',
+      'Unknown model',
+    ])
+    expect(panels.find((row) => row.key === 'others')).toMatchObject({
+      tokens: 100,
+      cost: 11,
+      sessionCount: 11,
+    })
+    expect(panels.reduce((sum, row) => sum + row.share, 0)).toBeCloseTo(100)
+  })
+
+  it('attributes model panel tokens and cost to the selected date range', () => {
+    const usage = [
+      usagePoint('2026-05-30', { codex: 800 }),
+      ...Array.from({ length: 6 }, (_, index) =>
+        usagePoint(`2026-0${index < 1 ? '5' : '6'}-${index < 1 ? '31' : `0${index}`}`),
+      ),
+      usagePoint('2026-06-06', { codex: 200 }),
+    ]
+    const snapshot = makeSnapshot(usage, [
+      makeSession({
+        tokens: {
+          input: 500,
+          output: 500,
+          cached: 0,
+          total: 1000,
+          costUsd: 10,
+          estimated: false,
+          model: 'GPT-5-Codex',
+        },
+        metadata: { usageByDate: { '2026-05-30': 800, '2026-06-06': 200 } },
+      }),
+    ])
+
+    const analytics = buildUsageAnalytics(snapshot, '7d')
+
+    expect(analytics.modelRows[0]).toMatchObject({
+      key: 'gpt-5-codex',
+      tokens: 200,
+      cost: 2,
+      sessionCount: 1,
+      share: 100,
+    })
+  })
+
+  it('returns no model rows when sessions carry no token metadata', () => {
+    const analytics = buildUsageAnalytics(makeSnapshot([], []), 'all')
+
+    expect(analytics.modelRows).toEqual([])
+  })
+
+  it('merges sessions into a model group and reports zero share when all tokens are zero', () => {
+    const snapshot = makeSnapshot(
+      [],
+      [
+        makeSession({
+          id: 'model-empty-first',
+          tokens: {
+            input: 0,
+            output: 0,
+            cached: 0,
+            total: 0,
+            costUsd: 0,
+            estimated: false,
+            model: 'gpt-5-codex',
+          },
+        }),
+        makeSession({
+          id: 'model-has-tokens',
+          tokens: {
+            input: 10,
+            output: 5,
+            cached: 0,
+            total: 15,
+            costUsd: 1,
+            estimated: false,
+            model: 'gpt-5-codex',
+          },
+        }),
+        makeSession({
+          id: 'model-all-zero',
+          tokens: {
+            input: 0,
+            output: 0,
+            cached: 0,
+            total: 0,
+            costUsd: 0,
+            estimated: false,
+            model: 'claude-sonnet-4-5',
+          },
+        }),
+      ],
+    )
+    const analytics = buildUsageAnalytics(snapshot, 'all')
+
+    const gpt = analytics.modelRows.find((row) => row.key === 'gpt-5-codex')
+    expect(gpt).toMatchObject({ tokens: 15, cost: 1, hasTokenMetadata: true })
+    const claude = analytics.modelRows.find((row) => row.key === 'claude-sonnet-4-5')
+    expect(claude).toMatchObject({ tokens: 0, share: 0, hasTokenMetadata: false })
+  })
+
+  it('reports zero share for every model row when no session carries tokens', () => {
+    const snapshot = makeSnapshot(
+      [],
+      [
+        makeSession({
+          id: 'zero-gpt',
+          tokens: {
+            input: 0,
+            output: 0,
+            cached: 0,
+            total: 0,
+            costUsd: 0,
+            estimated: false,
+            model: 'gpt-5-codex',
+          },
+        }),
+        makeSession({
+          id: 'zero-claude',
+          tokens: {
+            input: 0,
+            output: 0,
+            cached: 0,
+            total: 0,
+            costUsd: 0,
+            estimated: false,
+            model: 'claude-sonnet-4-5',
+          },
+        }),
+      ],
+    )
+    const analytics = buildUsageAnalytics(snapshot, 'all')
+
+    expect(analytics.modelRows.length).toBe(2)
+    expect(analytics.modelRows.every((row) => row.tokens === 0 && row.share === 0)).toBe(true)
   })
 
   it('falls back to session totals for all-time analytics without usage points', () => {

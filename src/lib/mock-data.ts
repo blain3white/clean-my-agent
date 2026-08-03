@@ -265,6 +265,7 @@ const usage = Array.from({ length: 30 }, (_, index) => {
   const cursor = Math.round(82_000 + Math.sin(index / 3.2) * 15_000 + index * 880)
   const gemini = Math.round(56_000 + Math.cos(index / 5.2) * 11_000 + index * 520)
   const opencode = Math.round(42_000 + Math.sin(index / 5.5) * 8_000 + index * 390)
+  const pi = Math.round(31_000 + Math.cos(index / 4.8) * 6_500 + index * 290)
   const custom = Math.round(18_000 + Math.sin(index / 6.5) * 4_000 + index * 180)
   return {
     date: date.toISOString().slice(0, 10),
@@ -273,8 +274,9 @@ const usage = Array.from({ length: 30 }, (_, index) => {
     cursor,
     gemini,
     opencode,
+    pi,
     custom,
-    total: codex + claude + cursor + gemini + opencode + custom,
+    total: codex + claude + cursor + gemini + opencode + pi + custom,
   }
 })
 
@@ -449,6 +451,16 @@ export const mockSnapshot: DashboardSnapshot = {
       sizeBytes: 0,
       lastScannedAt: ago(0.1),
     },
+    {
+      source: 'pi',
+      name: 'Pi',
+      installed: true,
+      readable: true,
+      rootPaths: ['~/.pi/agent/sessions'],
+      sessionCount: 5,
+      sizeBytes: 1.6 * GB,
+      lastScannedAt: ago(0.1),
+    },
   ],
   sessions,
   cleanup: [
@@ -565,4 +577,5 @@ export const mockSnapshot: DashboardSnapshot = {
     { source: 'opencode', label: 'OpenCode', sizeBytes: 3.0 * GB, sessions: 8 },
     { source: 'archives', label: 'Vault', sizeBytes: 1.7 * GB, sessions: 4 },
   ],
+  worktrees: [],
 }

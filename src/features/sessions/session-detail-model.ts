@@ -1,6 +1,9 @@
 import { agentLabel } from '@/lib/format'
 import type { SessionRecord, UniversalRelayDocument, UniversalRelayMessage } from '@/shared/types'
 
+export const sessionResultRowClassName =
+  'cursor-pointer border-white/7 outline-none hover:bg-transparent focus-visible:bg-transparent hover:[&>td]:bg-white/[0.035] focus-visible:[&>td]:bg-white/[0.05]'
+
 export const sessionDetailFilters = [
   'all',
   'user',

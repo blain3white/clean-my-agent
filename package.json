@@ -21,6 +21,7 @@
     "build": "tsc -b && electron-vite build",
     "build:website": "pnpm --filter @clean-my-agent/website build",
     "dist:mac": "pnpm build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --arm64 --publish never",
+    "dist:win": "pnpm build && electron-builder --win nsis --x64 --publish never",
     "lint": "eslint .",
     "lint:website": "pnpm --filter @clean-my-agent/website lint",
     "format": "prettier --write .",
@@ -79,6 +80,22 @@
     },
     "dmg": {
       "artifactName": "Clean-My-Agent-mac-${arch}.${ext}"
+    },
+    "win": {
+      "icon": "public/app-icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Clean-My-Agent-windows-${arch}-setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     }
   },
   "dependencies": {
