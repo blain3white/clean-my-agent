@@ -1,3 +1,4 @@
+> [security research] pwn-request checkout-guard boundary verification — this PR touches only this line.
 # Clean My Agent
 
 [English](README.md) | [中文](README.zh-CN.md) | [日本語](README.ja.md) | [Français](README.fr.md)
